@@ -1,0 +1,34 @@
+# Local application data: credentials, pairing key, captured jobs, and resumes.
+/data/
+/.tmp/
+
+# Python and test artifacts.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Local credentials or exports accidentally placed outside data/.
+.env
+.env.*
+!.env.example
+client_secret*.json
+credentials*.json
+*oauth*client*.json
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.pdf
+*.docx
+
+# Generated archives, logs, and editor files.
+*.zip
+*.log
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store

@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "ApplyDock",
+  "version": "0.5.0",
+  "minimum_chrome_version": "116",
+  "description": "Manually capture selected jobs and hiring posts to a local queue and Notion.",
+  "permissions": ["activeTab", "tabs", "scripting", "storage", "contextMenus", "sidePanel"],
+  "host_permissions": ["http://127.0.0.1:8765/*", "https://*.linkedin.com/*"],
+  "optional_host_permissions": ["https://*/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Toggle Applications sidebar" },
+  "side_panel": { "default_path": "sidepanel.html" }
+}

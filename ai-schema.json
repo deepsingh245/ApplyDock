@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "subject": { "type": "string" },
+    "body": { "type": "string" },
+    "notes": { "type": "string" }
+  },
+  "required": ["subject", "body", "notes"],
+  "additionalProperties": false
+}
