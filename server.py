@@ -11,6 +11,7 @@ import hmac
 import http.server
 import html
 import ipaddress
+import io
 import json
 import os
 from pathlib import Path
@@ -28,6 +29,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import xml.etree.ElementTree as ET
+import zipfile
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
@@ -40,6 +43,12 @@ LOCK = threading.RLock()
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.compose"
 GMAIL_REDIRECT = f"http://{HOST}:{PORT}/oauth/google/callback"
 OAUTH_PENDING = {}
+NOTION_CHECK_INTERVAL = 120
+NOTION_CHECK_LOCK = threading.Lock()
+NOTION_CHECK_STATE = {"last_run": 0.0, "checked_at": "", "error": ""}
+NOTION_REQUEST_LOCK = threading.Lock()
+NOTION_LAST_REQUEST = 0.0
+EMAIL_PATTERN = re.compile(r"(?<![\w.+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}(?![A-Z0-9_-])", re.I)
 
 
 def save_config(config):
@@ -126,11 +135,58 @@ def init_db():
             "delivery_mode": "TEXT NOT NULL DEFAULT 'local'",
             "gmail_draft_id": "TEXT NOT NULL DEFAULT ''",
             "gmail_account": "TEXT NOT NULL DEFAULT ''",
-            "gmail_dirty": "INTEGER NOT NULL DEFAULT 0"
+            "gmail_dirty": "INTEGER NOT NULL DEFAULT 0",
+            "contact_emails": "TEXT NOT NULL DEFAULT '[]'",
+            "post_details": "TEXT NOT NULL DEFAULT ''",
+            "resume_id": "TEXT NOT NULL DEFAULT ''"
         }
         for name, declaration in additions.items():
             if name not in columns:
                 db.execute(f"ALTER TABLE entries ADD COLUMN {name} {declaration}")
+        db.execute("""CREATE TABLE IF NOT EXISTS resumes (
+          id TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'Uncategorized',
+          stored_path TEXT NOT NULL, original_filename TEXT NOT NULL, mime_type TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL DEFAULT 0, access_token TEXT NOT NULL UNIQUE,
+          is_default INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+          deleted_at TEXT NOT NULL DEFAULT ''
+        )""")
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version < 1:
+            for row in list(db.execute("SELECT id,excerpt,recipient,contact_emails FROM entries")):
+                if row["contact_emails"] not in ("", "[]"):
+                    continue
+                found = []
+                for address in EMAIL_PATTERN.findall(row["excerpt"] + "\n" + row["recipient"]):
+                    address = address.lower()
+                    if address not in found:
+                        found.append(address)
+                if found:
+                    db.execute("UPDATE entries SET contact_emails=? WHERE id=?", (json.dumps(found[:30]), row["id"]))
+            db.execute("PRAGMA user_version=1")
+        if version < 2:
+            rows = list(db.execute("SELECT id,resume_path FROM entries WHERE resume_path<>'' AND resume_id=''"))
+            migrated = {}
+            stamp = dt.datetime.now(dt.timezone.utc).isoformat()
+            for row in rows:
+                relative = row["resume_path"]
+                if relative not in migrated:
+                    path = (DATA / relative).resolve()
+                    filename = path.name.split("_", 1)[-1] if "_" in path.name else path.name
+                    resume_id = str(uuid.uuid4())
+                    extension = path.suffix.lower()
+                    mime = "application/pdf" if extension == ".pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    size = path.stat().st_size if path.is_file() else 0
+                    db.execute("""INSERT INTO resumes(id,name,category,stored_path,original_filename,mime_type,size_bytes,access_token,created_at,updated_at)
+                                  VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                               (resume_id, Path(filename).stem[:120] or "Resume", "Uncategorized", relative, filename[:180], mime, size,
+                                secrets.token_urlsafe(32), stamp, stamp))
+                    migrated[relative] = resume_id
+                db.execute("UPDATE entries SET resume_id=? WHERE id=?", (migrated[relative], row["id"]))
+            db.execute("PRAGMA user_version=2")
+        if not db.execute("SELECT 1 FROM resumes WHERE deleted_at='' AND is_default=1 LIMIT 1").fetchone():
+            first_resume = db.execute("SELECT id FROM resumes WHERE deleted_at='' ORDER BY created_at LIMIT 1").fetchone()
+            if first_resume:
+                db.execute("UPDATE resumes SET is_default=1 WHERE id=?", (first_resume["id"],))
         if "apply_method" not in columns:
             db.execute("UPDATE entries SET apply_method='email' WHERE recipient<>''")
         if "needs_review" not in columns:
@@ -148,6 +204,230 @@ def tomorrow_nine():
     local = dt.datetime.now().astimezone()
     day = local.date() + dt.timedelta(days=1)
     return dt.datetime.combine(day, dt.time(9), tzinfo=local.tzinfo).astimezone(dt.timezone.utc).isoformat()
+
+
+def resume_file_url(resume):
+    if not resume or not resume.get("access_token"):
+        return ""
+    return f"http://{HOST}:{PORT}/api/resumes/{resume['id']}/file?access={urllib.parse.quote(resume['access_token'])}"
+
+
+def public_resume(row, include_token=False):
+    if not row:
+        return None
+    resume = dict(row)
+    path = (DATA / resume["stored_path"]).resolve()
+    available = not resume["deleted_at"] and path.is_relative_to((DATA / "resumes").resolve()) and path.is_file()
+    result = {
+        "id": resume["id"], "name": resume["name"], "category": resume["category"],
+        "original_filename": resume["original_filename"], "mime_type": resume["mime_type"],
+        "size_bytes": resume["size_bytes"], "is_default": bool(resume["is_default"]),
+        "available": available, "created_at": resume["created_at"], "updated_at": resume["updated_at"],
+        "file_url": resume_file_url(resume) if available else "",
+        "preview_url": (resume_file_url(resume) + ("&preview=1" if resume["mime_type"].endswith("wordprocessingml.document") else "")) if available else ""
+    }
+    if include_token:
+        result["access_token"] = resume["access_token"]
+        result["stored_path"] = resume["stored_path"]
+        result["deleted_at"] = resume["deleted_at"]
+    return result
+
+
+def get_resume(resume_id, include_deleted=False, include_token=False):
+    if not resume_id:
+        return None
+    with connect() as db:
+        row = db.execute("SELECT * FROM resumes WHERE id=?" + ("" if include_deleted else " AND deleted_at=''"), (resume_id,)).fetchone()
+    return public_resume(row, include_token=include_token)
+
+
+def resumes():
+    with connect() as db:
+        rows = list(db.execute("SELECT * FROM resumes WHERE deleted_at='' ORDER BY is_default DESC,category COLLATE NOCASE,name COLLATE NOCASE"))
+    return [public_resume(row) for row in rows]
+
+
+def default_resume_id():
+    with connect() as db:
+        row = db.execute("SELECT id FROM resumes WHERE deleted_at='' AND is_default=1 LIMIT 1").fetchone()
+    if not row:
+        return ""
+    resume = get_resume(row["id"])
+    return row["id"] if resume and resume["available"] else ""
+
+
+def validate_resume_file(name, content):
+    filename = Path(str(name or "")).name[:180]
+    extension = Path(filename).suffix.lower()
+    if extension not in (".pdf", ".docx"):
+        raise ValueError("Resume must be PDF or DOCX.")
+    try:
+        raw = base64.b64decode(content, validate=True)
+    except Exception:
+        raise ValueError("Invalid resume data.") from None
+    if not raw or len(raw) > 8_000_000:
+        raise ValueError("Resume must be under 8 MB.")
+    if extension == ".pdf" and not raw.startswith(b"%PDF-"):
+        raise ValueError("The selected file is not a valid PDF.")
+    if extension == ".docx":
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                if "[Content_Types].xml" not in archive.namelist() or "word/document.xml" not in archive.namelist():
+                    raise ValueError
+        except (ValueError, zipfile.BadZipFile, KeyError):
+            raise ValueError("The selected file is not a valid DOCX.") from None
+    mime = "application/pdf" if extension == ".pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    return filename, extension, mime, raw
+
+
+def docx_preview(raw, filename):
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            root = ET.fromstring(archive.read("word/document.xml"))
+    except (ValueError, zipfile.BadZipFile, KeyError, ET.ParseError):
+        raise ValueError("This DOCX file cannot be previewed.") from None
+    namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    paragraphs = []
+    for paragraph in root.iter(namespace + "p"):
+        text = "".join(node.text or "" for node in paragraph.iter(namespace + "t")).strip()
+        if text:
+            paragraphs.append(f"<p>{html.escape(text)}</p>")
+    body = "".join(paragraphs) or "<p class='empty'>This document has no previewable text.</p>"
+    return ("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+            f"<title>{html.escape(filename)}</title><style>body{{margin:0;background:#f3f5f4;color:#1b292f;font:15px/1.65 Segoe UI,system-ui,sans-serif}}"
+            ".page{max-width:760px;min-height:960px;margin:28px auto;padding:68px 76px;background:#fff;box-shadow:0 12px 35px #23343a18}"
+            "h1{margin:0 0 28px;padding-bottom:16px;border-bottom:1px solid #dce4e3;font-size:18px;overflow-wrap:anywhere}"
+            "p{margin:0 0 12px;white-space:pre-wrap;overflow-wrap:anywhere}.empty{color:#68777e}@media(max-width:700px){.page{margin:0;padding:30px 22px;min-height:100vh}}"
+            f"</style></head><body><main class='page'><h1>{html.escape(filename)}</h1>{body}</main></body></html>").encode("utf-8")
+
+
+def write_resume_file(resume_id, extension, raw):
+    folder = DATA / "resumes" / "library"
+    folder.mkdir(parents=True, exist_ok=True)
+    relative = f"resumes/library/{resume_id}{extension}"
+    destination = DATA / relative
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    temporary.write_bytes(raw)
+    os.replace(temporary, destination)
+    return relative
+
+
+def create_resume(data):
+    filename, extension, mime, raw = validate_resume_file(data.get("filename") or data.get("name"), data.get("content", ""))
+    name = str(data.get("display_name") or Path(filename).stem).strip()[:120]
+    category = str(data.get("category") or "Uncategorized").strip()[:80]
+    if not name:
+        raise ValueError("Resume name is required.")
+    resume_id = str(uuid.uuid4())
+    relative = write_resume_file(resume_id, extension, raw)
+    stamp = now_iso()
+    with LOCK, connect() as db:
+        make_default = bool(data.get("is_default")) or db.execute("SELECT COUNT(*) FROM resumes WHERE deleted_at='' AND is_default=1").fetchone()[0] == 0
+        if make_default:
+            db.execute("UPDATE resumes SET is_default=0")
+        db.execute("""INSERT INTO resumes(id,name,category,stored_path,original_filename,mime_type,size_bytes,access_token,is_default,created_at,updated_at)
+                      VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                   (resume_id, name, category or "Uncategorized", relative, filename, mime, len(raw), secrets.token_urlsafe(32), int(make_default), stamp, stamp))
+    return get_resume(resume_id)
+
+
+def register_legacy_resume(relative):
+    path = (DATA / relative).resolve()
+    if not path.is_relative_to((DATA / "resumes").resolve()) or not path.is_file() or path.suffix.lower() not in (".pdf", ".docx"):
+        raise ValueError("Invalid or missing resume file.")
+    filename = path.name.split("_", 1)[-1] if "_" in path.name else path.name
+    resume_id = str(uuid.uuid4())
+    mime = "application/pdf" if path.suffix.lower() == ".pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    stamp = now_iso()
+    with LOCK, connect() as db:
+        make_default = db.execute("SELECT COUNT(*) FROM resumes WHERE deleted_at='' AND is_default=1").fetchone()[0] == 0
+        db.execute("""INSERT INTO resumes(id,name,category,stored_path,original_filename,mime_type,size_bytes,access_token,is_default,created_at,updated_at)
+                      VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                   (resume_id, Path(filename).stem[:120] or "Resume", "Uncategorized", relative, filename[:180], mime,
+                    path.stat().st_size, secrets.token_urlsafe(32), int(make_default), stamp, stamp))
+    return resume_id
+
+
+def update_resume(resume_id, data):
+    existing = get_resume(resume_id, include_deleted=False, include_token=True)
+    if not existing:
+        raise ValueError("Resume not found.")
+    fields = {}
+    if "name" in data:
+        name = str(data["name"]).strip()[:120]
+        if not name:
+            raise ValueError("Resume name is required.")
+        fields["name"] = name
+    if "category" in data:
+        fields["category"] = str(data["category"]).strip()[:80] or "Uncategorized"
+    old_path = existing["stored_path"]
+    if data.get("content") is not None:
+        with connect() as db:
+            sending = db.execute("SELECT COUNT(*) FROM entries WHERE resume_id=? AND status='sending'", (resume_id,)).fetchone()[0]
+        if sending:
+            raise ValueError("This resume is attached to an email currently sending. Replace it after the send finishes.")
+        filename, extension, mime, raw = validate_resume_file(data.get("filename"), data.get("content", ""))
+        fields.update({"stored_path": write_resume_file(resume_id, extension, raw), "original_filename": filename,
+                       "mime_type": mime, "size_bytes": len(raw), "access_token": secrets.token_urlsafe(32)})
+    make_default = data.get("is_default")
+    with LOCK, connect() as db:
+        if make_default is True:
+            db.execute("UPDATE resumes SET is_default=0")
+            fields["is_default"] = 1
+        elif make_default is False:
+            fields["is_default"] = 0
+        if fields:
+            fields["updated_at"] = now_iso()
+            assignments = ",".join(f"{key}=?" for key in fields)
+            db.execute(f"UPDATE resumes SET {assignments} WHERE id=? AND deleted_at=''", (*fields.values(), resume_id))
+    if fields.get("stored_path") and old_path != fields["stored_path"]:
+        old_file = (DATA / old_path).resolve()
+        if old_file.is_relative_to((DATA / "resumes").resolve()):
+            old_file.unlink(missing_ok=True)
+    file_replaced = "stored_path" in fields
+    for entry in entries():
+        if entry.get("resume_id") == resume_id:
+            if file_replaced:
+                with connect() as db:
+                    db.execute("UPDATE entries SET resume_path=?,status=CASE WHEN status='approved' THEN 'draft' ELSE status END,gmail_dirty=CASE WHEN gmail_draft_id<>'' THEN 1 ELSE gmail_dirty END,updated_at=? WHERE id=?",
+                               (fields["stored_path"], now_iso(), entry["id"]))
+            sync_entry(entry["id"])
+    return get_resume(resume_id)
+
+
+def delete_resume(resume_id):
+    existing = get_resume(resume_id, include_deleted=False, include_token=True)
+    if not existing:
+        raise ValueError("Resume not found.")
+    with connect() as db:
+        sending = db.execute("SELECT COUNT(*) FROM entries WHERE resume_id=? AND status='sending'", (resume_id,)).fetchone()[0]
+    if sending:
+        raise ValueError("This resume is attached to an email currently sending. Try again after it finishes.")
+    with LOCK, connect() as db:
+        db.execute("UPDATE resumes SET deleted_at=?,is_default=0,updated_at=? WHERE id=? AND deleted_at=''", (now_iso(), now_iso(), resume_id))
+        if existing["is_default"]:
+            replacement = db.execute("SELECT id FROM resumes WHERE deleted_at='' ORDER BY created_at LIMIT 1").fetchone()
+            if replacement:
+                db.execute("UPDATE resumes SET is_default=1,updated_at=? WHERE id=?", (now_iso(), replacement["id"]))
+    path = (DATA / existing["stored_path"]).resolve()
+    if path.is_relative_to((DATA / "resumes").resolve()):
+        path.unlink(missing_ok=True)
+    affected = [entry["id"] for entry in entries() if entry.get("resume_id") == resume_id]
+    for entry_id in affected:
+        with connect() as db:
+            db.execute("UPDATE entries SET status=CASE WHEN status='approved' THEN 'draft' ELSE status END,gmail_dirty=CASE WHEN gmail_draft_id<>'' THEN 1 ELSE gmail_dirty END,updated_at=? WHERE id=?", (now_iso(), entry_id))
+        sync_entry(entry_id)
+    return len(affected)
+
+
+def resume_file_for_entry(entry):
+    resume = get_resume(entry.get("resume_id", ""), include_deleted=False, include_token=True)
+    if not resume or not resume["available"]:
+        raise ValueError("Resume missing. Select an available resume before continuing.")
+    path = (DATA / resume["stored_path"]).resolve()
+    if not path.is_relative_to((DATA / "resumes").resolve()) or not path.is_file():
+        raise ValueError("Resume missing. Select an available resume before continuing.")
+    return resume, path
 
 
 def public_https_url(value):
@@ -210,12 +490,48 @@ def canonical_url(value, requested_kind="job"):
 def get_entry(entry_id):
     with connect() as db:
         row = db.execute("SELECT * FROM entries WHERE id=?", (entry_id,)).fetchone()
-    return dict(row) if row else None
+    return public_entry(row) if row else None
+
+
+def public_entry(row):
+    entry = dict(row)
+    try:
+        emails = json.loads(entry["contact_emails"])
+        entry["contact_emails"] = emails if isinstance(emails, list) else []
+    except (TypeError, ValueError):
+        entry["contact_emails"] = []
+    resume = get_resume(entry.get("resume_id", ""), include_deleted=True)
+    entry["resume"] = resume
+    entry["resume_status"] = "Resume Selected" if resume and resume["available"] else "Resume Missing"
+    entry["readiness_status"] = "Ready to Send" if (
+        entry.get("apply_method") == "email" and resume and resume["available"] and
+        all(entry.get(key) for key in ("recipient", "subject", "body"))
+    ) else entry["resume_status"]
+    return entry
 
 
 def entries():
     with connect() as db:
-        return [dict(r) for r in db.execute("SELECT * FROM entries ORDER BY created_at DESC")]
+        return [public_entry(r) for r in db.execute("SELECT * FROM entries ORDER BY created_at DESC")]
+
+
+def extract_emails(text):
+    found = []
+    for match in EMAIL_PATTERN.findall(str(text or "")):
+        address = match.lower()
+        if address not in found:
+            found.append(address)
+    return found[:30]
+
+
+def contact_emails(value, *sources):
+    values = value if isinstance(value, list) else [value]
+    found = []
+    for item in [*values, *sources]:
+        for address in extract_emails(item):
+            if address not in found:
+                found.append(address)
+    return found[:30]
 
 
 def capture(data):
@@ -223,7 +539,9 @@ def capture(data):
     platform = platform_for_host(urllib.parse.urlparse(url).hostname or "")
     title = str(data.get("title") or ("Job opportunity" if kind == "job" else "Hiring post")).strip()[:300]
     company = str(data.get("company") or "").strip()[:300]
-    excerpt = str(data.get("excerpt") or "").strip()[:4000]
+    excerpt = str(data.get("excerpt") or "").strip()[:8000]
+    post_details = str(data.get("post_details") or "").strip()[:4000]
+    emails = contact_emails(data.get("contact_emails") or [], excerpt, post_details)
     method = str(data.get("apply_method") or "unknown").strip().lower()
     if method not in ("unknown", "email", "external_form"):
         raise ValueError("Choose a valid application method.")
@@ -231,8 +549,17 @@ def capture(data):
     if apply_url:
         public_https_url(apply_url)
     recipient = str(data.get("recipient") or "").strip()
+    if kind == "post" and not recipient and emails:
+        recipient = emails[0]
+    if kind == "post" and method == "unknown" and recipient:
+        method = "email"
     if recipient and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):
         raise ValueError("Enter a valid recipient email.")
+    emails = contact_emails(emails, recipient)
+    resume_id = str(data.get("resume_id") or default_resume_id()).strip()
+    selected_resume = get_resume(resume_id) if resume_id else None
+    if resume_id and (not selected_resume or not selected_resume["available"]):
+        raise ValueError("Selected resume is unavailable. Choose another resume.")
     needs_review = int(data.get("needs_review", True) is not False)
     with LOCK, connect() as db:
         existing = db.execute("SELECT id FROM entries WHERE url=?", (url,)).fetchone()
@@ -241,26 +568,39 @@ def capture(data):
         entry_id = str(uuid.uuid4())
         stamp = now_iso()
         db.execute("""INSERT INTO entries(id,url,kind,title,company,excerpt,recipient,send_at,created_at,updated_at,
-                    platform,apply_method,apply_url,needs_review) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    platform,apply_method,apply_url,needs_review,contact_emails,post_details,resume_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                    (entry_id, url, kind, title, company, excerpt, recipient, tomorrow_nine(), stamp, stamp,
-                    platform, method, apply_url, needs_review))
+                    platform, method, apply_url, needs_review, json.dumps(emails), post_details, resume_id))
     return get_entry(entry_id), False
 
 
 def notion_request(method, path, payload=None):
+    global NOTION_LAST_REQUEST
     token = unprotect(CONFIG_DATA.get("notion_token", ""))
     if not token:
         raise RuntimeError("Notion is not connected.")
     body = json.dumps(payload).encode() if payload is not None else None
     request = urllib.request.Request("https://api.notion.com/v1" + path, data=body, method=method,
         headers={"Authorization": "Bearer " + token, "Notion-Version": NOTION_VERSION, "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            return json.load(response)
-    except urllib.error.HTTPError as error:
-        try: detail = json.load(error).get("message", error.reason)
-        except Exception: detail = error.reason
-        raise RuntimeError(f"Notion {error.code}: {detail}") from None
+    for attempt in range(3):
+        with NOTION_REQUEST_LOCK:
+            delay = max(0.0, 0.35 - (time.monotonic() - NOTION_LAST_REQUEST))
+            if delay:
+                time.sleep(delay)
+            NOTION_LAST_REQUEST = time.monotonic()
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as error:
+            if method == "GET" and error.code in (429, 529, 500, 502, 503, 504) and attempt < 2:
+                try: wait = max(0, int(error.headers.get("Retry-After", "")))
+                except (TypeError, ValueError): wait = 2 ** attempt
+                error.close()
+                time.sleep(min(wait, 60))
+                continue
+            try: detail = json.load(error).get("message", error.reason)
+            except Exception: detail = error.reason
+            raise RuntimeError(f"Notion {error.code}: {detail}") from None
 
 
 NOTION_FIELDS = {
@@ -278,7 +618,13 @@ NOTION_FIELDS = {
     "sent_at": ("Sent At", [], "date"),
     "apply_method": ("Application Method", [], "select"),
     "apply_url": ("Apply Link", [], "url"),
-    "needs_review": ("Needs Review", [], "checkbox")
+    "needs_review": ("Needs Review", [], "checkbox"),
+    "contact_emails": ("Contact Emails", [], "rich_text"),
+    "post_details": ("Post Details", [], "rich_text"),
+    "resume_name": ("Resume Name", [], "rich_text"),
+    "resume_category": ("Resume Category", [], "rich_text"),
+    "resume_link": ("Resume Link", [], "url"),
+    "resume_status": ("Resume Status", [], "rich_text")
 }
 
 
@@ -324,7 +670,7 @@ def rich(value):
 
 def notion_properties(entry):
     mapping = CONFIG_DATA.get("notion_mapping")
-    if not mapping or not all(name in mapping for name in ("apply_method", "apply_url", "needs_review", "application_source_options")):
+    if not mapping or not all(name in mapping for name in ("apply_method", "apply_url", "needs_review", "contact_emails", "post_details", "resume_name", "resume_category", "resume_link", "resume_status", "application_source_options")):
         mapping = ensure_notion_schema(CONFIG_DATA["notion_data_source_id"])
         CONFIG_DATA["notion_mapping"] = mapping
         save_config(CONFIG_DATA)
@@ -347,6 +693,13 @@ def notion_properties(entry):
     props[mapping["apply_method"]] = {"select": {"name": {"email": "Email", "external_form": "External form", "unknown": "Unknown"}[entry["apply_method"]]}}
     props[mapping["apply_url"]] = {"url": entry["apply_url"] or None}
     props[mapping["needs_review"]] = {"checkbox": bool(entry["needs_review"])}
+    props[mapping["contact_emails"]] = rich("\n".join(entry["contact_emails"]))
+    props[mapping["post_details"]] = rich(entry["post_details"])
+    resume = entry.get("resume") or {}
+    props[mapping["resume_name"]] = rich(resume.get("name", ""))
+    props[mapping["resume_category"]] = rich(resume.get("category", ""))
+    props[mapping["resume_link"]] = {"url": resume.get("file_url") or None}
+    props[mapping["resume_status"]] = rich(entry.get("resume_status", "Resume Missing"))
     if "company" in mapping:
         props[mapping["company"]] = rich(entry["company"])
     if "application_source" in mapping:
@@ -356,6 +709,51 @@ def notion_properties(entry):
     return props
 
 
+def notion_page_trashed(entry):
+    page = notion_request("GET", "/pages/" + entry["notion_id"])
+    if page.get("object") != "page" or page.get("id", "").replace("-", "") != entry["notion_id"].replace("-", ""):
+        raise RuntimeError("Notion returned an unexpected page; the local item was kept.")
+    return page.get("in_trash") is True or page.get("archived") is True
+
+
+def delete_local_entry(entry_id, notion_id=None):
+    """Remove a local record only; this function never calls the Notion API."""
+    with LOCK, connect() as db:
+        if notion_id is None:
+            return db.execute("DELETE FROM entries WHERE id=? AND status<>'sending'", (entry_id,)).rowcount
+        return db.execute("DELETE FROM entries WHERE id=? AND notion_id=? AND status<>'sending'", (entry_id, notion_id)).rowcount
+
+
+def reconcile_notion_deletions(force=False):
+    """Remove only pages that Notion explicitly reports as in trash.
+
+    Missing access and API failures leave the local record untouched.
+    """
+    if not CONFIG_DATA.get("notion_token") or not CONFIG_DATA.get("notion_data_source_id"):
+        return {"checked": 0, "removed": 0, "error": ""}
+    with NOTION_CHECK_LOCK:
+        if not force and time.monotonic() - NOTION_CHECK_STATE["last_run"] < NOTION_CHECK_INTERVAL:
+            return {"checked": 0, "removed": 0, "error": NOTION_CHECK_STATE["error"]}
+        NOTION_CHECK_STATE["last_run"] = time.monotonic()
+        checked = removed = 0
+        errors = []
+        for entry in entries():
+            if not entry["notion_id"]:
+                continue
+            try:
+                trashed = notion_page_trashed(entry)
+                checked += 1
+                if trashed:
+                    removed += delete_local_entry(entry["id"], entry["notion_id"])
+            except Exception as error:
+                errors.append(str(error)[:300])
+                if not str(error).startswith("Notion 404:"):
+                    break
+        NOTION_CHECK_STATE["checked_at"] = now_iso()
+        NOTION_CHECK_STATE["error"] = errors[0] if errors else ""
+        return {"checked": checked, "removed": removed, "error": NOTION_CHECK_STATE["error"]}
+
+
 def sync_entry(entry_id):
     if not CONFIG_DATA.get("notion_token") or not CONFIG_DATA.get("notion_data_source_id"):
         return
@@ -363,6 +761,9 @@ def sync_entry(entry_id):
     if not entry:
         return
     try:
+        if entry["notion_id"] and notion_page_trashed(entry):
+            delete_local_entry(entry_id, entry["notion_id"])
+            return
         props = notion_properties(entry)
         if entry["notion_id"]:
             notion_request("PATCH", "/pages/" + entry["notion_id"], {"properties": props})
@@ -385,7 +786,15 @@ def update_entry(entry_id, data):
         raise ValueError("A sending or sent entry cannot be edited.")
     if entry["delivery_mode"] == "gmail_scheduled":
         raise ValueError("This item was marked scheduled in Gmail. Cancel it there before changing the application.")
-    fields = {k: str(data[k]).strip() for k in ("title", "company", "excerpt", "recipient", "subject", "body", "send_at", "resume_path", "apply_method", "apply_url") if k in data}
+    fields = {k: str(data[k]).strip() for k in ("title", "company", "excerpt", "post_details", "recipient", "subject", "body", "send_at", "resume_path", "resume_id", "apply_method", "apply_url") if k in data}
+    if "excerpt" in fields:
+        fields["excerpt"] = fields["excerpt"][:8000]
+    if "post_details" in fields:
+        fields["post_details"] = fields["post_details"][:4000]
+    if "contact_emails" in data:
+        fields["contact_emails"] = json.dumps(contact_emails(data["contact_emails"]))
+    elif "excerpt" in fields or "post_details" in fields:
+        fields["contact_emails"] = json.dumps(contact_emails(entry["contact_emails"], fields.get("excerpt", ""), fields.get("post_details", "")))
     if "needs_review" in data:
         fields["needs_review"] = int(bool(data["needs_review"]))
     if "apply_method" in fields and fields["apply_method"] not in ("unknown", "email", "external_form"):
@@ -401,22 +810,31 @@ def update_entry(entry_id, data):
     if "send_at" in fields:
         try: dt.datetime.fromisoformat(fields["send_at"]).astimezone(dt.timezone.utc)
         except Exception: raise ValueError("Invalid send time.") from None
-    if "resume_path" in fields and fields["resume_path"] and not (DATA / fields["resume_path"]).resolve().is_relative_to((DATA / "resumes").resolve()):
-        raise ValueError("Invalid resume path.")
+    if "resume_id" in fields:
+        selected = get_resume(fields["resume_id"], include_token=True) if fields["resume_id"] else None
+        if fields["resume_id"] and (not selected or not selected["available"]):
+            raise ValueError("Selected resume is unavailable. Choose another resume.")
+        fields["resume_path"] = selected["stored_path"] if selected else ""
+    elif "resume_path" in fields and fields["resume_path"]:
+        with connect() as db:
+            legacy = db.execute("SELECT id FROM resumes WHERE stored_path=? AND deleted_at=''", (fields["resume_path"],)).fetchone()
+        fields["resume_id"] = legacy["id"] if legacy else register_legacy_resume(fields["resume_path"])
     merged = {**entry, **fields}
-    if entry["status"] == "approved" and any(str(entry[key]) != str(value) for key, value in fields.items()):
+    if entry["status"] == "approved" and any(
+        (json.dumps(entry[key]) if key == "contact_emails" else str(entry[key])) != str(value)
+        for key, value in fields.items()
+    ):
         fields["status"] = "draft"
-    if entry["gmail_draft_id"] and any(key in fields and str(entry[key]) != str(fields[key]) for key in ("recipient", "subject", "body", "resume_path", "apply_method")):
+    if entry["gmail_draft_id"] and any(key in fields and str(entry[key]) != str(fields[key]) for key in ("recipient", "subject", "body", "resume_path", "resume_id", "apply_method")):
         fields["gmail_dirty"] = 1
     if data.get("approved") is True:
         if entry["gmail_draft_id"]:
             raise ValueError("This item has a Gmail draft. Check Gmail before using the local sender.")
         if merged["apply_method"] != "email":
             raise ValueError("Only email applications can be scheduled. Choose Email as the application method.")
-        if not all(merged[k] for k in ("recipient", "subject", "body", "send_at", "resume_path")):
+        if not all(merged[k] for k in ("recipient", "subject", "body", "send_at", "resume_id")):
             raise ValueError("Recipient, subject, body, send time, and resume are required before approval.")
-        if not (DATA / merged["resume_path"]).is_file():
-            raise ValueError("Resume file is missing.")
+        resume_file_for_entry(merged)
         if not CONFIG_DATA.get("smtp_verified"):
             raise ValueError("Verify an email account before approval.")
         send_time = dt.datetime.fromisoformat(merged["send_at"])
@@ -436,7 +854,9 @@ def update_entry(entry_id, data):
     fields["updated_at"] = now_iso()
     with LOCK, connect() as db:
         assignments = ",".join(f"{key}=?" for key in fields)
-        db.execute(f"UPDATE entries SET {assignments} WHERE id=?", (*fields.values(), entry_id))
+        changed = db.execute(f"UPDATE entries SET {assignments} WHERE id=?", (*fields.values(), entry_id)).rowcount
+        if not changed:
+            raise ValueError("This item was removed from ApplyDock. Refresh the list.")
     return get_entry(entry_id)
 
 
@@ -447,9 +867,7 @@ def send_mail(entry):
     password = unprotect(settings.get("password", ""))
     if not password:
         raise RuntimeError("Email account is not connected.")
-    resume = DATA / entry["resume_path"]
-    if not resume.is_file():
-        raise RuntimeError("Resume file is missing.")
+    resume_record, resume = resume_file_for_entry(entry)
     msg = email.message.EmailMessage()
     msg["From"] = settings["from"]
     msg["To"] = entry["recipient"]
@@ -457,7 +875,7 @@ def send_mail(entry):
     msg.set_content(entry["body"])
     mime = "application/pdf" if resume.suffix.lower() == ".pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     maintype, subtype = mime.split("/", 1)
-    msg.add_attachment(resume.read_bytes(), maintype=maintype, subtype=subtype, filename=resume.name.split("_", 1)[-1])
+    msg.add_attachment(resume.read_bytes(), maintype=maintype, subtype=subtype, filename=resume_record["original_filename"])
     context = ssl.create_default_context()
     host, port = settings["host"], int(settings["port"])
     if port == 465:
@@ -628,11 +1046,9 @@ def gmail_access_token():
 def gmail_mime(entry):
     if entry["apply_method"] != "email":
         raise ValueError("Choose Email as the application method.")
-    if not all(entry[k] for k in ("recipient", "subject", "body", "resume_path")):
+    if not all(entry[k] for k in ("recipient", "subject", "body", "resume_id")):
         raise ValueError("Recipient, subject, body, and resume are required for a Gmail draft.")
-    resume = (DATA / entry["resume_path"]).resolve()
-    if not resume.is_relative_to((DATA / "resumes").resolve()) or not resume.is_file():
-        raise ValueError("Resume file is missing.")
+    resume_record, resume = resume_file_for_entry(entry)
     msg = email.message.EmailMessage()
     msg["From"] = CONFIG_DATA["gmail_address"]
     msg["To"] = entry["recipient"]
@@ -640,7 +1056,7 @@ def gmail_mime(entry):
     msg.set_content(entry["body"])
     mime = "application/pdf" if resume.suffix.lower() == ".pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     maintype, subtype = mime.split("/", 1)
-    msg.add_attachment(resume.read_bytes(), maintype=maintype, subtype=subtype, filename=resume.name.split("_", 1)[-1])
+    msg.add_attachment(resume.read_bytes(), maintype=maintype, subtype=subtype, filename=resume_record["original_filename"])
     return base64.urlsafe_b64encode(msg.as_bytes()).decode().rstrip("=")
 
 
@@ -740,11 +1156,22 @@ def process_due(current=None):
         return 0
     current_utc = current.astimezone(dt.timezone.utc)
     due = [e for e in entries() if e["status"] == "approved" and e["delivery_mode"] == "local" and dt.datetime.fromisoformat(e["send_at"]).astimezone(dt.timezone.utc) <= current_utc]
+    attempted = 0
     for entry in due:
+        if entry["notion_id"] and CONFIG_DATA.get("notion_token"):
+            try:
+                if notion_page_trashed(entry):
+                    delete_local_entry(entry["id"], entry["notion_id"])
+                    continue
+            except Exception as error:
+                with connect() as db:
+                    db.execute("UPDATE entries SET sync_error=? WHERE id=?", ("Could not verify Notion before sending: " + str(error)[:850], entry["id"]))
+                continue
         with LOCK, connect() as db:
             changed = db.execute("UPDATE entries SET status='sending',updated_at=? WHERE id=? AND status='approved' AND delivery_mode='local'", (now_iso(), entry["id"])).rowcount
         if not changed:
             continue
+        attempted += 1
         # 'sending' is deliberately never retried automatically after a crash: delivery may be uncertain.
         try:
             send_mail(entry)
@@ -754,13 +1181,15 @@ def process_due(current=None):
             with connect() as db:
                 db.execute("UPDATE entries SET status='failed',send_error=?,updated_at=? WHERE id=?", (str(error)[:1000], now_iso(), entry["id"]))
         sync_entry(entry["id"])
-    return len(due)
+    return attempted
 
 
 def scheduler():
     while True:
         try: process_due()
         except Exception as error: print("Scheduler error:", error, flush=True)
+        try: reconcile_notion_deletions()
+        except Exception as error: print("Notion deletion check error:", error, flush=True)
         time.sleep(10)
 
 
@@ -775,7 +1204,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Local-Key")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 
     def respond(self, code, data):
         payload = json.dumps(data).encode()
@@ -835,6 +1264,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.respond_html(200, f"Connected Gmail account: {address}."); return
             except Exception as error:
                 self.respond_html(400, str(error)); return
+        resume_file_match = re.fullmatch(r"/api/resumes/([a-f0-9-]+)/file", path.path)
+        if resume_file_match:
+            if self.headers.get("Host") not in (f"{HOST}:{PORT}", f"localhost:{PORT}"):
+                self.respond(403, {"error": "Invalid host."}); return
+            resume = get_resume(resume_file_match.group(1), include_deleted=False, include_token=True)
+            supplied_key = self.headers.get("X-Local-Key", "")
+            supplied_token = urllib.parse.parse_qs(path.query).get("access", [""])[0]
+            key_ok = hmac.compare_digest(supplied_key, CONFIG_DATA["pairing_key"])
+            token_ok = bool(resume and supplied_token and hmac.compare_digest(supplied_token, resume["access_token"]))
+            if not resume or not resume["available"]:
+                self.respond(404, {"error": "Resume file is unavailable."}); return
+            if not (key_ok or token_ok):
+                self.respond(401, {"error": "Resume access is required."}); return
+            file_path = (DATA / resume["stored_path"]).resolve()
+            if not file_path.is_relative_to((DATA / "resumes").resolve()) or not file_path.is_file():
+                self.respond(404, {"error": "Resume file is unavailable."}); return
+            content = file_path.read_bytes()
+            query = urllib.parse.parse_qs(path.query)
+            disposition = "attachment" if query.get("download", [""])[0] == "1" else "inline"
+            if disposition == "inline" and query.get("preview", [""])[0] == "1" and resume["mime_type"].endswith("wordprocessingml.document"):
+                preview = docx_preview(content, resume["original_filename"])
+                self.send_response(200)
+                self.cors()
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(preview)))
+                self.send_header("Cache-Control", "private, no-store")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers(); self.wfile.write(preview); return
+            filename = urllib.parse.quote(resume["original_filename"])
+            self.send_response(200)
+            self.cors()
+            self.send_header("Content-Type", resume["mime_type"])
+            self.send_header("Content-Disposition", f"{disposition}; filename*=UTF-8''{filename}")
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "private, no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers(); self.wfile.write(content); return
         if self.path in ("/", "/app.js", "/style.css"):
             filename = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css"}[self.path]
             content = (ROOT / "dashboard" / filename).read_bytes()
@@ -845,23 +1314,37 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers(); self.wfile.write(content); return
         if not self.authorized(): return
         if self.path == "/api/state":
-            self.respond(200, {"entries": entries(), "notion_connected": bool(CONFIG_DATA.get("notion_token")),
+            self.respond(200, {"entries": entries(), "resumes": resumes(), "notion_connected": bool(CONFIG_DATA.get("notion_token") and CONFIG_DATA.get("notion_data_source_id")),
                 "notion_data_source_id": CONFIG_DATA.get("notion_data_source_id", ""),
+                "notion_sync_checked_at": NOTION_CHECK_STATE["checked_at"],
+                "notion_sync_error": NOTION_CHECK_STATE["error"],
                 "smtp": {k: v for k, v in CONFIG_DATA.get("smtp", {}).items() if k != "password"},
                 "smtp_connected": bool(CONFIG_DATA.get("smtp_verified")),
                 "gmail_client_ready": bool(CONFIG_DATA.get("gmail_client_id")),
+                "gmail_client_id": CONFIG_DATA.get("gmail_client_id", ""),
                 "gmail_connected": bool(CONFIG_DATA.get("gmail_refresh_token")),
                 "gmail_address": CONFIG_DATA.get("gmail_address", ""),
                 "candidate_profile": CONFIG_DATA.get("candidate_profile", ""),
+                "profile_saved": bool(CONFIG_DATA.get("candidate_profile_saved", CONFIG_DATA.get("candidate_profile"))),
                 "local_time": dt.datetime.now().astimezone().isoformat()})
         else: self.respond(404, {"error": "Not found."})
 
     def do_POST(self): self.mutate("POST")
     def do_PATCH(self): self.mutate("PATCH")
+    def do_DELETE(self): self.mutate("DELETE")
 
     def mutate(self, method):
         if not self.authorized(): return
         try:
+            match = re.fullmatch(r"/api/entries/([a-f0-9-]+)", self.path)
+            if match and method == "DELETE":
+                if not delete_local_entry(match.group(1)):
+                    raise ValueError("Entry not found or currently sending. No Notion page was changed.")
+                self.respond(200, {"ok": True, "notion_unchanged": True}); return
+            resume_match = re.fullmatch(r"/api/resumes/([a-f0-9-]+)", self.path)
+            if resume_match and method == "DELETE":
+                affected = delete_resume(resume_match.group(1))
+                self.respond(200, {"ok": True, "applications_needing_resume": affected}); return
             data = self.body()
             if self.path == "/api/capture" and method == "POST":
                 entry, duplicate = capture(data)
@@ -900,25 +1383,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.respond(200, {"authorization_url": begin_gmail_oauth()}); return
             if self.path == "/api/settings/profile" and method == "POST":
                 CONFIG_DATA["candidate_profile"] = str(data.get("profile", "")).strip()[:4000]
+                CONFIG_DATA["candidate_profile_saved"] = True
                 save_config(CONFIG_DATA)
                 self.respond(200, {"ok": True}); return
-            if self.path == "/api/resume" and method == "POST":
-                name = Path(str(data.get("name", ""))).name
-                extension = Path(name).suffix.lower()
-                if extension not in (".pdf", ".docx"):
-                    raise ValueError("Resume must be PDF or DOCX.")
-                try: raw = base64.b64decode(data.get("content", ""), validate=True)
-                except Exception: raise ValueError("Invalid resume data.") from None
-                if not raw or len(raw) > 8_000_000: raise ValueError("Resume must be under 8 MB.")
-                folder = DATA / "resumes"; folder.mkdir(exist_ok=True)
-                safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", name)[:100]
-                relative = "resumes/" + uuid.uuid4().hex + "_" + safe_name
-                (DATA / relative).write_bytes(raw)
-                self.respond(200, {"resume_path": relative}); return
+            if self.path in ("/api/resume", "/api/resumes") and method == "POST":
+                if self.path == "/api/resume":
+                    data = {**data, "filename": data.get("name"), "display_name": Path(str(data.get("name", "Resume"))).stem}
+                resume = create_resume(data)
+                internal = get_resume(resume["id"], include_token=True)
+                self.respond(200, {"resume": resume, "resume_id": resume["id"], "resume_path": internal["stored_path"]}); return
+            if resume_match and method == "PATCH":
+                self.respond(200, {"resume": update_resume(resume_match.group(1), data)}); return
             if self.path == "/api/sync" and method == "POST":
+                reconciliation = reconcile_notion_deletions(force=True)
                 for entry in entries(): sync_entry(entry["id"])
-                self.respond(200, {"entries": entries()}); return
-            match = re.fullmatch(r"/api/entries/([a-f0-9-]+)", self.path)
+                self.respond(200, {"entries": entries(), "reconciliation": reconciliation}); return
             ai_match = re.fullmatch(r"/api/entries/([a-f0-9-]+)/ai-draft", self.path)
             gmail_match = re.fullmatch(r"/api/entries/([a-f0-9-]+)/(gmail-draft|gmail-prepare|gmail-scheduled)", self.path)
             if ai_match and method == "POST":
@@ -944,11 +1423,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 def main():
+    try:
+        server = http.server.ThreadingHTTPServer((HOST, PORT), Handler)
+    except OSError as error:
+        if getattr(error, "winerror", None) == 10048 or getattr(error, "errno", None) in (48, 98, 10048):
+            print(f"ApplyDock could not start because port {PORT} is already in use.", flush=True)
+            print("Close the other ApplyDock helper window, then run start.cmd again.", flush=True)
+            return
+        raise
     threading.Thread(target=scheduler, daemon=True).start()
     print(f"Local dashboard: http://{HOST}:{PORT}/", flush=True)
     print(f"Pairing key: {CONFIG_DATA['pairing_key']}", flush=True)
     print("Keep this window open for the 9 AM sender. The computer must be awake and connected.", flush=True)
-    http.server.ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    server.serve_forever()
 
 
 if __name__ == "__main__": main()

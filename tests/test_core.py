@@ -54,6 +54,111 @@ class CoreTests(unittest.TestCase):
         for url in ("https://localhost/jobs/1", "https://127.0.0.1/jobs/1", "http://example.org/jobs/1"):
             with self.assertRaises(ValueError): server.capture({"url": url})
 
+    def test_post_contacts_and_instructions_survive_edits(self):
+        post, _ = server.capture({
+            "url": "https://www.linkedin.com/posts/hiring_activity-123/",
+            "kind": "post",
+            "title": "Hiring engineers",
+            "excerpt": "Send your CV to Jobs@Example.com or team@example.com. Apply by Friday.",
+            "post_details": "Remote in India; send a portfolio with the CV.",
+        })
+        self.assertEqual(post["contact_emails"], ["jobs@example.com", "team@example.com"])
+        self.assertEqual(post["recipient"], "jobs@example.com")
+        self.assertEqual(post["apply_method"], "email")
+        self.assertIn("Remote in India", post["post_details"])
+        updated = server.update_entry(post["id"], {"contact_emails": "team@example.com\nnew@example.com", "post_details": "Use the new contact."})
+        self.assertEqual(updated["contact_emails"], ["team@example.com", "new@example.com"])
+        self.assertEqual(server.get_entry(post["id"])["post_details"], "Use the new contact.")
+
+    def test_existing_posts_backfill_contact_emails(self):
+        with server.connect() as db:
+            db.execute("DROP TABLE entries")
+            db.execute("PRAGMA user_version=0")
+            db.execute("""CREATE TABLE entries (
+                id TEXT PRIMARY KEY, url TEXT NOT NULL UNIQUE, kind TEXT NOT NULL,
+                title TEXT NOT NULL, company TEXT NOT NULL DEFAULT '', excerpt TEXT NOT NULL DEFAULT '',
+                recipient TEXT NOT NULL DEFAULT '', subject TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '',
+                send_at TEXT NOT NULL DEFAULT '', resume_path TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'draft', notion_id TEXT NOT NULL DEFAULT '',
+                sync_error TEXT NOT NULL DEFAULT '', send_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL, sent_at TEXT NOT NULL DEFAULT ''
+            )""")
+            db.execute("INSERT INTO entries(id,url,kind,title,excerpt,recipient,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                       ("older-post", "https://www.linkedin.com/posts/older_activity-1/", "post", "Older post",
+                        "Email Hiring@Example.com. More info: team@example.com", "hiring@example.com", "now", "now"))
+        server.init_db()
+        self.assertEqual(server.get_entry("older-post")["contact_emails"], ["hiring@example.com", "team@example.com"])
+
+    def test_notion_trash_removes_only_local_record_and_errors_keep_it(self):
+        removed, _ = server.capture({"url": "https://www.linkedin.com/jobs/view/101/", "title": "Remove locally"})
+        kept, _ = server.capture({"url": "https://www.linkedin.com/jobs/view/102/", "title": "Keep locally"})
+        with server.connect() as db:
+            db.execute("UPDATE entries SET notion_id=? WHERE id=?", ("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", removed["id"]))
+            db.execute("UPDATE entries SET notion_id=? WHERE id=?", ("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", kept["id"]))
+        server.CONFIG_DATA.update({"notion_token": "encrypted", "notion_data_source_id": "source"})
+
+        def notion(method, path, payload=None):
+            self.assertEqual(method, "GET")
+            if path.endswith("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"):
+                return {"object": "page", "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "in_trash": True}
+            raise RuntimeError("Notion 404: page missing or access revoked")
+
+        with patch.object(server, "notion_request", side_effect=notion) as request:
+            result = server.reconcile_notion_deletions(force=True)
+        self.assertEqual(result["removed"], 1)
+        self.assertIsNone(server.get_entry(removed["id"]))
+        self.assertIsNotNone(server.get_entry(kept["id"]))
+        self.assertEqual({call.args[0] for call in request.call_args_list}, {"GET"})
+        with patch.object(server, "notion_request") as request:
+            self.assertEqual(server.delete_local_entry(kept["id"]), 1)
+            request.assert_not_called()
+        self.assertIsNone(server.get_entry(kept["id"]))
+
+    def test_trashed_notion_page_cancels_local_send(self):
+        entry, _ = server.capture({"url": "https://www.linkedin.com/jobs/view/103/", "title": "Cancelled"})
+        current = dt.datetime.now().astimezone().replace(hour=9, minute=0, second=0, microsecond=0)
+        with server.connect() as db:
+            db.execute("UPDATE entries SET status='approved',notion_id=?,send_at=? WHERE id=?",
+                       ("cccccccc-cccc-cccc-cccc-cccccccccccc", (current - dt.timedelta(days=1)).isoformat(), entry["id"]))
+        server.CONFIG_DATA.update({"notion_token": "encrypted", "notion_data_source_id": "source"})
+        with patch.object(server, "notion_request", return_value={"object": "page", "id": "cccccccc-cccc-cccc-cccc-cccccccccccc", "in_trash": True}), patch.object(server, "send_mail") as sender:
+            self.assertEqual(server.process_due(current), 0)
+            sender.assert_not_called()
+        self.assertIsNone(server.get_entry(entry["id"]))
+
+    def test_unavailable_notion_page_postpones_local_send(self):
+        entry, _ = server.capture({"url": "https://www.linkedin.com/jobs/view/104/", "title": "Wait for verification"})
+        current = dt.datetime.now().astimezone().replace(hour=9, minute=0, second=0, microsecond=0)
+        with server.connect() as db:
+            db.execute("UPDATE entries SET status='approved',notion_id=?,send_at=? WHERE id=?",
+                       ("dddddddd-dddd-dddd-dddd-dddddddddddd", (current - dt.timedelta(days=1)).isoformat(), entry["id"]))
+        server.CONFIG_DATA.update({"notion_token": "encrypted", "notion_data_source_id": "source"})
+        with patch.object(server, "notion_request", side_effect=RuntimeError("Notion 404: access revoked")), patch.object(server, "send_mail") as sender:
+            self.assertEqual(server.process_due(current), 0)
+            sender.assert_not_called()
+        self.assertEqual(server.get_entry(entry["id"])["status"], "approved")
+        self.assertIn("Could not verify Notion", server.get_entry(entry["id"])["sync_error"])
+
+    def test_delete_route_never_calls_notion(self):
+        entry, _ = server.capture({"url": "https://www.linkedin.com/jobs/view/105/", "title": "Local only"})
+        replies = []
+        handler = SimpleNamespace(path="/api/entries/" + entry["id"], authorized=lambda: True,
+                                  respond=lambda code, data: replies.append((code, data)))
+        with patch.object(server, "notion_request") as request:
+            server.Handler.mutate(handler, "DELETE")
+            request.assert_not_called()
+        self.assertEqual(replies, [(200, {"ok": True, "notion_unchanged": True})])
+        self.assertIsNone(server.get_entry(entry["id"]))
+
+    def test_saved_configuration_loads_after_restart(self):
+        config_path = Path(self.tmp.name) / "config.json"
+        with patch.object(server, "CONFIG", config_path):
+            server.save_config({"pairing_key": "test", "notion_data_source_id": "source", "candidate_profile": "Python engineer", "candidate_profile_saved": True, "smtp": {"host": "smtp.gmail.com", "username": "person@gmail.com"}})
+            loaded = server.load_config()
+        self.assertEqual(loaded["candidate_profile"], "Python engineer")
+        self.assertTrue(loaded["candidate_profile_saved"])
+        self.assertEqual(loaded["smtp"]["username"], "person@gmail.com")
+
     @unittest.skipUnless(os.name == "nt", "Windows credential storage")
     def test_credentials_are_encrypted_for_current_account(self):
         encrypted = server.protect("temporary-check")
@@ -126,6 +231,8 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(create["properties"]["Source URL"]["url"], entry["url"])
         self.assertEqual(create["properties"]["Company"]["rich_text"][0]["text"]["content"], "Example Co")
         self.assertEqual(create["properties"]["Application Method"]["select"]["name"], "Unknown")
+        self.assertEqual(create["properties"]["Contact Emails"]["rich_text"], [])
+        self.assertEqual(create["properties"]["Post Details"]["rich_text"], [])
         self.assertTrue(create["properties"]["Needs Review"]["checkbox"])
         self.assertEqual(server.get_entry(entry["id"])["notion_id"], "page-id")
 

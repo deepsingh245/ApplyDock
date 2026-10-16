@@ -40,10 +40,13 @@
             <div><label for="preview-platform">Platform</label><input id="preview-platform" readonly></div>
           </div>
           <label for="preview-excerpt">Job or post text</label><textarea id="preview-excerpt" name="excerpt" rows="5"></textarea>
+          <label for="preview-emails">Contact emails (one per line)</label><textarea id="preview-emails" name="contact_emails" rows="2"></textarea>
+          <label for="preview-details">Post details or instructions</label><textarea id="preview-details" name="post_details" rows="3"></textarea>
           <label for="preview-method">Application method</label>
           <select id="preview-method" name="apply_method"><option value="unknown">Unknown</option><option value="email">Email</option><option value="external_form">External form</option></select>
           <label for="preview-apply-url">Apply link (if different)</label><input id="preview-apply-url" name="apply_url" type="url">
           <label for="preview-recipient">Recipient email (if known)</label><input id="preview-recipient" name="recipient" type="email">
+          <label for="preview-resume">Resume</label><select id="preview-resume" name="resume_id"></select>
           <label class="checkbox-line"><input id="preview-review" name="needs_review" type="checkbox" checked> Needs more review</label>
           <button class="primary-button preview-save" type="submit">Save selected item</button>
         </form>
@@ -87,6 +90,7 @@
           <button class="secondary-button" type="submit">Save Notion connection</button>
         </form>
         <button id="sync" class="text-button settings-link" type="button">Retry Notion sync</button>
+        <p id="notion-sync-detail" class="muted"></p>
       </section>
 
       <section class="settings-card">
@@ -118,10 +122,17 @@
         <button id="gmail-connect" class="secondary-button gmail-settings-action" type="button">Connect Gmail</button>
         <button id="gmail-refresh" class="text-button settings-link" type="button">Refresh connection status</button>
         <p id="gmail-account" class="muted"></p>
+        <p id="gmail-client-info" class="muted"></p>
       </section>
 
       <section class="settings-card">
-        <h3>My background for AI drafts</h3>
+        <div class="settings-card-head"><h3>Resume library</h3><span id="resume-library-status" class="small-status"></span></div>
+        <p class="muted">Upload resumes once and reuse them across applications.</p>
+        <button id="resumes-open" class="secondary-button gmail-settings-action" type="button">Manage resumes</button>
+      </section>
+
+      <section class="settings-card">
+        <div class="settings-card-head"><h3>My background for AI drafts</h3><span id="profile-status" class="small-status"></span></div>
         <p class="muted">Add only factual experience. You can copy an item prompt into this Codex chat for help drafting.</p>
         <form id="profile-form">
           <label for="profile">Experience and skills</label>
@@ -130,6 +141,26 @@
         </form>
       </section>
       <p class="settings-footnote">For a reliable 9:00 AM send, keep the computer and local app running. Sending while this computer is off needs a cloud scheduler.</p>
+    </main>
+
+    <main id="resumes-screen" hidden>
+      <div class="settings-heading">
+        <button id="resumes-back" class="back-button" type="button">← Back</button>
+        <h2>Resume Library</h2>
+        <p>Files stay private on this computer and can be reused for every application.</p>
+      </div>
+      <section class="settings-card">
+        <div class="settings-card-head"><h3>Add a resume</h3><span id="resume-count" class="small-status"></span></div>
+        <form id="resume-upload-form">
+          <label for="resume-display-name">Resume name</label><input id="resume-display-name" name="display_name" required maxlength="120" placeholder="Full Stack Resume">
+          <label for="resume-category">Category</label><input id="resume-category" name="category" list="resume-categories" required maxlength="80" placeholder="Full Stack Developer">
+          <label for="resume-file">PDF or DOCX</label><input id="resume-file" name="file" type="file" accept=".pdf,.docx" required>
+          <label class="checkbox-line"><input name="is_default" type="checkbox"> Default for new applications</label>
+          <button class="secondary-button" type="submit">Upload resume</button>
+        </form>
+      </section>
+      <datalist id="resume-categories"><option value="Frontend Developer"><option value="Full Stack Developer"><option value="Backend Developer"><option value="React Developer"><option value="Angular Developer"></datalist>
+      <div id="resume-list" class="resume-list"></div>
     </main>
   </div>
   <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>

@@ -9,7 +9,7 @@ Make a personal application queue feel like a quiet work desk. The sidebar is fo
 - Use cool neutral surfaces, dark slate text, and one restrained blue accent. Reserve color for actions, focus, and status.
 - Use a three-part desktop layout: queue, editor, action inspector. The editor gets most of the width. Collapse to a single column on narrow screens.
 - Separate dense content with thin rules and space. Use cards only for the pairing and settings views, where a bounded form helps orientation.
-- Use a compact, readable sans-serif hierarchy. Titles carry the visual weight; metadata stays quiet. Keep controls at least 42 px high.
+- Use Segoe UI for everyday text and Bahnschrift for key headings, with system sans-serif fallbacks. Keep queue titles readable within their column, place status below long titles, and keep controls at least 42 px high.
 - Show an item’s state near its title and in the action inspector. Use clear, local language for Gmail and SMTP actions.
 - Provide visible focus, inline validation, useful empty states, and a reduced-motion path. Email text remains plain text and is previewed without interpreting HTML.
 

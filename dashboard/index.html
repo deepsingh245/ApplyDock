@@ -15,12 +15,13 @@
       <div class="topbar-actions">
         <span id="connection-state" class="connection-state"><span class="status-dot"></span><span id="connection-label">Local helper</span></span>
         <button id="theme-button" class="icon-action" type="button" aria-label="Switch color theme" title="Switch color theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.1A8.5 8.5 0 0 1 8.9 4a8.5 8.5 0 1 0 11.1 11.1Z"/></svg></button>
+        <button id="resumes-button" class="topbar-button" type="button">Resumes</button>
         <button id="settings-button" class="topbar-button" type="button">Settings</button>
       </div>
     </header>
 
     <main id="pair-screen" class="pair-shell" hidden>
-      <div class="pair-card"><span class="eyebrow">LOCAL CONNECTION</span><h1>Welcome to your workspace.</h1><p>Enter the pairing key printed in the ApplyDock helper window. It stays in this browser tab and is never placed in the URL.</p>
+      <div class="pair-card"><span class="eyebrow">LOCAL CONNECTION</span><h1>Welcome to your workspace.</h1><p>Enter the pairing key printed in the ApplyDock helper window. It stays in this browser profile and is never placed in the URL.</p>
         <form id="pair-form"><label for="pair-key">Pairing key</label><div class="pair-row"><input id="pair-key" type="password" autocomplete="off" required placeholder="Paste the local pairing key"><button class="button primary" type="submit">Connect</button></div></form>
         <p class="helper-copy">Start the helper with <code>start.cmd</code> if it is not running.</p>
       </div>
@@ -41,7 +42,7 @@
           <div id="empty-editor" class="empty-editor"><span class="empty-symbol" aria-hidden="true">↗</span><h2>Select an application</h2><p>Choose an item from the left to review its source, write the email, and prepare delivery.</p></div>
           <div id="editor-view" hidden>
             <div class="editor-topline"><span class="eyebrow">APPLICATION EDITOR</span><span id="editor-meta"></span></div>
-            <div class="editor-heading"><div><h2 id="editor-title"></h2><p id="editor-subtitle"></p></div><span id="editor-badge" class="badge"></span></div>
+            <div class="editor-heading"><div><h2 id="editor-title"></h2><p id="editor-subtitle"></p></div><div class="editor-heading-actions"><span id="editor-badge" class="badge"></span><button id="editor-delete" class="button danger-button" type="button">Delete</button></div></div>
             <div id="editor-alerts"></div>
             <form id="editor-form">
               <section class="form-section"><div class="section-title"><span class="section-index">01</span><div><h3>Opportunity</h3><p>Keep the job details accurate before drafting.</p></div></div>
@@ -49,14 +50,16 @@
                 <div class="field-grid"><label>Application method<select name="apply_method"><option value="unknown">Unknown</option><option value="email">Email</option><option value="external_form">External form</option></select></label><label>Apply link<input name="apply_url" type="url" placeholder="https://"></label></div>
                 <div class="source-field"><span>Source link</span><span class="field-help">Captured from the original posting</span><a id="source-link" class="source-link" href="#" target="_blank" rel="noopener noreferrer"></a></div>
                 <label>Job or post text<textarea name="excerpt" rows="7" placeholder="The details you selected from the posting"></textarea></label>
+                <label>Contact emails <span class="field-help">One address per line</span><textarea name="contact_emails" rows="3" placeholder="hiring@company.com"></textarea></label>
+                <label>Post details or instructions<textarea name="post_details" rows="4" placeholder="Application instructions, deadline, location, or contact person"></textarea></label>
                 <label class="check-line"><input name="needs_review" type="checkbox"> Needs more review</label>
               </section>
               <section class="form-section"><div class="section-title"><span class="section-index">02</span><div><h3>Email editor</h3><p>Write in your own voice. AI suggestions need your review.</p></div></div>
                 <label>Recipient email<input name="recipient" type="email" placeholder="hiring@company.com"></label>
                 <label>Subject<input name="subject" placeholder="Application for..."></label>
                 <label>Message<textarea name="body" class="body-editor" rows="16" placeholder="Write your application email here..."></textarea></label>
-                <div class="field-grid"><label>Resume <span class="field-help">PDF or DOCX, up to 8 MB</span><input name="resume" type="file" accept=".pdf,.docx"></label><label>Local 9 AM send date <span class="field-help">Uses your computer's time</span><input name="send_at" type="datetime-local" step="60"></label></div>
-                <p id="resume-name" class="attachment-note"></p>
+                <div class="field-grid"><label>Resume <span class="field-help">Choose from your private resume library</span><select name="resume_id"></select></label><label>Local 9 AM send date <span class="field-help">Uses your computer's time</span><input name="send_at" type="datetime-local" step="60"></label></div>
+                <div class="resume-selection-line"><p id="resume-name" class="attachment-note"></p><button id="manage-resumes-inline" class="back-button" type="button">Manage resumes</button></div>
               </section>
               <div class="editor-footer"><p id="edit-hint">Changes to an approved item remove its approval.</p><button id="save-button" class="button primary" type="submit">Save changes</button></div>
             </form>
@@ -69,17 +72,31 @@
       <section id="create-view" class="secondary-view" hidden>
         <button class="back-button" data-back type="button">← Back to applications</button>
         <div class="view-heading"><span class="eyebrow">MANUAL CAPTURE</span><h1>Add a selected item</h1><p>Paste a specific job or hiring post. Review these details before saving.</p></div>
-        <form id="create-form" class="view-card"><label>Posting URL<input name="url" type="url" required placeholder="https://"></label><div class="field-grid"><label>Title<input name="title" required></label><label>Company<input name="company"></label></div><div class="field-grid"><label>Type<select name="kind"><option value="job">Job</option><option value="post">Hiring post</option></select></label><label>Application method<select name="apply_method"><option value="unknown">Unknown</option><option value="email">Email</option><option value="external_form">External form</option></select></label></div><label>Job or post text<textarea name="excerpt" rows="8"></textarea></label><div class="field-grid"><label>Apply link<input name="apply_url" type="url"></label><label>Recipient email<input name="recipient" type="email"></label></div><label class="check-line"><input name="needs_review" type="checkbox" checked> Needs more review</label><div class="view-actions"><button class="button primary" type="submit">Save selected item</button></div></form>
+        <form id="create-form" class="view-card"><label>Posting URL<input name="url" type="url" required placeholder="https://"></label><div class="field-grid"><label>Title<input name="title" required></label><label>Company<input name="company"></label></div><div class="field-grid"><label>Type<select name="kind"><option value="job">Job</option><option value="post">Hiring post</option></select></label><label>Application method<select name="apply_method"><option value="unknown">Unknown</option><option value="email">Email</option><option value="external_form">External form</option></select></label></div><label>Job or post text<textarea name="excerpt" rows="8"></textarea></label><label>Contact emails <span class="field-help">One address per line</span><textarea name="contact_emails" rows="3"></textarea></label><label>Post details or instructions<textarea name="post_details" rows="4"></textarea></label><div class="field-grid"><label>Apply link<input name="apply_url" type="url"></label><label>Recipient email<input name="recipient" type="email"></label></div><label>Resume <span class="field-help">The default resume is selected automatically</span><select name="resume_id"></select></label><label class="check-line"><input name="needs_review" type="checkbox" checked> Needs more review</label><div class="view-actions"><button class="button primary" type="submit">Save selected item</button></div></form>
+      </section>
+
+      <section id="resumes-view" class="secondary-view" hidden>
+        <button class="back-button" data-back type="button">← Back to applications</button>
+        <div class="view-heading"><span class="eyebrow">PRIVATE LOCAL STORAGE</span><h1>Resume Library</h1><p>Upload each resume once, then assign it to any application. Files stay on this computer and links work only through your local helper.</p></div>
+        <form id="resume-upload-form" class="view-card resume-upload-card">
+          <div class="card-heading"><h2>Add a resume</h2><span id="resume-library-count" class="sub-status">0 saved</span></div>
+          <div class="field-grid"><label>Resume name<input name="display_name" required maxlength="120" placeholder="Full Stack Resume"></label><label>Category<input name="category" list="resume-categories" required maxlength="80" placeholder="Full Stack Developer"></label></div>
+          <label>PDF or DOCX file<input name="file" type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required></label>
+          <label class="check-line"><input name="is_default" type="checkbox"> Use as the default for new applications</label>
+          <button class="button primary" type="submit">Upload resume</button>
+        </form>
+        <datalist id="resume-categories"><option value="Frontend Developer"><option value="Full Stack Developer"><option value="Backend Developer"><option value="React Developer"><option value="Angular Developer"></datalist>
+        <div id="resume-library" class="resume-library" aria-live="polite"></div>
       </section>
 
       <section id="settings-view" class="secondary-view" hidden>
         <button class="back-button" data-back type="button">← Back to applications</button>
         <div class="view-heading"><span class="eyebrow">PREFERENCES & CONNECTIONS</span><h1>Settings</h1><p>Connections and personal details stay with this local helper.</p></div>
         <div class="settings-grid">
-          <form id="notion-form" class="view-card"><div class="card-heading"><h2>Notion</h2><span id="notion-state" class="sub-status"></span></div><p>Captures sync to the connected Applications database.</p><label>Data source ID<input name="data_source_id" required></label><label>Integration token <span class="field-help">Leave blank to keep the saved token</span><input name="token" type="password" autocomplete="off"></label><button class="button secondary" type="submit">Save Notion connection</button></form>
+          <form id="notion-form" class="view-card"><div class="card-heading"><h2>Notion</h2><span id="notion-state" class="sub-status"></span></div><p>Captures sync to the connected Applications database.</p><label>Data source ID<input name="data_source_id" required></label><label>Integration token <span class="field-help">Leave blank to keep the saved token</span><input name="token" type="password" autocomplete="off"></label><p id="notion-sync-detail" class="subtle"></p><button class="button secondary" type="submit">Save Notion connection</button></form>
           <form id="smtp-form" class="view-card"><div class="card-heading"><h2>Local email</h2><span id="smtp-state" class="sub-status"></span></div><p>Used only for applications you approve for the local 9 AM sender.</p><div class="field-grid"><label>SMTP host<input name="host" placeholder="smtp.gmail.com" required></label><label>Port<select name="port"><option>465</option><option>587</option></select></label></div><label>Username<input name="username" autocomplete="username" required></label><label>From address<input name="from" type="email" required></label><label>App password <span class="field-help">Leave blank to keep the verified password</span><input name="password" type="password" autocomplete="off"></label><button class="button secondary" type="submit">Verify and save</button></form>
-          <div class="view-card"><div class="card-heading"><h2>Gmail drafts</h2><span id="gmail-state" class="sub-status"></span></div><p id="gmail-account">Create drafts with attachments in your connected Gmail account.</p><form id="gmail-client-form"><label>Google OAuth Desktop app client JSON<input name="client" type="file" accept=".json,application/json" required></label><button class="button secondary" type="submit">Save OAuth client</button></form><div class="stack-actions"><button id="gmail-connect-button" class="button secondary" type="button">Connect Gmail</button><button id="gmail-refresh-button" class="button quiet-button" type="button">Refresh status</button></div></div>
-          <form id="profile-form" class="view-card"><div class="card-heading"><h2>AI writing background</h2></div><p>Use factual experience for Codex suggestions or copy a prompt into this chat.</p><label>Your background<textarea name="profile" rows="8" placeholder="Your real experience, skills, and relevant work"></textarea></label><button class="button secondary" type="submit">Save background</button></form>
+          <div class="view-card"><div class="card-heading"><h2>Gmail drafts</h2><span id="gmail-state" class="sub-status"></span></div><p id="gmail-account">Create drafts with attachments in your connected Gmail account.</p><p id="gmail-client-info" class="subtle"></p><form id="gmail-client-form"><label>Google OAuth Desktop app client JSON<input name="client" type="file" accept=".json,application/json" required></label><button class="button secondary" type="submit">Save OAuth client</button></form><div class="stack-actions"><button id="gmail-connect-button" class="button secondary" type="button">Connect Gmail</button><button id="gmail-refresh-button" class="button quiet-button" type="button">Refresh status</button></div></div>
+          <form id="profile-form" class="view-card"><div class="card-heading"><h2>AI writing background</h2><span id="profile-state" class="sub-status"></span></div><p>Use factual experience for Codex suggestions or copy a prompt into this chat.</p><label>Your background<textarea name="profile" rows="8" placeholder="Your real experience, skills, and relevant work"></textarea></label><button class="button secondary" type="submit">Save background</button></form>
         </div>
         <div class="settings-foot"><button id="sync-button" class="button quiet-button" type="button">Retry Notion sync</button><p>Gmail scheduled messages send from Gmail after this computer is off. Local SMTP still needs the helper running at 9:00 AM.</p></div>
       </section>
