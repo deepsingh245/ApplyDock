@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": {"type": "string"},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "category": {"type": "string", "enum": ["required_skills", "experience", "responsibilities", "preferred_skills", "education"]},
+          "requirement": {"type": "string"},
+          "mandatory": {"type": "boolean"},
+          "status": {"type": "string", "enum": ["demonstrated", "partial", "listed", "missing", "uncertain"]},
+          "resume_evidence_ids": {"type": "array", "items": {"type": "string"}},
+          "explanation": {"type": "string"},
+          "recommendation": {"type": "string"},
+          "priority": {"type": "string", "enum": ["high", "medium", "low"]}
+        },
+        "required": ["id", "category", "requirement", "mandatory", "status", "resume_evidence_ids", "explanation", "recommendation", "priority"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["summary", "warnings", "requirements"],
+  "additionalProperties": false
+}

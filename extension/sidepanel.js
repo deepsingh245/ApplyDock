@@ -11,6 +11,14 @@ let firstLoad = true;
 let noticeTimer;
 let pendingCapture = null;
 let unsavedForm = false;
+const emailOpenIds = new Set();
+let previewEmailOpen = false;
+const FALLBACK_APPLICATION_STAGES = ["Initiated", "To apply", "No Answer", "Applied", "Offer", "Rejected"];
+const STAGES_AFTER_APPLY = new Set(["applied", "no answer", "offer", "rejected"]);
+
+function stageIsAfterApply(value) {
+  return STAGES_AFTER_APPLY.has(String(value || "").trim().toLowerCase());
+}
 
 function platformLabel(url) {
   let host;
@@ -83,9 +91,52 @@ function resumeOptions(selectedId = "", previous = null) {
   return options.join("");
 }
 
+function stageOptions(selected = "") {
+  const values = [...(state?.application_stage_options?.length ? state.application_stage_options : FALLBACK_APPLICATION_STAGES)];
+  if (selected && !values.some(value => value.toLowerCase() === selected.toLowerCase())) values.push(selected);
+  return ['<option value="">Not set</option>', ...values.map(value => `<option value="${escapeHtml(value)}" ${value.toLowerCase() === selected.toLowerCase() ? "selected" : ""}>${escapeHtml(value)}</option>`)].join("");
+}
+
 function bytesLabel(value) {
   const size = Number(value || 0);
   return size < 1_000_000 ? Math.max(1, Math.round(size / 1000)) + " KB" : (size / 1_000_000).toFixed(1) + " MB";
+}
+
+function usableLink(value) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+  } catch { return ""; }
+}
+
+function linkIcon(href, label = "Open application link") {
+  const url = usableLink(href);
+  return `<a class="link-icon ${url ? "" : "disabled"}" href="${escapeHtml(url || "#")}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" aria-disabled="${!url}" tabindex="${url ? "0" : "-1"}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5"/><path d="m19 5-9 9"/><path d="M19 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg></a>`;
+}
+
+function updatePreviewApplyLink() {
+  const anchor = $("preview-apply-open");
+  const url = usableLink($("preview-apply-url").value);
+  anchor.href = url || "#";
+  anchor.classList.toggle("disabled", !url);
+  anchor.setAttribute("aria-disabled", String(!url));
+  anchor.tabIndex = url ? 0 : -1;
+}
+
+function setPreviewEmail(open) {
+  previewEmailOpen = !!open;
+  $("preview-email-fields").hidden = !previewEmailOpen;
+  $("preview-email-toggle").setAttribute("aria-expanded", String(previewEmailOpen));
+  $("preview-email-toggle").classList.toggle("open", previewEmailOpen);
+  $("preview-email-toggle").querySelector(".email-toggle-action").textContent = previewEmailOpen ? "Hide" : "Add email";
+}
+
+function updatePreviewKind() {
+  const isPost = $("preview-kind").value === "post";
+  $("preview-emails-label").textContent = isPost ? "Emails mentioned in this post" : "Contact emails";
+  $("preview-details-label").textContent = isPost ? "Post instructions and contact notes" : "Application notes or instructions";
+  const copy = $("preview-email-toggle").querySelector("small");
+  copy.textContent = isPost ? "Use only when the post asks candidates to apply by email." : "Optional. Open only if you plan to email this employer.";
 }
 
 async function filePayload(file) {
@@ -107,12 +158,15 @@ function deliveryLabel(entry) {
 
 function entryHtml(entry) {
   const editable = !["sending", "sent"].includes(entry.status) && entry.delivery_mode !== "gmail_scheduled";
+  const stageEditable = !["sending", "sent"].includes(entry.status);
   const expanded = openId === entry.id;
   const id = escapeHtml(entry.id);
+  const emailOpen = emailOpenIds.has(entry.id) || entry.apply_method === "email";
+  const isPost = entry.kind === "post";
   return `<article class="entry">
     <div class="entry-head">
       <button class="entry-toggle" type="button" data-id="${id}" aria-expanded="${expanded}" aria-controls="details-${id}">
-        <span class="entry-title-group"><span class="entry-title">${escapeHtml(entry.title)}</span><span class="entry-company">${escapeHtml(entry.company || (entry.kind === "job" ? "Job" : "Hiring post"))} · ${escapeHtml(platformLabel(entry.url))}</span></span>
+        <span class="entry-title-group"><span class="entry-title">${escapeHtml(entry.title)}</span><span class="entry-company">${escapeHtml(entry.company || (entry.kind === "job" ? "Job" : "Hiring post"))} · ${escapeHtml(platformLabel(entry.url))}${entry.application_stage ? ` · ${escapeHtml(entry.application_stage)}` : ""}</span></span>
         <span class="badge ${escapeHtml(entry.delivery_mode === "local" ? entry.status : entry.delivery_mode)}">${escapeHtml(deliveryLabel(entry))}</span>
         <span class="view-label" aria-hidden="true">${expanded ? "Close" : "View"}</span>
       </button>
@@ -122,50 +176,54 @@ function entryHtml(entry) {
       <div class="detail-links">
         <div class="detail-line"><span class="detail-label">Source</span><a class="detail-value" href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer">Open ${escapeHtml(platformLabel(entry.url))} ${escapeHtml(entry.kind)}</a></div>
         ${entry.apply_url ? `<div class="detail-line"><span class="detail-label">Apply</span><a class="detail-value" href="${escapeHtml(entry.apply_url)}" target="_blank" rel="noopener noreferrer">Open application form</a></div>` : ""}
-        ${entry.contact_emails?.length ? `<div class="detail-line"><span class="detail-label">Emails</span><span class="detail-value">${escapeHtml(entry.contact_emails.join(", "))}</span></div>` : ""}
+        ${entry.contact_emails?.length ? `<div class="detail-line"><span class="detail-label">${isPost ? "Post emails" : "Contacts"}</span><span class="detail-value">${escapeHtml(entry.contact_emails.join(", "))}</span></div>` : ""}
         <div class="detail-line"><span class="detail-label">Notion</span><span class="detail-value">${entry.notion_id ? "Synced" : "Waiting to sync"}</span></div>
-        <div class="detail-line"><span class="detail-label">Method</span><span class="detail-value">${escapeHtml(({email:"Email",external_form:"External form",unknown:"Unknown"})[entry.apply_method] || "Unknown")}</span></div>
+        <div class="detail-line"><span class="detail-label">Stage</span><span class="detail-value">${escapeHtml(entry.application_stage || "Not set")}</span></div>
+        <div class="detail-line"><span class="detail-label">Route</span><span class="detail-value">${escapeHtml(({email:"Email application",external_form:"External form",unknown:"Not decided"})[entry.apply_method] || "Not decided")}</span></div>
         ${entry.gmail_draft_id ? `<div class="detail-line"><span class="detail-label">Gmail</span><span class="detail-value">Draft in ${escapeHtml(entry.gmail_account || "your connected account")}${entry.gmail_dirty ? " · local changes need an update" : ""}</span></div>` : ""}
-        <div class="detail-line"><span class="detail-label">Resume</span><span class="detail-value">${escapeHtml(entry.readiness_status || entry.resume_status)}</span></div>
+        ${entry.apply_method === "email" ? `<div class="detail-line"><span class="detail-label">Resume</span><span class="detail-value">${escapeHtml(entry.readiness_status || entry.resume_status)}</span></div>` : ""}
         ${entry.delivery_mode === "gmail_scheduled" ? `<div class="detail-line"><span class="detail-label">Scheduled</span><a href="https://mail.google.com/mail/#scheduled" target="_blank" rel="noopener noreferrer">Check Gmail Scheduled</a></div>` : ""}
         ${entry.apply_method === "email" && entry.delivery_mode === "local" ? `<div class="detail-line"><span class="detail-label">Send</span><span class="detail-value">${escapeHtml(displayTime(entry.send_at))}</span></div>` : ""}
       </div>
       ${entry.sync_error ? `<p class="issue">Notion: ${escapeHtml(entry.sync_error)}</p>` : ""}
       ${entry.send_error ? `<p class="issue">Email: ${escapeHtml(entry.send_error)}</p>` : ""}
-      ${entry.needs_review ? '<p class="issue">Check captured details before acting on this item.</p>' : ""}
+      ${entry.needs_review && !stageIsAfterApply(entry.application_stage) ? '<p class="issue">Check captured details before acting on this item.</p>' : ""}
       <p class="excerpt">${escapeHtml(entry.excerpt || "No text was captured. Add a short description before drafting.")}</p>
       ${entry.post_details ? `<p class="excerpt">${escapeHtml(entry.post_details)}</p>` : ""}
-      <form class="entry-form" data-id="${id}">
-        <label>Recipient email<input name="recipient" type="email" value="${escapeHtml(entry.recipient)}" ${editable ? "" : "disabled"} placeholder="hiring@company.com"></label>
-        <label>Subject<input name="subject" value="${escapeHtml(entry.subject)}" ${editable ? "" : "disabled"} placeholder="Application for …"></label>
+      <form class="entry-form" data-id="${id}" data-kind="${isPost ? "post" : "job"}">
         <button class="primary-button review-toggle" type="button" data-id="${id}" aria-expanded="${reviewId === entry.id}" aria-controls="review-${id}">${reviewId === entry.id ? "Hide application" : "Review application"}</button>
         <div class="review-fields" id="review-${id}" ${reviewId === entry.id ? "" : "hidden"}>
-          <label>Application method<select name="apply_method" ${editable ? "" : "disabled"}><option value="unknown" ${entry.apply_method === "unknown" ? "selected" : ""}>Unknown</option><option value="email" ${entry.apply_method === "email" ? "selected" : ""}>Email</option><option value="external_form" ${entry.apply_method === "external_form" ? "selected" : ""}>External form</option></select></label>
-          <label>Apply link<input name="apply_url" type="url" value="${escapeHtml(entry.apply_url)}" ${editable ? "" : "disabled"}></label>
+          <label>Application stage <span class="hint">Your current progress; synchronized with Notion</span><select name="application_stage" ${stageEditable ? "" : "disabled"}>${stageOptions(entry.application_stage || "")}</select></label>
+          <label>Application route<select class="method-select" name="apply_method" ${editable ? "" : "disabled"}><option value="unknown" ${entry.apply_method === "unknown" ? "selected" : ""}>Not decided</option><option value="email" ${entry.apply_method === "email" ? "selected" : ""}>Email application</option><option value="external_form" ${entry.apply_method === "external_form" ? "selected" : ""}>External application form</option></select></label>
+          <label>Apply link<span class="input-action-wrap"><input name="apply_url" type="url" value="${escapeHtml(entry.apply_url)}" ${editable ? "" : "disabled"}>${linkIcon(entry.apply_url)}</span></label>
           <label>Title<input name="title" value="${escapeHtml(entry.title)}" ${editable ? "" : "disabled"} required></label>
           <label>Company<input name="company" value="${escapeHtml(entry.company)}" ${editable ? "" : "disabled"}></label>
           <label>Captured text<textarea name="excerpt" ${editable ? "" : "disabled"}>${escapeHtml(entry.excerpt)}</textarea></label>
-          <label>Contact emails <span class="hint">One per line</span><textarea name="contact_emails" ${editable ? "" : "disabled"}>${escapeHtml((entry.contact_emails || []).join("\n"))}</textarea></label>
-          <label>Post details or instructions<textarea name="post_details" ${editable ? "" : "disabled"}>${escapeHtml(entry.post_details || "")}</textarea></label>
-          <label>Email body<textarea name="body" ${editable ? "" : "disabled"} placeholder="Write your application email here…">${escapeHtml(entry.body)}</textarea></label>
-          <label>Local SMTP send at 9:00 AM<input name="send_at" type="datetime-local" step="60" value="${escapeHtml(localInput(entry.send_at))}" ${editable ? "" : "disabled"}></label>
-          <span class="hint">Uses this computer's local time. Changes to an approved item remove its approval.</span>
-          <label>Resume<select name="resume_id" ${editable ? "" : "disabled"}>${resumeOptions(entry.resume_id, entry.resume)}</select></label>
-          <span class="attached ${entry.resume_status === "Resume Selected" ? "resume-ok" : "resume-missing"}">${entry.resume_status === "Resume Selected" ? `Resume Selected · ${escapeHtml(entry.resume.name)} · ${escapeHtml(entry.resume.category)}` : "Resume Missing · choose one before sending"}</span>
-          <label class="checkbox-line"><input name="needs_review" type="checkbox" ${entry.needs_review ? "checked" : ""} ${editable ? "" : "disabled"}> Needs more review</label>
-          ${editable ? `<div class="form-actions">
-            <button class="secondary-button save-entry" type="submit">Save draft</button>
-            ${entry.status === "approved" ? `<button class="primary-button unapprove" type="button" data-id="${id}">Remove approval</button>` : entry.apply_method === "email" && entry.delivery_mode === "local" ? `<button class="primary-button approve" type="button" data-id="${id}">Approve for local 9 AM</button>` : ""}
-            ${entry.apply_method === "email" ? `<button class="secondary-button gmail-draft" type="button" data-id="${id}">${entry.gmail_draft_id ? "Update Gmail draft" : "Save to Gmail Drafts"}</button><button class="secondary-button gmail-prepare" type="button" data-id="${id}">Prepare Gmail schedule</button>` : ""}
-            ${entry.delivery_mode === "gmail_schedule_pending" && !entry.gmail_dirty ? `<button class="text-button gmail-scheduled" type="button" data-id="${id}">I scheduled it in Gmail</button>` : ""}
-            <button class="text-button ai-copy" type="button" data-id="${id}">Copy AI prompt for this chat</button>
-          </div>` : ""}
+          <label>${isPost ? "Emails mentioned in this post" : "Contact emails"} <span class="hint">Saved as reference, one per line</span><textarea name="contact_emails" ${editable ? "" : "disabled"}>${escapeHtml((entry.contact_emails || []).join("\n"))}</textarea></label>
+          <label>${isPost ? "Post instructions and contact notes" : "Application notes or instructions"}<textarea name="post_details" ${editable ? "" : "disabled"}>${escapeHtml(entry.post_details || "")}</textarea></label>
+          <label class="checkbox-line"><input name="needs_review" type="checkbox" ${entry.needs_review && !stageIsAfterApply(entry.application_stage) ? "checked" : ""} ${editable ? "" : "disabled"}> Needs more review</label>
+          <button class="email-toggle entry-email-toggle ${emailOpen ? "open" : ""}" type="button" data-id="${id}" aria-expanded="${emailOpen}" aria-controls="email-${id}"><span><strong>${isPost ? "Send an application email" : "Email application"}</strong><small>${isPost ? "Use only when the post asks you to apply by email." : "Optional. Open only if you want to contact the employer by email."}</small></span><span class="email-toggle-action">${emailOpen ? "Hide" : "Add email"}</span></button>
+          <div class="email-fields" id="email-${id}" ${emailOpen ? "" : "hidden"}>
+            <p class="email-guidance">${isPost ? "The addresses above are reference data. Choose one recipient below only when you intend to send an application." : "Nothing is sent when you fill this in. Choose and confirm a delivery action below when ready."}</p>
+            <label>Recipient email <span class="hint">One address that will receive the application</span><input name="recipient" type="email" value="${escapeHtml(entry.recipient)}" ${editable ? "" : "disabled"} placeholder="hiring@company.com"></label>
+            <label>Subject<input name="subject" value="${escapeHtml(entry.subject)}" ${editable ? "" : "disabled"} placeholder="Application for…"></label>
+            <label>Email body<textarea name="body" ${editable ? "" : "disabled"} placeholder="Write your application email here…">${escapeHtml(entry.body)}</textarea></label>
+            <label>Resume<select name="resume_id" ${editable ? "" : "disabled"}>${resumeOptions(entry.resume_id, entry.resume)}</select></label>
+            <span class="attached ${entry.resume_status === "Resume Selected" ? "resume-ok" : "resume-missing"}">${entry.resume_status === "Resume Selected" ? `Resume Selected · ${escapeHtml(entry.resume.name)} · ${escapeHtml(entry.resume.category)}` : "Resume Missing · choose one before sending"}</span>
+            <div class="delivery-group"><strong>Local 9 AM sender</strong><span class="hint">Set this date only for local SMTP. Leave it empty for Gmail drafts.</span><input name="send_at" type="datetime-local" step="60" value="${escapeHtml(localInput(entry.send_at))}" ${editable ? "" : "disabled"}></div>
+            ${editable ? `<div class="form-actions email-actions">
+              ${entry.status === "approved" ? `<button class="primary-button unapprove" type="button" data-id="${id}">Remove approval</button>` : entry.delivery_mode === "local" ? `<button class="primary-button approve" type="button" data-id="${id}">Approve for local 9 AM</button>` : ""}
+              <button class="secondary-button gmail-draft" type="button" data-id="${id}">${entry.gmail_draft_id ? "Update Gmail draft" : "Save to Gmail Drafts"}</button><button class="secondary-button gmail-prepare" type="button" data-id="${id}">Prepare Gmail schedule</button>
+              ${entry.delivery_mode === "gmail_schedule_pending" && !entry.gmail_dirty ? `<button class="text-button gmail-scheduled" type="button" data-id="${id}">I scheduled it in Gmail</button>` : ""}
+              <button class="text-button ai-copy" type="button" data-id="${id}">Copy AI prompt for this chat</button>
+            </div>` : ""}
+          </div>
+          ${stageEditable ? `<div class="form-actions save-row"><button class="secondary-button save-entry" type="submit">${editable ? "Save changes" : "Save stage"}</button></div>` : ""}
         </div>
       </form>
     </div>
   </article>`;
 }
-
 function renderEntries() {
   const list = $("list");
   const entries = (state?.entries || []).filter(entry => entry.status !== "sent");
@@ -185,6 +243,41 @@ function renderEntries() {
     button.textContent = expanded ? "Hide application" : "Review application";
     document.getElementById(`review-${button.dataset.id}`).hidden = !expanded;
   }));
+  list.querySelectorAll(".entry-email-toggle").forEach(button => button.addEventListener("click", () => {
+    const opening = button.getAttribute("aria-expanded") !== "true";
+    const form = button.closest("form");
+    document.getElementById(`email-${button.dataset.id}`).hidden = !opening;
+    button.setAttribute("aria-expanded", String(opening));
+    button.classList.toggle("open", opening);
+    button.querySelector(".email-toggle-action").textContent = opening ? "Hide" : "Add email";
+    if (opening) {
+      emailOpenIds.add(button.dataset.id);
+      if (form.elements.apply_method.value !== "email") {
+        form.elements.apply_method.value = "email";
+        unsavedForm = true;
+      }
+    } else emailOpenIds.delete(button.dataset.id);
+  }));
+  list.querySelectorAll('.entry-form input[name="apply_url"]').forEach(input => input.addEventListener("input", () => {
+    const anchor = input.parentElement.querySelector(".link-icon");
+    const url = usableLink(input.value);
+    anchor.href = url || "#";
+    anchor.classList.toggle("disabled", !url);
+    anchor.setAttribute("aria-disabled", String(!url));
+    anchor.tabIndex = url ? 0 : -1;
+  }));
+  list.querySelectorAll(".link-icon.disabled").forEach(anchor => anchor.addEventListener("click", event => event.preventDefault()));
+  list.querySelectorAll(".method-select").forEach(select => select.addEventListener("change", () => {
+    const button = select.closest("form").querySelector(".entry-email-toggle");
+    const isOpen = button.getAttribute("aria-expanded") === "true";
+    if (select.value === "email" && !isOpen) button.click();
+    if (select.value !== "email" && isOpen) button.click();
+  }));
+  list.querySelectorAll('.entry-form select[name="application_stage"]').forEach(select => select.addEventListener("change", () => {
+    if (!stageIsAfterApply(select.value)) return;
+    const review = select.form.elements.needs_review;
+    if (!review.disabled) review.checked = false;
+  }));
   list.querySelectorAll(".approve").forEach(button => button.addEventListener("click", () => approve(button.dataset.id, true)));
   list.querySelectorAll(".unapprove").forEach(button => button.addEventListener("click", () => approve(button.dataset.id, false)));
   list.querySelectorAll(".gmail-draft").forEach(button => button.addEventListener("click", () => gmailDraft(button.dataset.id, false, button)));
@@ -200,7 +293,7 @@ function renderSettings() {
   $("notion-token").placeholder = state.notion_connected ? "Saved securely · leave blank to keep" : "Paste integration token";
   $("notion-status").textContent = state.notion_sync_error ? "Needs attention" : state.notion_connected ? "Connected" : "Not connected";
   $("notion-status").className = "small-status" + (state.notion_connected && !state.notion_sync_error ? " good" : "");
-  $("notion-sync-detail").textContent = state.notion_sync_error ? "Notion check: " + state.notion_sync_error : state.notion_sync_checked_at ? "Deletion sync checked recently." : "Deletion sync runs while the local app is open.";
+  $("notion-sync-detail").textContent = state.notion_sync_error ? "Notion check: " + state.notion_sync_error : state.notion_sync_checked_at ? "Notion changes checked recently." : "Notion changes are checked while the local app is open.";
   const smtp = state.smtp || {};
   $("smtp-host").value = smtp.host || "";
   $("smtp-port").value = String(smtp.port || "465");
@@ -413,6 +506,9 @@ function showPreview(data) {
   }
   $("preview-platform").value = platformLabel(data.url);
   $("preview-review").checked = true;
+  updatePreviewKind();
+  updatePreviewApplyLink();
+  setPreviewEmail(form.elements.apply_method.value === "email" || Boolean(form.elements.recipient.value));
   $("capture-preview").hidden = false;
   showScreen("capture");
   $("capture-preview").scrollIntoView({behavior:"smooth",block:"start"});
@@ -448,8 +544,8 @@ async function captureCurrent() {
 
 async function saveForm(form) {
   const fields = Object.fromEntries(new FormData(form).entries());
-  fields.needs_review = form.elements.needs_review.checked;
-  fields.send_at = fields.send_at ? new Date(fields.send_at).toISOString() : "";
+  if (!form.elements.needs_review.disabled) fields.needs_review = form.elements.needs_review.checked;
+  if ("send_at" in fields) fields.send_at = fields.send_at ? new Date(fields.send_at).toISOString() : "";
   await api(`/api/entries/${form.dataset.id}`, "PATCH", fields);
 }
 
@@ -591,6 +687,14 @@ $("open-web").addEventListener("click", openWebWorkspace);
 $("settings-back").addEventListener("click", () => showScreen("capture"));
 $("resumes-open").addEventListener("click", () => showScreen("resumes"));
 $("resumes-back").addEventListener("click", () => showScreen("settings"));
+$("resume-refresh").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.classList.add("refreshing");
+  try { await load(); notice("Resume library refreshed."); }
+  catch (error) { notice(error.message); }
+  finally { button.disabled = false; button.classList.remove("refreshing"); }
+});
 $("capture").addEventListener("click", captureCurrent);
 $("theme-toggle").addEventListener("change", async event => {
   const theme = event.currentTarget.checked ? "dark" : "light";
@@ -601,6 +705,20 @@ $("preview-cancel").addEventListener("click", () => {
   pendingCapture = null;
   $("capture-preview").hidden = true;
   unsavedForm = false;
+});
+$("preview-email-toggle").addEventListener("click", () => {
+  const opening = !previewEmailOpen;
+  if (opening && $("preview-method").value !== "email") $("preview-method").value = "email";
+  setPreviewEmail(opening);
+  unsavedForm = true;
+});
+$("preview-method").addEventListener("change", event => {
+  setPreviewEmail(event.target.value === "email");
+});
+$("preview-kind").addEventListener("change", updatePreviewKind);
+$("preview-apply-url").addEventListener("input", updatePreviewApplyLink);
+$("preview-apply-open").addEventListener("click", event => {
+  if (!usableLink($("preview-apply-url").value)) event.preventDefault();
 });
 document.addEventListener("input", event => { if (event.target.closest("form")) unsavedForm = true; });
 document.addEventListener("change", event => { if (event.target.closest("form")) unsavedForm = true; });
@@ -637,7 +755,13 @@ $("resume-upload-form").addEventListener("submit", async event => {
   } catch (error) { notice(error.message); }
   finally { button.disabled = false; }
 });
-$("refresh").addEventListener("click", () => api("/api/sync", "POST", {}).then(load).then(() => notice("List and Notion deletion status refreshed.")).catch(error => notice(error.message)));
+$("refresh").addEventListener("click", async () => {
+  try {
+    const result = await api("/api/sync", "POST", {});
+    await load();
+    notice(result.reconciliation?.error ? "Notion check needs attention: " + result.reconciliation.error : "Notion changes refreshed. Imported " + (result.reconciliation?.updated || 0) + " update(s) and removed " + (result.reconciliation?.removed || 0) + " trashed item(s) locally.");
+  } catch (error) { notice(error.message); }
+});
 $("pair-form").addEventListener("submit", async event => {
   event.preventDefault();
   const candidate = $("pairing-key").value.trim();
@@ -680,7 +804,7 @@ $("gmail-connect").addEventListener("click", async () => {
 $("gmail-refresh").addEventListener("click", () => load().then(() => notice("Gmail connection status refreshed.")).catch(error => notice(error.message)));
 $("profile-form").addEventListener("submit", event => saveSettings(event, "/api/settings/profile", "Background saved locally."));
 $("sync").addEventListener("click", async () => {
-  try { const result = await api("/api/sync", "POST", {}); await load(); notice(result.reconciliation?.error ? "Notion check needs attention: " + result.reconciliation.error : "Notion sync complete. Removed " + (result.reconciliation?.removed || 0) + " trashed item(s) locally."); }
+  try { const result = await api("/api/sync", "POST", {}); await load(); notice(result.reconciliation?.error ? "Notion check needs attention: " + result.reconciliation.error : "Notion sync complete. Imported " + (result.reconciliation?.updated || 0) + " update(s) and removed " + (result.reconciliation?.removed || 0) + " trashed item(s) locally."); }
   catch (error) { notice(error.message); }
 });
 chrome.tabs.onActivated.addListener(updateCaptureLabel);

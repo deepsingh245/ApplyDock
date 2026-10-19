@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": {"type": "string"},
+    "skills": {"type": "array", "items": {"$ref": "#/$defs/evidenceItem"}},
+    "experience": {"type": "array", "items": {"$ref": "#/$defs/evidenceItem"}},
+    "projects": {"type": "array", "items": {"$ref": "#/$defs/evidenceItem"}},
+    "education": {"type": "array", "items": {"$ref": "#/$defs/evidenceItem"}},
+    "certifications": {"type": "array", "items": {"$ref": "#/$defs/evidenceItem"}},
+    "keywords": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["summary", "skills", "experience", "projects", "education", "certifications", "keywords"],
+  "additionalProperties": false,
+  "$defs": {
+    "evidenceItem": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "details": {"type": "string"},
+        "evidence_ids": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["name", "details", "evidence_ids"],
+      "additionalProperties": false
+    }
+  }
+}

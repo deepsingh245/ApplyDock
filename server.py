@@ -1,4 +1,4 @@
-"""Local-only capture, Notion sync, review, and 9 AM email worker (Python stdlib)."""
+"""Local capture, Notion sync, ATS analysis, review, and 9 AM email worker."""
 from __future__ import annotations
 
 import base64
@@ -31,6 +31,8 @@ import urllib.request
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
+
+import ats
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
@@ -138,7 +140,9 @@ def init_db():
             "gmail_dirty": "INTEGER NOT NULL DEFAULT 0",
             "contact_emails": "TEXT NOT NULL DEFAULT '[]'",
             "post_details": "TEXT NOT NULL DEFAULT ''",
-            "resume_id": "TEXT NOT NULL DEFAULT ''"
+            "resume_id": "TEXT NOT NULL DEFAULT ''",
+            "application_stage": "TEXT NOT NULL DEFAULT ''",
+            "notion_edited_at": "TEXT NOT NULL DEFAULT ''"
         }
         for name, declaration in additions.items():
             if name not in columns:
@@ -150,6 +154,7 @@ def init_db():
           is_default INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
           deleted_at TEXT NOT NULL DEFAULT ''
         )""")
+        ats.init_schema(db)
         version = db.execute("PRAGMA user_version").fetchone()[0]
         if version < 1:
             for row in list(db.execute("SELECT id,excerpt,recipient,contact_emails FROM entries")):
@@ -183,6 +188,10 @@ def init_db():
                     migrated[relative] = resume_id
                 db.execute("UPDATE entries SET resume_id=? WHERE id=?", (migrated[relative], row["id"]))
             db.execute("PRAGMA user_version=2")
+        if version < 3:
+            ats.migrate_legacy_resumes(db, DATA)
+            db.execute("PRAGMA user_version=3")
+        ats.refresh_failed_extractions(db, DATA)
         if not db.execute("SELECT 1 FROM resumes WHERE deleted_at='' AND is_default=1 LIMIT 1").fetchone():
             first_resume = db.execute("SELECT id FROM resumes WHERE deleted_at='' ORDER BY created_at LIMIT 1").fetchone()
             if first_resume:
@@ -191,8 +200,28 @@ def init_db():
             db.execute("UPDATE entries SET apply_method='email' WHERE recipient<>''")
         if "needs_review" not in columns:
             db.execute("UPDATE entries SET needs_review=1 WHERE status NOT IN ('approved','sending','sent')")
+        stamp = dt.datetime.now(dt.timezone.utc).isoformat()
+        db.execute("""UPDATE entries
+                      SET needs_review=0,
+                          status=CASE WHEN status='approved' THEN 'draft' ELSE status END,
+                          updated_at=?
+                      WHERE lower(trim(application_stage)) IN ('applied','no answer','offer','rejected')
+                        AND (needs_review<>0 OR status='approved')""", (stamp,))
 
 
+def backup_before_ats_migration():
+    if not DB.exists():
+        return
+    with sqlite3.connect(DB) as source:
+        if source.execute("PRAGMA user_version").fetchone()[0] >= 3:
+            return
+        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        destination = DATA / f"capture.pre-ats-{stamp}.sqlite3"
+        with sqlite3.connect(destination) as backup:
+            source.backup(backup)
+
+
+backup_before_ats_migration()
 init_db()
 
 
@@ -218,13 +247,25 @@ def public_resume(row, include_token=False):
     resume = dict(row)
     path = (DATA / resume["stored_path"]).resolve()
     available = not resume["deleted_at"] and path.is_relative_to((DATA / "resumes").resolve()) and path.is_file()
+    with connect() as db:
+        version = ats.current_version(db, resume["id"])
+        version_count = db.execute("SELECT COUNT(*) FROM resume_versions WHERE resume_id=?", (resume["id"],)).fetchone()[0]
+        analysis_count = db.execute("""SELECT COUNT(*) FROM analysis_runs ar JOIN resume_versions rv ON rv.id=ar.resume_version_id
+                                       WHERE rv.resume_id=?""", (resume["id"],)).fetchone()[0]
     result = {
         "id": resume["id"], "name": resume["name"], "category": resume["category"],
         "original_filename": resume["original_filename"], "mime_type": resume["mime_type"],
         "size_bytes": resume["size_bytes"], "is_default": bool(resume["is_default"]),
         "available": available, "created_at": resume["created_at"], "updated_at": resume["updated_at"],
         "file_url": resume_file_url(resume) if available else "",
-        "preview_url": (resume_file_url(resume) + ("&preview=1" if resume["mime_type"].endswith("wordprocessingml.document") else "")) if available else ""
+        "preview_url": (resume_file_url(resume) + ("&preview=1" if resume["mime_type"].endswith("wordprocessingml.document") else "")) if available else "",
+        "version_count": version_count,
+        "analysis_count": analysis_count,
+        "current_version_id": resume.get("current_version_id", ""),
+        "current_version_number": version["version_number"] if version else 0,
+        "extraction_status": version["extraction_status"] if version else "missing",
+        "extraction_error": version["extraction_error"] if version else "Resume version is unavailable.",
+        "parse_status": version["parse_status"] if version else "not_parsed"
     }
     if include_token:
         result["access_token"] = resume["access_token"]
@@ -319,7 +360,6 @@ def create_resume(data):
     if not name:
         raise ValueError("Resume name is required.")
     resume_id = str(uuid.uuid4())
-    relative = write_resume_file(resume_id, extension, raw)
     stamp = now_iso()
     with LOCK, connect() as db:
         make_default = bool(data.get("is_default")) or db.execute("SELECT COUNT(*) FROM resumes WHERE deleted_at='' AND is_default=1").fetchone()[0] == 0
@@ -327,7 +367,10 @@ def create_resume(data):
             db.execute("UPDATE resumes SET is_default=0")
         db.execute("""INSERT INTO resumes(id,name,category,stored_path,original_filename,mime_type,size_bytes,access_token,is_default,created_at,updated_at)
                       VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                   (resume_id, name, category or "Uncategorized", relative, filename, mime, len(raw), secrets.token_urlsafe(32), int(make_default), stamp, stamp))
+                   (resume_id, name, category or "Uncategorized", "", filename, mime, len(raw), secrets.token_urlsafe(32), int(make_default), stamp, stamp))
+        version, document, _ = ats.add_resume_version(db, DATA, resume_id, filename, extension, mime, raw)
+        db.execute("UPDATE resumes SET current_version_id=?,stored_path=?,size_bytes=? WHERE id=?",
+                   (version["id"], document["stored_path"], document["size_bytes"], resume_id))
     return get_resume(resume_id)
 
 
@@ -345,6 +388,9 @@ def register_legacy_resume(relative):
                       VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                    (resume_id, Path(filename).stem[:120] or "Resume", "Uncategorized", relative, filename[:180], mime,
                     path.stat().st_size, secrets.token_urlsafe(32), int(make_default), stamp, stamp))
+        version, document, _ = ats.add_resume_version(db, DATA, resume_id, filename[:180], path.suffix.lower(), mime, path.read_bytes())
+        db.execute("UPDATE resumes SET current_version_id=?,stored_path=?,size_bytes=? WHERE id=?",
+                   (version["id"], document["stored_path"], document["size_bytes"], resume_id))
     return resume_id
 
 
@@ -360,15 +406,13 @@ def update_resume(resume_id, data):
         fields["name"] = name
     if "category" in data:
         fields["category"] = str(data["category"]).strip()[:80] or "Uncategorized"
-    old_path = existing["stored_path"]
+    replacement = None
     if data.get("content") is not None:
         with connect() as db:
             sending = db.execute("SELECT COUNT(*) FROM entries WHERE resume_id=? AND status='sending'", (resume_id,)).fetchone()[0]
         if sending:
             raise ValueError("This resume is attached to an email currently sending. Replace it after the send finishes.")
-        filename, extension, mime, raw = validate_resume_file(data.get("filename"), data.get("content", ""))
-        fields.update({"stored_path": write_resume_file(resume_id, extension, raw), "original_filename": filename,
-                       "mime_type": mime, "size_bytes": len(raw), "access_token": secrets.token_urlsafe(32)})
+        replacement = validate_resume_file(data.get("filename"), data.get("content", ""))
     make_default = data.get("is_default")
     with LOCK, connect() as db:
         if make_default is True:
@@ -376,15 +420,18 @@ def update_resume(resume_id, data):
             fields["is_default"] = 1
         elif make_default is False:
             fields["is_default"] = 0
+        file_replaced = False
+        if replacement:
+            filename, extension, mime, raw = replacement
+            version, document, _ = ats.add_resume_version(db, DATA, resume_id, filename, extension, mime, raw)
+            fields.update({"current_version_id": version["id"], "stored_path": document["stored_path"],
+                           "original_filename": filename, "mime_type": mime, "size_bytes": len(raw),
+                           "access_token": secrets.token_urlsafe(32)})
+            file_replaced = version["id"] != existing.get("current_version_id", "")
         if fields:
             fields["updated_at"] = now_iso()
             assignments = ",".join(f"{key}=?" for key in fields)
             db.execute(f"UPDATE resumes SET {assignments} WHERE id=? AND deleted_at=''", (*fields.values(), resume_id))
-    if fields.get("stored_path") and old_path != fields["stored_path"]:
-        old_file = (DATA / old_path).resolve()
-        if old_file.is_relative_to((DATA / "resumes").resolve()):
-            old_file.unlink(missing_ok=True)
-    file_replaced = "stored_path" in fields
     for entry in entries():
         if entry.get("resume_id") == resume_id:
             if file_replaced:
@@ -409,9 +456,7 @@ def delete_resume(resume_id):
             replacement = db.execute("SELECT id FROM resumes WHERE deleted_at='' ORDER BY created_at LIMIT 1").fetchone()
             if replacement:
                 db.execute("UPDATE resumes SET is_default=1,updated_at=? WHERE id=?", (now_iso(), replacement["id"]))
-    path = (DATA / existing["stored_path"]).resolve()
-    if path.is_relative_to((DATA / "resumes").resolve()):
-        path.unlink(missing_ok=True)
+        ats.purge_resume(db, DATA, resume_id)
     affected = [entry["id"] for entry in entries() if entry.get("resume_id") == resume_id]
     for entry_id in affected:
         with connect() as db:
@@ -507,12 +552,38 @@ def public_entry(row):
         entry.get("apply_method") == "email" and resume and resume["available"] and
         all(entry.get(key) for key in ("recipient", "subject", "body"))
     ) else entry["resume_status"]
+    entry["analysis"] = ats.analysis_summary(DB, entry)
+    if entry["analysis"]["status"] == "not_analyzed" and resume and resume.get("extraction_status") == "limited":
+        entry["analysis"] = {"status": "extraction_limited", "label": "Resume Extraction Limited", "stale": False,
+                             "error": resume.get("extraction_error", "Upload a text-based PDF or DOCX.")}
     return entry
 
 
 def entries():
     with connect() as db:
         return [public_entry(r) for r in db.execute("SELECT * FROM entries ORDER BY created_at DESC")]
+
+
+DEFAULT_APPLICATION_STAGES = ["Initiated", "To apply", "No Answer", "Applied", "Offer", "Rejected"]
+APPLICATION_STAGES_AFTER_APPLY = {"applied", "no answer", "offer", "rejected"}
+
+
+def stage_is_after_apply(value):
+    return str(value or "").strip().lower() in APPLICATION_STAGES_AFTER_APPLY
+
+
+def application_stage_options():
+    configured = CONFIG_DATA.get("notion_mapping", {}).get("application_stage_options", [])
+    values = list(configured)
+    values.extend(DEFAULT_APPLICATION_STAGES)
+    with connect() as db:
+        values.extend(row[0] for row in db.execute("SELECT DISTINCT application_stage FROM entries WHERE application_stage<>'' ORDER BY application_stage COLLATE NOCASE"))
+    result = []
+    for value in values:
+        value = str(value or "").strip()
+        if value and value.lower() not in {item.lower() for item in result}:
+            result.append(value)
+    return result
 
 
 def extract_emails(text):
@@ -615,6 +686,7 @@ NOTION_FIELDS = {
     "send_at": ("Send At", [], "date"),
     "approved": ("Approved", [], "checkbox"),
     "status": ("Status", [], "rich_text"),
+    "application_stage": ("Stage", ["Application Stage"], ("status", "select")),
     "sent_at": ("Sent At", [], "date"),
     "apply_method": ("Application Method", [], "select"),
     "apply_url": ("Apply Link", [], "url"),
@@ -624,7 +696,11 @@ NOTION_FIELDS = {
     "resume_name": ("Resume Name", [], "rich_text"),
     "resume_category": ("Resume Category", [], "rich_text"),
     "resume_link": ("Resume Link", [], "url"),
-    "resume_status": ("Resume Status", [], "rich_text")
+    "resume_status": ("Resume Status", [], "rich_text"),
+    "ats_match": ("ATS Match", [], "number"),
+    "ats_analysis_status": ("ATS Analysis Status", [], "rich_text"),
+    "ats_missing_required": ("ATS Missing Required", [], "number"),
+    "ats_analyzed_at": ("ATS Analyzed At", [], "date")
 }
 
 
@@ -640,18 +716,45 @@ def ensure_notion_schema(source_id):
     for logical, (preferred, aliases, kind) in NOTION_FIELDS.items():
         if logical == "company" and title_name.lower() == "company":
             continue
+        kinds = kind if isinstance(kind, tuple) else (kind,)
         candidates = [preferred, *aliases]
-        found = next((name for name in candidates if props.get(name, {}).get("type") == kind), None)
+        found = next((name for name in candidates if props.get(name, {}).get("type") in kinds), None)
         if found:
             mapping[logical] = found
+            if logical == "application_stage":
+                stage_type = props[found]["type"]
+                mapping["application_stage_type"] = stage_type
+                stage_schema = props[found].get(stage_type, {})
+                stage_options = list(stage_schema.get("options", []))
+                grouped = stage_schema.get("groups", props[found].get("groups", {}))
+                if isinstance(grouped, dict):
+                    ordered_groups = [grouped.get(name, []) for name in ("to_do", "in_progress", "complete", "current", "future")]
+                    ordered_groups.extend(value for name, value in grouped.items() if name not in {"to_do", "in_progress", "complete", "current", "future"})
+                    for group_options in ordered_groups:
+                        if isinstance(group_options, list):
+                            stage_options.extend(group_options)
+                elif isinstance(grouped, list):
+                    for group in grouped:
+                        if isinstance(group, dict) and isinstance(group.get("options"), list):
+                            stage_options.extend(group["options"])
+                names = []
+                for option in stage_options:
+                    name = str(option.get("name", "")).strip() if isinstance(option, dict) else ""
+                    if name and name.lower() not in {value.lower() for value in names}:
+                        names.append(name)
+                mapping["application_stage_options"] = names
             continue
         name = preferred
         if name in props or name in missing:
             name = "Capture " + preferred
         while name in props or name in missing:
             name = "Capture " + name
-        missing[name] = {kind: {}}
+        create_kind = "select" if logical == "application_stage" else kinds[0]
+        missing[name] = {create_kind: {}}
         mapping[logical] = name
+        if logical == "application_stage":
+            mapping["application_stage_type"] = create_kind
+            mapping["application_stage_options"] = []
     if missing:
         notion_request("PATCH", "/data_sources/" + source_id, {"properties": missing})
     source_column = props.get("Application Source", {})
@@ -670,7 +773,9 @@ def rich(value):
 
 def notion_properties(entry):
     mapping = CONFIG_DATA.get("notion_mapping")
-    if not mapping or not all(name in mapping for name in ("apply_method", "apply_url", "needs_review", "contact_emails", "post_details", "resume_name", "resume_category", "resume_link", "resume_status", "application_source_options")):
+    required_mapping = ("apply_method", "apply_url", "needs_review", "contact_emails", "post_details", "resume_name", "resume_category",
+                        "resume_link", "resume_status", "application_stage", "ats_match", "ats_analysis_status", "ats_missing_required", "ats_analyzed_at")
+    if not mapping or not all(name in mapping for name in required_mapping):
         mapping = ensure_notion_schema(CONFIG_DATA["notion_data_source_id"])
         CONFIG_DATA["notion_mapping"] = mapping
         save_config(CONFIG_DATA)
@@ -700,6 +805,15 @@ def notion_properties(entry):
     props[mapping["resume_category"]] = rich(resume.get("category", ""))
     props[mapping["resume_link"]] = {"url": resume.get("file_url") or None}
     props[mapping["resume_status"]] = rich(entry.get("resume_status", "Resume Missing"))
+    analysis = entry.get("analysis") or {}
+    props[mapping["ats_match"]] = {"number": analysis.get("overall_score")}
+    props[mapping["ats_analysis_status"]] = rich(analysis.get("label", "Not Analyzed"))
+    props[mapping["ats_missing_required"]] = {"number": analysis.get("missing_mandatory") if analysis.get("id") else None}
+    analyzed_at = analysis.get("analyzed_at", "")
+    props[mapping["ats_analyzed_at"]] = {"date": {"start": analyzed_at} if analyzed_at else None}
+    stage_type = mapping.get("application_stage_type", "select")
+    stage_value = entry.get("application_stage", "")
+    props[mapping["application_stage"]] = {stage_type: {"name": stage_value} if stage_value else None}
     if "company" in mapping:
         props[mapping["company"]] = rich(entry["company"])
     if "application_source" in mapping:
@@ -707,6 +821,134 @@ def notion_properties(entry):
         if option:
             props[mapping["application_source"]] = {"select": {"name": option}}
     return props
+
+
+def notion_text_value(prop):
+    kind = prop.get("type", "")
+    if kind not in ("title", "rich_text"):
+        return ""
+    return "".join(item.get("plain_text") or item.get("text", {}).get("content", "") for item in prop.get(kind, []))
+
+
+def notion_page_updates(entry, page, mapping):
+    """Read user-editable fields from one linked Notion page.
+
+    Delivery status, approval, Gmail state, and resume file references remain controlled locally.
+    """
+    props = page.get("properties", {})
+    updates = {}
+
+    def mapped(logical):
+        name = mapping.get(logical, "")
+        return props.get(name) if name and name in props else None
+
+    position = mapped("position")
+    if position is not None:
+        updates["title"] = notion_text_value(position).strip()[:300]
+    elif mapping.get("title", "").lower() != "company":
+        title_prop = props.get(mapping.get("title", ""))
+        if title_prop is not None:
+            updates["title"] = notion_text_value(title_prop).strip()[:300]
+
+    company = mapped("company")
+    if company is not None:
+        updates["company"] = notion_text_value(company).strip()[:300]
+    elif mapping.get("title", "").lower() == "company":
+        title_prop = props.get(mapping.get("title", ""))
+        if title_prop is not None:
+            updates["company"] = notion_text_value(title_prop).strip()[:300]
+
+    for logical, limit in (("excerpt", 8000), ("subject", 1000), ("body", 12000), ("post_details", 4000)):
+        prop = mapped(logical)
+        if prop is not None:
+            updates[logical] = notion_text_value(prop).strip()[:limit]
+
+    kind_prop = mapped("kind")
+    if kind_prop is not None:
+        kind = notion_text_value(kind_prop).strip().lower()
+        if kind in ("job", "post"):
+            updates["kind"] = kind
+
+    recipient = mapped("recipient")
+    if recipient is not None:
+        value = str(recipient.get("email") or "").strip()
+        if not value or re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
+            updates["recipient"] = value
+
+    send_at = mapped("send_at")
+    if send_at is not None:
+        value = (send_at.get("date") or {}).get("start", "")
+        try:
+            if value:
+                dt.datetime.fromisoformat(value).astimezone(dt.timezone.utc)
+            updates["send_at"] = value
+        except (TypeError, ValueError):
+            pass
+
+    method_prop = mapped("apply_method")
+    if method_prop is not None:
+        name = str((method_prop.get("select") or {}).get("name") or "").strip().lower().replace(" ", "_")
+        method = {"email": "email", "external_form": "external_form", "unknown": "unknown", "not_decided": "unknown"}.get(name)
+        if method:
+            updates["apply_method"] = method
+
+    apply_url = mapped("apply_url")
+    if apply_url is not None:
+        value = str(apply_url.get("url") or "").strip()
+        try:
+            if value:
+                public_https_url(value)
+            updates["apply_url"] = value
+        except ValueError:
+            pass
+
+    needs_review = mapped("needs_review")
+    if needs_review is not None:
+        updates["needs_review"] = int(bool(needs_review.get("checkbox")))
+
+    contacts = mapped("contact_emails")
+    if contacts is not None:
+        updates["contact_emails"] = contact_emails(notion_text_value(contacts))
+
+    stage_prop = mapped("application_stage")
+    if stage_prop is not None:
+        stage_type = mapping.get("application_stage_type") or stage_prop.get("type")
+        updates["application_stage"] = str((stage_prop.get(stage_type) or {}).get("name") or "").strip()[:120]
+        if stage_is_after_apply(updates["application_stage"]):
+            updates["needs_review"] = 0
+
+    return updates
+
+
+def import_notion_page(entry, page, mapping):
+    edited_at = str(page.get("last_edited_time") or "")
+    if not edited_at or edited_at == entry.get("notion_edited_at", ""):
+        return False
+    updates = notion_page_updates(entry, page, mapping)
+    editable = entry["status"] not in ("sending", "sent") and entry["delivery_mode"] != "gmail_scheduled"
+    if not editable:
+        updates = {key: value for key, value in updates.items() if key == "application_stage"}
+    changed = {}
+    for key, value in updates.items():
+        current = entry.get(key)
+        if key == "contact_emails":
+            if list(current or []) != value:
+                changed[key] = json.dumps(value)
+        elif str(current or "") != str(value or ""):
+            changed[key] = value
+    content_keys = {"title", "company", "kind", "excerpt", "post_details", "recipient", "subject", "body", "send_at", "apply_method", "apply_url", "needs_review", "contact_emails"}
+    if entry["status"] == "approved" and content_keys.intersection(changed):
+        changed["status"] = "draft"
+    if entry["gmail_draft_id"] and {"recipient", "subject", "body", "apply_method"}.intersection(changed):
+        changed["gmail_dirty"] = 1
+    changed["notion_edited_at"] = edited_at
+    changed["sync_error"] = ""
+    if len(changed) > 2:
+        changed["updated_at"] = now_iso()
+    with LOCK, connect() as db:
+        assignments = ",".join(f"{key}=?" for key in changed)
+        db.execute(f"UPDATE entries SET {assignments} WHERE id=? AND notion_id=?", (*changed.values(), entry["id"], entry["notion_id"]))
+    return len(changed) > 2
 
 
 def notion_page_trashed(entry):
@@ -725,33 +967,54 @@ def delete_local_entry(entry_id, notion_id=None):
 
 
 def reconcile_notion_deletions(force=False):
-    """Remove only pages that Notion explicitly reports as in trash.
+    """Pull supported Notion edits and remove pages explicitly reported as in trash.
 
-    Missing access and API failures leave the local record untouched.
+    Missing access and API failures leave the local record untouched. ApplyDock never
+    sends a delete or archive request to Notion.
     """
     if not CONFIG_DATA.get("notion_token") or not CONFIG_DATA.get("notion_data_source_id"):
-        return {"checked": 0, "removed": 0, "error": ""}
+        return {"checked": 0, "updated": 0, "removed": 0, "error": ""}
     with NOTION_CHECK_LOCK:
         if not force and time.monotonic() - NOTION_CHECK_STATE["last_run"] < NOTION_CHECK_INTERVAL:
-            return {"checked": 0, "removed": 0, "error": NOTION_CHECK_STATE["error"]}
+            return {"checked": 0, "updated": 0, "removed": 0, "error": NOTION_CHECK_STATE["error"]}
         NOTION_CHECK_STATE["last_run"] = time.monotonic()
-        checked = removed = 0
+        checked = updated = removed = 0
         errors = []
+        mapping = CONFIG_DATA.get("notion_mapping") or {}
+        try:
+            refreshed_mapping = ensure_notion_schema(CONFIG_DATA["notion_data_source_id"])
+            if refreshed_mapping != mapping:
+                mapping = refreshed_mapping
+                CONFIG_DATA["notion_mapping"] = mapping
+                save_config(CONFIG_DATA)
+            else:
+                mapping = refreshed_mapping
+        except Exception as error:
+            NOTION_CHECK_STATE["checked_at"] = now_iso()
+            NOTION_CHECK_STATE["error"] = str(error)[:300]
+            return {"checked": 0, "updated": 0, "removed": 0, "error": NOTION_CHECK_STATE["error"]}
         for entry in entries():
             if not entry["notion_id"]:
                 continue
             try:
-                trashed = notion_page_trashed(entry)
+                page = notion_request("GET", "/pages/" + entry["notion_id"])
+                if page.get("object") != "page" or page.get("id", "").replace("-", "") != entry["notion_id"].replace("-", ""):
+                    raise RuntimeError("Notion returned an unexpected page; the local item was kept.")
                 checked += 1
-                if trashed:
+                if page.get("in_trash") is True or page.get("archived") is True:
                     removed += delete_local_entry(entry["id"], entry["notion_id"])
+                elif import_notion_page(entry, page, mapping):
+                    updated += 1
+                    # Push generated fields, including a newly stale ATS status, without
+                    # treating those generated values as user-editable inbound data.
+                    sync_entry(entry["id"])
             except Exception as error:
                 errors.append(str(error)[:300])
                 if not str(error).startswith("Notion 404:"):
                     break
         NOTION_CHECK_STATE["checked_at"] = now_iso()
         NOTION_CHECK_STATE["error"] = errors[0] if errors else ""
-        return {"checked": checked, "removed": removed, "error": NOTION_CHECK_STATE["error"]}
+        return {"checked": checked, "updated": updated, "removed": removed, "error": NOTION_CHECK_STATE["error"]}
 
 
 def sync_entry(entry_id):
@@ -766,13 +1029,13 @@ def sync_entry(entry_id):
             return
         props = notion_properties(entry)
         if entry["notion_id"]:
-            notion_request("PATCH", "/pages/" + entry["notion_id"], {"properties": props})
+            page = notion_request("PATCH", "/pages/" + entry["notion_id"], {"properties": props})
         else:
             page = notion_request("POST", "/pages", {"parent": {"type": "data_source_id", "data_source_id": CONFIG_DATA["notion_data_source_id"]}, "properties": props})
             with connect() as db:
                 db.execute("UPDATE entries SET notion_id=? WHERE id=?", (page["id"], entry_id))
         with connect() as db:
-            db.execute("UPDATE entries SET sync_error='' WHERE id=?", (entry_id,))
+            db.execute("UPDATE entries SET sync_error='',notion_edited_at=? WHERE id=?", (str(page.get("last_edited_time") or ""), entry_id))
     except Exception as error:
         with connect() as db:
             db.execute("UPDATE entries SET sync_error=? WHERE id=?", (str(error)[:1000], entry_id))
@@ -782,21 +1045,31 @@ def update_entry(entry_id, data):
     entry = get_entry(entry_id)
     if not entry:
         raise ValueError("Entry not found.")
+    requested = set(data).intersection({
+        "title", "company", "excerpt", "post_details", "recipient", "subject", "body",
+        "send_at", "resume_path", "resume_id", "apply_method", "apply_url", "application_stage",
+        "contact_emails", "needs_review", "approved"
+    })
+    stage_only = "application_stage" in requested and requested <= {"application_stage"}
     if entry["status"] in ("sending", "sent"):
         raise ValueError("A sending or sent entry cannot be edited.")
-    if entry["delivery_mode"] == "gmail_scheduled":
-        raise ValueError("This item was marked scheduled in Gmail. Cancel it there before changing the application.")
-    fields = {k: str(data[k]).strip() for k in ("title", "company", "excerpt", "post_details", "recipient", "subject", "body", "send_at", "resume_path", "resume_id", "apply_method", "apply_url") if k in data}
+    if entry["delivery_mode"] == "gmail_scheduled" and not stage_only:
+        raise ValueError("This item was marked scheduled in Gmail. Only its application stage can be changed here.")
+    fields = {k: str(data[k]).strip() for k in ("title", "company", "excerpt", "post_details", "recipient", "subject", "body", "send_at", "resume_path", "resume_id", "apply_method", "apply_url", "application_stage") if k in data}
     if "excerpt" in fields:
         fields["excerpt"] = fields["excerpt"][:8000]
     if "post_details" in fields:
         fields["post_details"] = fields["post_details"][:4000]
+    if "application_stage" in fields:
+        fields["application_stage"] = fields["application_stage"][:120]
     if "contact_emails" in data:
         fields["contact_emails"] = json.dumps(contact_emails(data["contact_emails"]))
     elif "excerpt" in fields or "post_details" in fields:
         fields["contact_emails"] = json.dumps(contact_emails(entry["contact_emails"], fields.get("excerpt", ""), fields.get("post_details", "")))
     if "needs_review" in data:
         fields["needs_review"] = int(bool(data["needs_review"]))
+    if "application_stage" in fields and stage_is_after_apply(fields["application_stage"]):
+        fields["needs_review"] = 0
     if "apply_method" in fields and fields["apply_method"] not in ("unknown", "email", "external_form"):
         raise ValueError("Choose a valid application method.")
     if entry["gmail_draft_id"] and fields.get("apply_method", "email") != "email":
@@ -820,7 +1093,12 @@ def update_entry(entry_id, data):
             legacy = db.execute("SELECT id FROM resumes WHERE stored_path=? AND deleted_at=''", (fields["resume_path"],)).fetchone()
         fields["resume_id"] = legacy["id"] if legacy else register_legacy_resume(fields["resume_path"])
     merged = {**entry, **fields}
+    approval_sensitive = {
+        "title", "company", "excerpt", "post_details", "recipient", "subject", "body",
+        "send_at", "resume_path", "resume_id", "apply_method", "apply_url", "contact_emails", "needs_review"
+    }
     if entry["status"] == "approved" and any(
+        key in approval_sensitive and
         (json.dumps(entry[key]) if key == "contact_emails" else str(entry[key])) != str(value)
         for key, value in fields.items()
     ):
@@ -1189,7 +1467,7 @@ def scheduler():
         try: process_due()
         except Exception as error: print("Scheduler error:", error, flush=True)
         try: reconcile_notion_deletions()
-        except Exception as error: print("Notion deletion check error:", error, flush=True)
+        except Exception as error: print("Notion change check error:", error, flush=True)
         time.sleep(10)
 
 
@@ -1304,17 +1582,36 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers(); self.wfile.write(content); return
-        if self.path in ("/", "/app.js", "/style.css"):
-            filename = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css"}[self.path]
+        if path.path in ("/", "/app.js", "/style.css"):
+            filename = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css"}[path.path]
             content = (ROOT / "dashboard" / filename).read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", {"html": "text/html", "js": "text/javascript", "css": "text/css"}[filename.rsplit(".", 1)[-1]] + "; charset=utf-8")
             self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers(); self.wfile.write(content); return
         if not self.authorized(): return
-        if self.path == "/api/state":
-            self.respond(200, {"entries": entries(), "resumes": resumes(), "notion_connected": bool(CONFIG_DATA.get("notion_token") and CONFIG_DATA.get("notion_data_source_id")),
+        versions_match = re.fullmatch(r"/api/resumes/([a-f0-9-]+)/versions", path.path)
+        entry_analyses_match = re.fullmatch(r"/api/entries/([a-f0-9-]+)/analyses", path.path)
+        analysis_match = re.fullmatch(r"/api/analyses/([a-f0-9-]+)", path.path)
+        if path.path == "/api/settings/codex":
+            self.respond(200, {"codex": ats.codex_status(), "usage": ats.usage_summary(DB)})
+        elif versions_match:
+            if not get_resume(versions_match.group(1), include_deleted=True):
+                self.respond(404, {"error": "Resume not found."}); return
+            self.respond(200, {"versions": ats.list_versions(DB, DATA, versions_match.group(1))})
+        elif entry_analyses_match:
+            if not get_entry(entry_analyses_match.group(1)):
+                self.respond(404, {"error": "Application not found."}); return
+            self.respond(200, {"analyses": ats.analysis_history(DB, entry_analyses_match.group(1))})
+        elif analysis_match:
+            analysis = ats.get_analysis(DB, analysis_match.group(1))
+            if not analysis:
+                self.respond(404, {"error": "Analysis not found."}); return
+            self.respond(200, {"analysis": analysis})
+        elif path.path == "/api/state":
+            self.respond(200, {"entries": entries(), "resumes": resumes(), "application_stage_options": application_stage_options(), "notion_connected": bool(CONFIG_DATA.get("notion_token") and CONFIG_DATA.get("notion_data_source_id")),
                 "notion_data_source_id": CONFIG_DATA.get("notion_data_source_id", ""),
                 "notion_sync_checked_at": NOTION_CHECK_STATE["checked_at"],
                 "notion_sync_error": NOTION_CHECK_STATE["error"],
@@ -1326,6 +1623,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "gmail_address": CONFIG_DATA.get("gmail_address", ""),
                 "candidate_profile": CONFIG_DATA.get("candidate_profile", ""),
                 "profile_saved": bool(CONFIG_DATA.get("candidate_profile_saved", CONFIG_DATA.get("candidate_profile"))),
+                "codex": ats.codex_status(),
+                "ats_usage": ats.usage_summary(DB),
                 "local_time": dt.datetime.now().astimezone().isoformat()})
         else: self.respond(404, {"error": "Not found."})
 
@@ -1346,6 +1645,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 affected = delete_resume(resume_match.group(1))
                 self.respond(200, {"ok": True, "applications_needing_resume": affected}); return
             data = self.body()
+            if self.path == "/api/settings/codex/check" and method == "POST":
+                self.respond(200, {"codex": ats.codex_status(force=True), "usage": ats.usage_summary(DB)}); return
             if self.path == "/api/capture" and method == "POST":
                 entry, duplicate = capture(data)
                 if not duplicate: sync_entry(entry["id"])
@@ -1394,11 +1695,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.respond(200, {"resume": resume, "resume_id": resume["id"], "resume_path": internal["stored_path"]}); return
             if resume_match and method == "PATCH":
                 self.respond(200, {"resume": update_resume(resume_match.group(1), data)}); return
+            resume_versions_match = re.fullmatch(r"/api/resumes/([a-f0-9-]+)/versions", self.path)
+            if resume_versions_match and method == "POST":
+                payload = {"filename": data.get("filename"), "content": data.get("content")}
+                resume = update_resume(resume_versions_match.group(1), payload)
+                self.respond(200, {"resume": resume, "versions": ats.list_versions(DB, DATA, resume["id"])}); return
             if self.path == "/api/sync" and method == "POST":
                 reconciliation = reconcile_notion_deletions(force=True)
                 for entry in entries(): sync_entry(entry["id"])
                 self.respond(200, {"entries": entries(), "reconciliation": reconciliation}); return
             ai_match = re.fullmatch(r"/api/entries/([a-f0-9-]+)/ai-draft", self.path)
+            analysis_create_match = re.fullmatch(r"/api/entries/([a-f0-9-]+)/analyses", self.path)
+            checklist_match = re.fullmatch(r"/api/analyses/([a-f0-9-]+)/recommendations/([A-Za-z0-9_-]+)", self.path)
             gmail_match = re.fullmatch(r"/api/entries/([a-f0-9-]+)/(gmail-draft|gmail-prepare|gmail-scheduled)", self.path)
             if ai_match and method == "POST":
                 entry = get_entry(ai_match.group(1))
@@ -1406,6 +1714,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if entry["status"] in ("sending", "sent"):
                     raise ValueError("This application has already been sent or is sending.")
                 self.respond(200, {"draft": generate_ai_draft(entry)}); return
+            if analysis_create_match and method == "POST":
+                entry = get_entry(analysis_create_match.group(1))
+                if not entry: raise ValueError("Application not found.")
+                run, cached = ats.queue_analysis(DB, entry, retry=bool(data.get("retry")), require_codex=True)
+                sync_entry(entry["id"])
+                self.respond(200, {"analysis": ats.get_analysis(DB, run["id"]), "cached": cached}); return
+            if checklist_match and method == "PATCH":
+                ats.update_checklist(DB, checklist_match.group(1), checklist_match.group(2), str(data.get("state", "")))
+                self.respond(200, {"analysis": ats.get_analysis(DB, checklist_match.group(1))}); return
             if gmail_match and method == "POST":
                 entry_id, action = gmail_match.groups()
                 if action == "gmail-scheduled":
@@ -1432,6 +1749,7 @@ def main():
             return
         raise
     threading.Thread(target=scheduler, daemon=True).start()
+    threading.Thread(target=ats.worker, args=(DB, DATA, ROOT, sync_entry), daemon=True).start()
     print(f"Local dashboard: http://{HOST}:{PORT}/", flush=True)
     print(f"Pairing key: {CONFIG_DATA['pairing_key']}", flush=True)
     print("Keep this window open for the 9 AM sender. The computer must be awake and connected.", flush=True)

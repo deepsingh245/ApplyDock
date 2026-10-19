@@ -10,6 +10,23 @@ let filter = "all";
 let currentView = "queue";
 let dirty = false;
 let noticeTimer;
+let emailPanelId = "";
+let emailPanelOpen = false;
+let createEmailOpen = false;
+let analysisFilter = "all";
+let scoreFilter = "all";
+let analysisSort = "newest";
+let analysisDetail = null;
+let analysisHistory = [];
+let analysisVersions = [];
+let previousAnalysisDetail = null;
+let analysisPollTimer;
+const FALLBACK_APPLICATION_STAGES = ["Initiated", "To apply", "No Answer", "Applied", "Offer", "Rejected"];
+const STAGES_AFTER_APPLY = new Set(["applied", "no answer", "offer", "rejected"]);
+
+function stageIsAfterApply(value) {
+  return STAGES_AFTER_APPLY.has(String(value || "").trim().toLowerCase());
+}
 
 function activeEntries() {
   return (state?.entries || []).filter(entry => entry.status !== "sent");
@@ -36,6 +53,63 @@ function dateLabel(iso) {
   return Number.isNaN(date.getTime()) ? "Not set" : date.toLocaleString(undefined, {dateStyle: "medium", timeStyle: "short"});
 }
 
+function usableLink(value) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+  } catch { return ""; }
+}
+
+function updateApplyLinkButton() {
+  const anchor = $("apply-link-open");
+  const href = usableLink($("editor-form").elements.apply_url.value);
+  anchor.href = href || "#";
+  anchor.classList.toggle("disabled", !href);
+  anchor.setAttribute("aria-disabled", String(!href));
+  anchor.tabIndex = href ? 0 : -1;
+}
+
+function setEmailPanel(open, entry = selectedEntry()) {
+  emailPanelOpen = !!open;
+  $("email-section-fields").hidden = !emailPanelOpen;
+  $("email-section-toggle").setAttribute("aria-expanded", String(emailPanelOpen));
+  $("email-toggle-label").textContent = emailPanelOpen ? "Hide email" : "Add email";
+  $("email-section-toggle").classList.toggle("open", emailPanelOpen);
+  if (!entry) return;
+  const isPost = entry.kind === "post";
+  $("email-section-title").textContent = isPost ? "Send an application email" : "Email application";
+  $("email-section-description").textContent = isPost
+    ? "Optional. Use this only when the post asks candidates to apply by email."
+    : "Optional. Open this only when you want to contact the employer by email.";
+  $("email-workflow-note").textContent = isPost
+    ? "Emails detected in the post are saved above as reference. Choose one recipient here only when you intend to send an application."
+    : "Choose one recipient, then write the subject and message. Nothing is sent until you choose and confirm a delivery action.";
+}
+
+function setCreateEmail(open) {
+  createEmailOpen = !!open;
+  $("create-email-fields").hidden = !createEmailOpen;
+  $("create-email-toggle").setAttribute("aria-expanded", String(createEmailOpen));
+  $("create-email-toggle").classList.toggle("open", createEmailOpen);
+  $("create-email-toggle").querySelector(".email-toggle-label").textContent = createEmailOpen ? "Hide email" : "Add email";
+}
+
+function updateCreateLink() {
+  const url = usableLink($("create-apply-link").value);
+  const anchor = $("create-apply-open");
+  anchor.href = url || "#";
+  anchor.classList.toggle("disabled", !url);
+  anchor.setAttribute("aria-disabled", String(!url));
+  anchor.tabIndex = url ? 0 : -1;
+}
+
+function updateCreateKind() {
+  const isPost = $("create-kind").value === "post";
+  $("create-emails-label").textContent = isPost ? "Emails mentioned in this post" : "Contact emails";
+  $("create-details-label").textContent = isPost ? "Post instructions and contact notes" : "Application notes or instructions";
+  $("create-email-toggle").querySelector("small").textContent = isPost ? "Use only when the post asks candidates to apply by email." : "Optional. Open only if you plan to email the employer.";
+}
+
 function resumeOptions(selectedId = "") {
   const options = ['<option value="">Choose a resume</option>'];
   for (const resume of state?.resumes || []) {
@@ -43,6 +117,12 @@ function resumeOptions(selectedId = "") {
     options.push('<option value="' + esc(resume.id) + '"' + (resume.id === selectedId ? " selected" : "") + (resume.available ? "" : " disabled") + '>' + esc(label) + '</option>');
   }
   return options.join("");
+}
+
+function stageOptions(selected = "") {
+  const values = [...(state?.application_stage_options?.length ? state.application_stage_options : FALLBACK_APPLICATION_STAGES)];
+  if (selected && !values.some(value => value.toLowerCase() === selected.toLowerCase())) values.push(selected);
+  return ['<option value="">Not set</option>', ...values.map(value => '<option value="' + esc(value) + '"' + (value.toLowerCase() === selected.toLowerCase() ? ' selected' : '') + '>' + esc(value) + '</option>')].join("");
 }
 
 function bytesLabel(value) {
@@ -102,6 +182,7 @@ function showView(name, scrollToTop = true) {
   $("queue-view").hidden = name !== "queue";
   $("create-view").hidden = name !== "create";
   $("resumes-view").hidden = name !== "resumes";
+  $("analysis-view").hidden = name !== "analysis";
   $("settings-view").hidden = name !== "settings";
   $("settings-button").textContent = name === "settings" ? "Workspace" : "Settings";
   $("resumes-button").textContent = name === "resumes" ? "Workspace" : "Resumes";
@@ -109,14 +190,26 @@ function showView(name, scrollToTop = true) {
 }
 
 function renderList() {
-  const entries = activeEntries();
+  let entries = activeEntries();
   $("active-count").textContent = entries.length;
   const query = $("search-input").value.trim().toLowerCase();
-  const shown = entries.filter(entry => {
-    if (filter === "review" && !entry.needs_review && entry.status !== "failed") return false;
-    if (filter === "scheduled" && !["gmail_schedule_pending", "gmail_scheduled"].includes(entry.delivery_mode)) return false;
-    return !query || [entry.title, entry.company, entry.platform, entry.recipient, entry.post_details, ...(entry.contact_emails || [])].some(value => String(value || "").toLowerCase().includes(query));
+  let shown = entries.filter(entry => {
+    if (filter === "review" && (!entry.needs_review || stageIsAfterApply(entry.application_stage)) && entry.status !== "failed") return false;
+    if (filter === "applied" && !stageIsAfterApply(entry.application_stage)) return false;
+    if (filter === "scheduled" && (entry.apply_method !== "email" || !["gmail_schedule_pending", "gmail_scheduled"].includes(entry.delivery_mode))) return false;
+    const analysis = entry.analysis || {status: "not_analyzed"};
+    if (analysisFilter === "complete" && analysis.status !== "complete") return false;
+    if (analysisFilter === "stale" && !analysis.stale) return false;
+    if (analysisFilter === "failed" && !["failed", "plan_limit", "insufficient_jd", "extraction_limited"].includes(analysis.status)) return false;
+    if (analysisFilter === "not_analyzed" && analysis.status !== "not_analyzed") return false;
+    if (scoreFilter === "high" && !(analysis.overall_score >= 75)) return false;
+    if (scoreFilter === "medium" && !(analysis.overall_score >= 50 && analysis.overall_score < 75)) return false;
+    if (scoreFilter === "low" && !(analysis.overall_score >= 0 && analysis.overall_score < 50)) return false;
+    return !query || [entry.title, entry.company, entry.platform, entry.application_stage, entry.recipient, entry.post_details, ...(entry.contact_emails || [])].some(value => String(value || "").toLowerCase().includes(query));
   });
+  if (analysisSort === "score_desc") shown.sort((a, b) => (b.analysis?.overall_score ?? -1) - (a.analysis?.overall_score ?? -1));
+  if (analysisSort === "score_asc") shown.sort((a, b) => (a.analysis?.overall_score ?? 101) - (b.analysis?.overall_score ?? 101));
+  if (analysisSort === "analyzed") shown.sort((a, b) => String(b.analysis?.analyzed_at || "").localeCompare(String(a.analysis?.analyzed_at || "")));
   $("entry-list").innerHTML = shown.length ? shown.map(entry => {
     const selected = entry.id === selectedId;
     const category = entry.delivery_mode === "local" ? entry.status : entry.delivery_mode;
@@ -124,8 +217,13 @@ function renderList() {
       '" aria-pressed="' + selected + '"><span class="queue-item-top"><strong>' + esc(entry.title) +
       '</strong><span class="mini-badge ' + esc(category) + '">' + esc(labelFor(entry)) + '</span></span><span class="queue-item-company">' +
       esc(entry.company || (entry.kind === "post" ? "Hiring post" : "Company not set")) + '</span><span class="queue-item-bottom">' +
-      esc(entry.platform || "Other") + ' · ' + esc(entry.kind === "post" ? "Hiring post" : "Job") +
-      (entry.needs_review ? ' <span class="review-flag">Needs review</span>' : '') + '</span></button>';
+      esc(entry.platform || "Other") + ' · ' + esc(entry.kind === "post" ? "Hiring post" : "Job") + (entry.application_stage ? ' · ' + esc(entry.application_stage) : '') +
+      (entry.needs_review && !stageIsAfterApply(entry.application_stage) ? ' <span class="review-flag">Needs review</span>' : '') +
+      '<span class="analysis-chip ' + esc(entry.analysis?.status || "not_analyzed") + '">' +
+      (entry.analysis?.overall_score != null ? esc(entry.analysis.overall_score) + '% match' : esc(entry.analysis?.label || "Not Analyzed")) +
+      (entry.analysis?.missing_mandatory ? ' · ' + esc(entry.analysis.missing_mandatory) + ' required missing' : '') + '</span>' +
+      '<span class="analysis-meta">' + esc(entry.resume?.name || "No resume") + (entry.resume?.current_version_number ? ' · v' + esc(entry.resume.current_version_number) : '') +
+      (entry.analysis?.analyzed_at ? ' · ' + esc(new Date(entry.analysis.analyzed_at).toLocaleDateString()) : '') + '</span></span></button>';
   }).join("") : '<div class="queue-empty"><strong>' + (entries.length ? "Nothing matches this view." : "Your queue is clear.") +
     '</strong><p>' + (entries.length ? "Try another filter or search." : "Add a selected job or hiring post. Sent emails stay in Notion.") + '</p></div>';
   for (const button of $("entry-list").querySelectorAll("[data-id]")) {
@@ -161,9 +259,11 @@ function renderEditor() {
   $("editor-meta").textContent = entry.kind === "post" ? "HIRING POST" : "JOB";
   $("editor-badge").textContent = labelFor(entry);
   $("editor-badge").className = "badge " + (entry.delivery_mode === "local" ? entry.status : entry.delivery_mode);
+  $("editor-stage-badge").textContent = entry.application_stage || "Stage not set";
+  $("editor-stage-badge").classList.toggle("empty", !entry.application_stage);
   $("editor-delete").hidden = entry.status === "sending";
   const alerts = [];
-  if (entry.needs_review) alerts.push("Check captured details before you apply.");
+  if (entry.needs_review && !stageIsAfterApply(entry.application_stage)) alerts.push("Check captured details before you apply.");
   if (entry.sync_error) alerts.push("Notion sync: " + entry.sync_error);
   if (entry.send_error) alerts.push("Email: " + entry.send_error);
   if (entry.gmail_dirty) alerts.push("Local changes need an updated Gmail draft.");
@@ -174,6 +274,7 @@ function renderEditor() {
   for (const name of ["title", "company", "apply_method", "apply_url", "excerpt", "post_details", "recipient", "subject", "body"])
     form.elements[name].value = entry[name] || "";
   form.elements.contact_emails.value = (entry.contact_emails || []).join("\n");
+  form.elements.application_stage.innerHTML = stageOptions(entry.application_stage || "");
   form.elements.resume_id.innerHTML = resumeOptions(entry.resume_id);
   if (entry.resume_id && !(state.resumes || []).some(resume => resume.id === entry.resume_id)) {
     const unavailable = document.createElement("option");
@@ -184,13 +285,26 @@ function renderEditor() {
     form.elements.resume_id.append(unavailable);
   }
   form.elements.send_at.value = localInput(entry.send_at);
-  form.elements.needs_review.checked = !!entry.needs_review;
+  form.elements.needs_review.checked = !!entry.needs_review && !stageIsAfterApply(entry.application_stage);
   for (const control of form.querySelectorAll("input,select,textarea")) control.disabled = !editable;
-  $("save-button").disabled = !editable;
-  $("edit-hint").textContent = editable ? "Changes to an approved item remove its approval." : "This application is read only here. Track it in Notion.";
+  const stageEditable = entry.status !== "sending";
+  form.elements.application_stage.disabled = !stageEditable;
+  $("save-button").disabled = !editable && !stageEditable;
+  $("save-button").textContent = editable ? "Save changes" : "Save stage";
+  $("edit-hint").textContent = editable ? "Changes to an approved item remove its approval; stage-only changes keep it approved." : "Email delivery is locked, but you can still update the application stage.";
   const source = $("source-link");
   source.href = entry.url;
   source.textContent = entry.url;
+  updateApplyLinkButton();
+  const isPost = entry.kind === "post";
+  $("contact-emails-label").textContent = isPost ? "Emails mentioned in this post" : "Contact emails";
+  $("contact-emails-help").textContent = isPost ? "Saved as post reference. These addresses are not emailed automatically." : "Saved as reference. One address per line.";
+  $("post-details-label").textContent = isPost ? "Post instructions and contact notes" : "Application notes or instructions";
+  if (emailPanelId !== entry.id) {
+    emailPanelId = entry.id;
+    emailPanelOpen = entry.apply_method === "email" || Boolean(entry.recipient || entry.subject || entry.body || entry.gmail_draft_id || entry.send_at);
+  }
+  setEmailPanel(emailPanelOpen, entry);
   $("resume-name").textContent = entry.resume_status === "Resume Selected" ? "Resume Selected · " + entry.resume.name + " · " + entry.resume.category : "Resume Missing · choose one before sending";
   $("resume-name").className = "attachment-note " + (entry.resume_status === "Resume Selected" ? "resume-ok" : "resume-missing");
   dirty = false;
@@ -213,20 +327,27 @@ function renderInspector() {
   }
   if (editable && entry.delivery_mode === "gmail_schedule_pending" && !entry.gmail_dirty)
     actions += '<button class="button quiet-button" data-action="gmail-scheduled" type="button">I scheduled it in Gmail</button>';
-  if (editable)
+  if (editable && entry.apply_method === "email")
     actions += '<button class="button quiet-button" data-action="ai-draft" type="button">Draft with Codex</button><button class="button quiet-button" data-action="ai-copy" type="button">Copy prompt for this chat</button>';
   if (entry.status !== "sending")
     actions += '<button class="button quiet-button" data-action="local-delete" type="button">Remove from ApplyDock</button>';
+  const analysis = entry.analysis || {status: "not_analyzed", label: "Not Analyzed"};
+  actions = '<button class="button secondary analysis-action" data-action="ats-run" type="button">' + (analysis.id ? "Run analysis again" : "Run analysis") + '</button>' +
+    (analysis.id ? '<button class="button quiet-button" data-action="ats-view" type="button">View detailed analysis</button>' : '') + actions;
   const notionId = /^[a-f0-9-]{32,36}$/i.test(entry.notion_id || "") ? entry.notion_id.replace(/-/g, "") : "";
   $("inspector-content").innerHTML =
     '<div class="inspector-block"><span class="eyebrow">STATUS</span><span class="badge large ' + esc(category) + '">' + esc(labelFor(entry)) + '</span><p class="inspector-detail">' +
     (entry.notion_id ? "Synced to Notion" : "Waiting for Notion sync") + '</p>' +
+    '<p class="inspector-detail"><strong>Application stage:</strong> ' + esc(entry.application_stage || "Not set") + '</p>' +
     (notionId ? '<a class="small-link" href="https://www.notion.so/' + notionId + '" target="_blank" rel="noopener noreferrer">Open Notion page ↗</a>' : '') +
     (entry.gmail_draft_id ? '<p class="inspector-detail">Gmail draft: ' + esc(entry.gmail_account || "connected account") + '</p>' : '') +
-    '<p class="inspector-detail resume-state ' + (entry.resume_status === "Resume Selected" ? "ready" : "missing") + '">' + esc(entry.readiness_status) + '</p>' +
+    (entry.apply_method === "email" ? '<p class="inspector-detail resume-state ' + (entry.resume_status === "Resume Selected" ? "ready" : "missing") + '">' + esc(entry.readiness_status) + '</p>' : '') +
     (entry.delivery_mode === "local" && entry.apply_method === "email" ? '<p class="inspector-detail">Local send: ' + esc(dateLabel(entry.send_at)) + '</p>' : '') +
-    '</div><div class="inspector-block"><span class="eyebrow">ACTIONS</span><div class="action-stack">' + (actions || '<p class="subtle">No delivery action is available for this item.</p>') + '</div><p id="ai-notes" class="ai-notes" hidden></p></div>' +
-    '<div class="inspector-block preview-block"><span class="eyebrow">EMAIL PREVIEW</span><div class="email-preview"><strong id="preview-subject"></strong><span id="preview-to"></span><span id="preview-resume"></span><p id="preview-body"></p></div></div>';
+    '</div><div class="inspector-block analysis-summary"><span class="eyebrow">ATS ANALYSIS</span><div class="analysis-score-line">' +
+    (analysis.overall_score != null ? '<strong>' + esc(analysis.overall_score) + '%</strong>' : '<strong>—</strong>') + '<div><span>' + esc(analysis.label) + '</span>' +
+    (analysis.missing_mandatory ? '<small>' + esc(analysis.missing_mandatory) + ' mandatory requirement(s) missing</small>' : '<small>Uses ChatGPT Plus through Codex</small>') + '</div></div></div>' +
+    '<div class="inspector-block"><span class="eyebrow">ACTIONS</span><div class="action-stack">' + (actions || '<p class="subtle">Choose an application route in the editor to see the relevant actions.</p>') + '</div><p id="ai-notes" class="ai-notes" hidden></p></div>' +
+    (entry.apply_method === "email" ? '<div class="inspector-block preview-block"><span class="eyebrow">EMAIL PREVIEW</span><div class="email-preview"><strong id="preview-subject"></strong><span id="preview-to"></span><span id="preview-resume"></span><p id="preview-body"></p></div></div>' : '<div class="inspector-block route-block"><span class="eyebrow">APPLICATION ROUTE</span><p class="inspector-detail">This item is not currently set up as an email application.</p>' + (entry.apply_url ? '<a class="button quiet-button route-link" href="' + esc(entry.apply_url) + '" target="_blank" rel="noopener noreferrer">Open application form</a>' : '') + '</div>');
   for (const button of $("inspector").querySelectorAll("[data-action]"))
     button.addEventListener("click", () => performAction(button.dataset.action, button));
   updatePreview();
@@ -247,7 +368,7 @@ function renderSettings() {
   $("notion-form").elements.token.value = "";
   $("notion-form").elements.token.placeholder = state.notion_connected ? "Saved securely · leave blank to keep" : "Paste integration token";
   $("notion-state").textContent = state.notion_sync_error ? "Needs attention" : state.notion_connected ? "Connected" : "Not connected";
-  $("notion-sync-detail").textContent = state.notion_sync_error ? "Notion check: " + state.notion_sync_error : state.notion_sync_checked_at ? "Deletion sync checked recently." : "Deletion sync runs while the local helper is open.";
+  $("notion-sync-detail").textContent = state.notion_sync_error ? "Notion check: " + state.notion_sync_error : state.notion_sync_checked_at ? "Notion changes checked recently." : "Notion changes are checked while the local helper is open.";
   for (const name of ["host", "port", "username", "from"])
     $("smtp-form").elements[name].value = state.smtp?.[name] || (name === "port" ? "465" : "");
   $("smtp-form").elements.password.value = "";
@@ -259,6 +380,14 @@ function renderSettings() {
   $("gmail-connect-button").disabled = !state.gmail_client_ready;
   $("profile-form").elements.profile.value = state.candidate_profile || "";
   $("profile-state").textContent = state.profile_saved ? "Saved" : "Not saved";
+  const codex = state.codex || {};
+  $("codex-state").textContent = codex.connected ? "Connected" : !codex.checked && codex.installed ? "Not checked" : codex.installed ? "Sign in needed" : "Not installed";
+  $("codex-state").classList.toggle("success", !!codex.connected);
+  $("codex-detail").textContent = codex.connected
+    ? "Connected to ChatGPT Plus through Codex. Uses your included Codex allowance; no API key is configured."
+    : (codex.message || "Install Codex CLI and sign in with ChatGPT Plus.");
+  $("codex-calls").textContent = state.ats_usage?.uncached_calls || 0;
+  $("codex-cache").textContent = state.ats_usage?.cache_hits || 0;
 }
 
 function renderResumeLibrary() {
@@ -275,7 +404,8 @@ function renderResumeLibrary() {
     return '<article class="resume-card"><form class="resume-edit-form" data-resume-id="' + esc(resume.id) + '">' +
       '<div class="resume-card-top"><div><span class="eyebrow">' + esc(resume.category) + '</span><h2>' + esc(resume.name) + '</h2></div>' +
       (resume.is_default ? '<span class="sub-status success">Default</span>' : '<span class="sub-status">' + assigned + ' assigned</span>') + '</div>' +
-      '<p class="resume-file-meta">' + esc(resume.original_filename) + ' · ' + esc(bytesLabel(resume.size_bytes)) + ' · ' + (resume.available ? 'Available' : 'Missing file') + '</p>' +
+      '<p class="resume-file-meta">' + esc(resume.original_filename) + ' · ' + esc(bytesLabel(resume.size_bytes)) + ' · Version ' + esc(resume.current_version_number || 1) + ' of ' + esc(resume.version_count || 1) + ' · ' + (resume.available ? 'Available' : 'Missing file') + '</p>' +
+      (resume.extraction_status !== "ready" ? '<p class="inline-alert resume-extraction">' + esc(resume.extraction_error || "Resume text extraction needs attention.") + '</p>' : '') +
       '<div class="resume-links"><a class="button quiet-button" href="' + previewUrl + '" target="_blank" rel="noreferrer">Preview</a><a class="button quiet-button" href="' + fileUrl + '&download=1" download>Download</a></div>' +
       '<div class="field-grid"><label>Name<input name="name" value="' + esc(resume.name) + '" maxlength="120" required></label><label>Category<input name="category" list="resume-categories" value="' + esc(resume.category) + '" maxlength="80" required></label></div>' +
       '<label>Replace file <span class="field-help">Optional PDF or DOCX, up to 8 MB</span><input name="file" type="file" accept=".pdf,.docx"></label>' +
@@ -290,6 +420,129 @@ function renderResumeLibrary() {
   }
 }
 
+function scoreTone(score) {
+  if (score == null) return "neutral";
+  if (score >= 75) return "strong";
+  if (score >= 50) return "medium";
+  return "weak";
+}
+
+function analysisStageLabel(stage) {
+  return ({queued: "Queued", validation: "Checking inputs", preparing: "Preparing files", resume_parse: "Parsing resume", job_comparison: "Comparing job", jd_match: "Comparing job", evidence_validation: "Validating evidence", scoring: "Calculating score", result_ready: "Preparing result", notion_sync: "Syncing Notion", complete: "Complete", plan_limit: "Plan limit reached", auth: "Sign-in required", codex_missing: "Codex unavailable", cli_options: "Codex update needed", model_unavailable: "Model unavailable", schema_rejected: "Schema rejected", invalid_output: "Invalid response", timeout: "Codex timed out", codex_failed: "Codex stopped", insufficient_jd: "Job description incomplete", interrupted: "Interrupted", failed: "Analysis failed"})[stage] || String(stage || "Processing").replaceAll("_", " ");
+}
+
+function analysisConsoleHtml(detail, live = false) {
+  const events = detail.events || [];
+  const lines = events.length ? events.map(event => {
+    const time = new Date(event.created_at);
+    const timeLabel = Number.isNaN(time.getTime()) ? "--:--:--" : time.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+    return '<div class="console-line ' + esc(event.level || "info") + '"><time>' + esc(timeLabel) + '</time><span class="console-stage">' + esc(analysisStageLabel(event.stage)) + '</span><p>' + esc(event.message) + '</p></div>';
+  }).join("") : '<div class="console-line muted"><time>--:--:--</time><span class="console-stage">Waiting</span><p>No progress events were recorded for this older run.</p></div>';
+  return '<section class="analysis-console-card"><div class="console-titlebar"><div class="console-dots" aria-hidden="true"><i></i><i></i><i></i></div><strong>Analysis activity</strong><span class="console-state ' + (live ? "live" : "") + '">' + (live ? "LIVE" : "LOG") + '</span></div><div class="console-progress"><div><span>' + esc(analysisStageLabel(detail.progress_stage)) + '</span><strong>' + esc(detail.progress_percent ?? 0) + '%</strong></div><div class="console-progress-track"><i style="width:' + Math.max(0, Math.min(100, Number(detail.progress_percent || 0))) + '%"></i></div><small>Stage estimate · validated results appear after completion</small></div><div class="console-output" role="log" aria-live="polite">' + lines + '</div></section>';
+}
+
+function scrollAnalysisConsole() {
+  const output = $("analysis-content").querySelector(".console-output");
+  if (output) output.scrollTop = output.scrollHeight;
+}
+
+function renderAnalysis() {
+  const detail = analysisDetail;
+  if (!detail) return;
+  const entry = (state.entries || []).find(item => item.id === detail.entry_id);
+  $("analysis-title").textContent = entry?.title || "ATS analysis";
+  $("analysis-subtitle").textContent = (entry?.company || "Company not set") + " · Resume version " + (detail.result?.resume_version || "—") + " · " + (detail.model || "Codex");
+  if (["pending", "analyzing"].includes(detail.status)) {
+    $("analysis-content").innerHTML = '<div class="analysis-running-layout"><section class="view-card analysis-progress-panel"><div class="analysis-progress-heading"><span class="analysis-spinner" aria-hidden="true"></span><div><span class="eyebrow">PROCESSING</span><h2>' + esc(analysisStageLabel(detail.progress_stage)) + '</h2><p>' + esc(detail.progress_message || "ApplyDock is preparing the analysis.") + '</p></div><strong class="analysis-progress-number">' + esc(detail.progress_percent ?? 0) + '%</strong></div><div class="analysis-main-progress"><i style="width:' + Math.max(0, Math.min(100, Number(detail.progress_percent || 0))) + '%"></i></div><div class="analysis-progress-notes"><p>ApplyDock processes one analysis at a time and saves every stage locally.</p><p>Partial AI output is hidden until its evidence and schema are validated.</p></div></section>' + analysisConsoleHtml(detail, true) + '</div>';
+    scrollAnalysisConsole();
+    clearTimeout(analysisPollTimer);
+    analysisPollTimer = setTimeout(() => openAnalysis(detail.id, true), 1200);
+    return;
+  }
+  if (detail.status !== "complete") {
+    $("analysis-content").innerHTML = '<div class="analysis-running-layout analysis-stopped-layout"><section class="view-card analysis-stopped"><span class="sub-status">' + esc(detail.label) + '</span><h2>The analysis stopped at ' + esc(detail.progress_percent ?? 0) + '%</h2><p>' + esc(detail.error_message || detail.progress_message || "The analysis could not be completed.") + '</p><div class="analysis-stopped-actions"><button class="button primary" data-analysis-rerun type="button">Run again</button><button class="button quiet-button" data-analysis-settings type="button">Open Codex settings</button></div><p class="subtle">The percentage is a stage estimate. No match score is shown because the result did not pass validation.</p></section>' + analysisConsoleHtml(detail, false) + '</div>';
+    $("analysis-content").querySelector("[data-analysis-rerun]")?.addEventListener("click", () => runAnalysis(entry));
+    $("analysis-content").querySelector("[data-analysis-settings]")?.addEventListener("click", () => showView("settings"));
+    scrollAnalysisConsole();
+    return;
+  }
+  const result = detail.result || {};
+  const requirements = result.requirements || [];
+  const categories = result.category_scores || {};
+  const currentHistoryIndex = analysisHistory.findIndex(item => item.id === detail.id);
+  const previous = analysisHistory.slice(currentHistoryIndex + 1).find(item => item.status === "complete");
+  const delta = previous?.overall_score == null || detail.overall_score == null ? null : Math.round((detail.overall_score - previous.overall_score) * 10) / 10;
+  const warnings = [...(result.warnings || [])];
+  if (detail.error_message) warnings.unshift(detail.error_message);
+  const categoryNames = {required_skills: "Required technical skills", experience: "Relevant work experience", responsibilities: "Responsibilities and projects", preferred_skills: "Preferred skills", education: "Education and qualifications"};
+  const categoryHtml = Object.entries(categoryNames).map(([keyName, label]) => {
+    const score = categories[keyName] || {earned: 0, possible: 0, score: 0};
+    return '<div class="category-row"><div><strong>' + esc(label) + '</strong><span>' + esc(score.earned) + ' / ' + esc(score.possible) + ' points</span></div><div class="score-track"><i style="width:' + Math.max(0, Math.min(100, Number(score.score || 0))) + '%"></i></div><b>' + esc(score.score || 0) + '%</b></div>';
+  }).join("");
+  const requirementHtml = requirements.length ? requirements.map(item => {
+    const checklist = detail.checklist?.[item.id] || "pending";
+    const evidence = item.resume_evidence || [];
+    return '<article class="requirement-card"><div class="requirement-head"><span class="match-status ' + esc(item.status) + '">' + esc(item.status) + '</span>' + (item.mandatory ? '<span class="required-pill">Required</span>' : '<span class="preferred-pill">Preferred</span>') + '<span class="priority-pill">' + esc(item.priority) + ' priority</span></div><h3>' + esc(item.requirement) + '</h3><p>' + esc(item.explanation || "No explanation supplied.") + '</p>' + (evidence.length ? '<div class="evidence-list">' + evidence.map(block => '<blockquote><strong>' + esc(block.id) + '</strong>' + esc(block.text) + '</blockquote>').join("") + '</div>' : '<small>No supporting resume evidence</small>') + (item.recommendation ? '<div class="recommendation"><strong>Recommendation</strong><p>' + esc(item.recommendation) + '</p><label>Checklist state<select data-recommendation="' + esc(item.id) + '"><option value="pending"' + (checklist === "pending" ? " selected" : "") + '>Pending</option><option value="reviewed"' + (checklist === "reviewed" ? " selected" : "") + '>Reviewed</option><option value="addressed"' + (checklist === "addressed" ? " selected" : "") + '>Addressed</option></select></label></div>' : '') + '</article>';
+  }).join("") : '<div class="view-card"><p>No scorable requirements are available for this run.</p></div>';
+  const historyHtml = analysisHistory.length ? analysisHistory.map(item => '<button type="button" data-analysis-history="' + esc(item.id) + '" class="history-row' + (item.id === detail.id ? ' active' : '') + '"><span>' + esc(item.label) + '</span><strong>' + (item.overall_score == null ? '—' : esc(item.overall_score) + '%') + '</strong><small>' + esc(dateLabel(item.completed_at || item.created_at)) + '</small></button>').join("") : '<p class="subtle">No prior analyses.</p>';
+  let comparisonHtml = "";
+  if (previousAnalysisDetail?.result) {
+    const priorRequirements = new Map((previousAnalysisDetail.result.requirements || []).map(item => [String(item.requirement).toLowerCase(), item]));
+    const matchedStates = new Set(["demonstrated", "partial", "listed"]);
+    const newlyMatched = requirements.filter(item => matchedStates.has(item.status) && !matchedStates.has(priorRequirements.get(String(item.requirement).toLowerCase())?.status));
+    const remainingGaps = requirements.filter(item => ["missing", "uncertain"].includes(item.status));
+    const resolved = (previousAnalysisDetail.result.requirements || []).filter(item => item.recommendation && ["missing", "uncertain"].includes(item.status) && matchedStates.has(requirements.find(current => String(current.requirement).toLowerCase() === String(item.requirement).toLowerCase())?.status));
+    const oldWarnings = new Set(previousAnalysisDetail.result.warnings || []);
+    const newWarnings = (result.warnings || []).filter(value => !oldWarnings.has(value));
+    const comparisonList = (items, empty) => items.length ? '<ul>' + items.map(item => '<li>' + esc(item.requirement || item) + '</li>').join("") + '</ul>' : '<p>' + empty + '</p>';
+    comparisonHtml = '<section class="view-card comparison-card"><div class="card-heading"><h2>Changes from previous run</h2><span class="sub-status">' + (delta > 0 ? '+' : '') + esc(delta ?? 0) + ' points</span></div><div class="comparison-grid"><div><strong>Newly matched</strong>' + comparisonList(newlyMatched, "No newly matched requirements.") + '</div><div><strong>Remaining gaps</strong>' + comparisonList(remainingGaps, "No remaining gaps were classified.") + '</div><div><strong>Resolved recommendations</strong>' + comparisonList(resolved, "No recommendations resolved yet.") + '</div><div><strong>New warnings</strong>' + comparisonList(newWarnings, "No new warnings.") + '</div></div></section>';
+  }
+  $("analysis-content").innerHTML =
+    '<div class="analysis-hero"><div class="score-orb ' + scoreTone(detail.overall_score) + '"><strong>' + (detail.overall_score == null ? '—' : esc(detail.overall_score) + '%') + '</strong><span>Estimated match</span></div><div><span class="sub-status">' + esc(detail.label) + '</span><h2>' + esc(result.summary || "Analysis result") + '</h2><p>Job relevance: ' + (detail.relevance_score == null ? '—' : esc(detail.relevance_score) + '%') + ' · ATS readability: ' + (detail.readability_score == null ? '—' : esc(detail.readability_score) + '%') + ' · Missing mandatory: ' + esc(detail.missing_mandatory || 0) + '</p>' + (delta == null ? '' : '<p class="score-change">Change from previous run: ' + (delta > 0 ? '+' : '') + esc(delta) + ' points</p>') + '</div><button class="button secondary" data-analysis-rerun type="button">Run again</button></div>' +
+    (warnings.length ? '<div class="analysis-warnings">' + warnings.map(value => '<p>' + esc(value) + '</p>').join("") + '</div>' : '') +
+    '<div class="analysis-layout"><main><section class="view-card"><div class="card-heading"><h2>Score breakdown</h2><span class="sub-status">Python calculated</span></div><div class="category-list">' + categoryHtml + '<div class="category-row readability-row"><div><strong>ATS readability and structure</strong><span>5% of estimated match</span></div><b>' + (detail.readability_score == null ? '—' : esc(detail.readability_score) + '%') + '</b></div></div></section>' + comparisonHtml + '<section class="analysis-section"><div class="card-heading"><h2>Evidence and recommendations</h2><span class="sub-status">' + requirements.length + ' requirements</span></div><div class="requirements-list">' + requirementHtml + '</div></section></main><aside class="analysis-history">' + analysisConsoleHtml(detail, false) + '<div class="view-card"><div class="card-heading"><h2>Analysis history</h2><span class="sub-status">' + analysisHistory.length + '</span></div><div class="history-list">' + historyHtml + '</div></div><div class="view-card"><div class="card-heading"><h2>Resume versions</h2><span class="sub-status">' + analysisVersions.length + '</span></div><p>This run stays linked to version ' + esc(result.resume_version || "—") + '. Replacing a resume keeps earlier results for comparison.</p><div class="version-list">' + analysisVersions.map(version => '<div><strong>Version ' + esc(version.version_number) + (version.is_current ? ' · Current' : '') + '</strong><span>' + esc(version.original_filename) + '</span><small>' + esc(version.extraction_status) + ' · ' + esc(dateLabel(version.created_at)) + '</small></div>').join("") + '</div></div></aside></div>';
+  for (const select of $("analysis-content").querySelectorAll("[data-recommendation]")) select.addEventListener("change", async () => {
+    try {
+      const response = await api("/api/analyses/" + detail.id + "/recommendations/" + select.dataset.recommendation, "PATCH", {state: select.value});
+      analysisDetail = response.analysis; renderAnalysis(); notify("Recommendation checklist updated.");
+    } catch (error) { notify(error.message, true); }
+  });
+  for (const button of $("analysis-content").querySelectorAll("[data-analysis-history]")) button.addEventListener("click", () => openAnalysis(button.dataset.analysisHistory));
+  $("analysis-content").querySelector("[data-analysis-rerun]")?.addEventListener("click", () => runAnalysis(entry));
+  scrollAnalysisConsole();
+}
+
+async function openAnalysis(id, preserveView = false) {
+  clearTimeout(analysisPollTimer);
+  try {
+    const response = await api("/api/analyses/" + id);
+    analysisDetail = response.analysis;
+    const history = await api("/api/entries/" + analysisDetail.entry_id + "/analyses");
+    analysisHistory = history.analyses || [];
+    const currentHistoryIndex = analysisHistory.findIndex(item => item.id === analysisDetail.id);
+    const previous = analysisHistory.slice(currentHistoryIndex + 1).find(item => item.status === "complete");
+    previousAnalysisDetail = previous ? (await api("/api/analyses/" + previous.id)).analysis : null;
+    const entry = (state.entries || []).find(item => item.id === analysisDetail.entry_id);
+    if (entry?.resume_id) {
+      const versions = await api("/api/resumes/" + entry.resume_id + "/versions");
+      analysisVersions = versions.versions || [];
+    } else analysisVersions = [];
+    renderAnalysis();
+    if (!preserveView) showView("analysis");
+  } catch (error) { notify(error.message, true); }
+}
+
+async function runAnalysis(entry) {
+  if (!entry) return;
+  try {
+    if (entry.id === selectedId && dirty) await saveForm();
+    const result = await api("/api/entries/" + entry.id + "/analyses", "POST", {retry: entry.analysis?.status === "plan_limit"});
+    await load(true);
+    await openAnalysis(result.analysis.id);
+    notify(result.cached ? "Loaded the unchanged analysis from ApplyDock's cache." : "Analysis queued using your ChatGPT Plus Codex allowance.");
+  } catch (error) { notify(error.message, true); }
+}
+
 function render(preserveScroll = false) {
   $("pair-screen").hidden = true;
   $("app-view").hidden = false;
@@ -302,6 +555,7 @@ function render(preserveScroll = false) {
   renderInspector();
   renderSettings();
   renderResumeLibrary();
+  if (analysisDetail) renderAnalysis();
   showView(currentView, !preserveScroll);
 }
 
@@ -318,7 +572,7 @@ async function saveForm() {
   const form = $("editor-form");
   if (!form.dataset.id) throw new Error("Select an application first.");
   const fields = Object.fromEntries(new FormData(form).entries());
-  fields.needs_review = form.elements.needs_review.checked;
+  if (!form.elements.needs_review.disabled) fields.needs_review = form.elements.needs_review.checked;
   if (fields.send_at) fields.send_at = new Date(fields.send_at).toISOString();
   else delete fields.send_at;
   await api("/api/entries/" + form.dataset.id, "PATCH", fields);
@@ -345,7 +599,8 @@ async function manageResume(id, action, button) {
   if (!resume) return;
   if (action === "delete") {
     const assigned = (state.entries || []).filter(entry => entry.resume_id === id).length;
-    const warning = assigned ? " " + assigned + " application(s) will show Resume Missing and must be reassigned." : "";
+    const warning = (assigned ? " " + assigned + " application(s) will show Resume Missing and must be reassigned." : "") +
+      (resume.analysis_count ? " " + resume.analysis_count + " dependent analysis run(s) and all private resume versions will also be deleted." : " All private resume versions will also be deleted.");
     if (!window.confirm("Delete ‘" + resume.name + "’ from the local resume library?" + warning)) return;
   }
   button.disabled = true;
@@ -361,6 +616,13 @@ async function performAction(action, button) {
   const entry = selectedEntry();
   if (!entry) return;
   const id = entry.id;
+  if (action === "ats-view") { await openAnalysis(entry.analysis.id); return; }
+  if (action === "ats-run") {
+    button.disabled = true;
+    try { await runAnalysis(entry); }
+    finally { button.disabled = false; }
+    return;
+  }
   if (action === "ai-copy") {
     const form = $("editor-form");
     const prompt = "Help me draft an honest application email for this selected " + (entry.platform || "job") + " " + entry.kind +
@@ -444,12 +706,42 @@ $("theme-button").addEventListener("click", () => setTheme(document.documentElem
 $("settings-button").addEventListener("click", () => showView(currentView === "settings" ? "queue" : "settings"));
 $("resumes-button").addEventListener("click", () => showView(currentView === "resumes" ? "queue" : "resumes"));
 $("manage-resumes-inline").addEventListener("click", () => showView("resumes"));
+$("email-section-toggle").addEventListener("click", () => {
+  const form = $("editor-form");
+  const opening = !emailPanelOpen;
+  if (opening && form.elements.apply_method.value !== "email") {
+    form.elements.apply_method.value = "email";
+    dirty = true;
+  }
+  setEmailPanel(opening);
+});
+$("apply-link-open").addEventListener("click", event => {
+  if (!usableLink($("editor-form").elements.apply_url.value)) event.preventDefault();
+});
 $("new-item-button").addEventListener("click", () => showView("create"));
+$("create-email-toggle").addEventListener("click", () => {
+  const opening = !createEmailOpen;
+  if (opening && $("create-method").value !== "email") $("create-method").value = "email";
+  setCreateEmail(opening);
+});
+$("create-method").addEventListener("change", event => setCreateEmail(event.target.value === "email"));
+$("create-kind").addEventListener("change", updateCreateKind);
+$("create-apply-link").addEventListener("input", updateCreateLink);
+$("create-apply-open").addEventListener("click", event => { if (!usableLink($("create-apply-link").value)) event.preventDefault(); });
 for (const button of document.querySelectorAll("[data-back]")) button.addEventListener("click", () => showView("queue"));
 $("search-input").addEventListener("input", renderList);
 for (const button of $("filters").querySelectorAll("[data-filter]")) button.addEventListener("click", () => { filter = button.dataset.filter; renderList(); });
-$("editor-form").addEventListener("input", () => { dirty = true; updatePreview(); });
-$("editor-form").addEventListener("change", () => { dirty = true; updatePreview(); });
+$("analysis-filter").addEventListener("change", event => { analysisFilter = event.target.value; renderList(); });
+$("score-filter").addEventListener("change", event => { scoreFilter = event.target.value; renderList(); });
+$("analysis-sort").addEventListener("change", event => { analysisSort = event.target.value; renderList(); });
+$("editor-form").addEventListener("input", event => { dirty = true; if (event.target.name === "apply_url") updateApplyLinkButton(); updatePreview(); });
+$("editor-form").addEventListener("change", event => {
+  dirty = true;
+  if (event.target.name === "apply_method") setEmailPanel(event.target.value === "email");
+  if (event.target.name === "application_stage" && stageIsAfterApply(event.target.value))
+    $("editor-form").elements.needs_review.checked = false;
+  updatePreview();
+});
 $("editor-form").addEventListener("submit", async event => {
   event.preventDefault();
   const button = $("save-button");
@@ -469,6 +761,9 @@ $("create-form").addEventListener("submit", async event => {
     const result = await api("/api/capture", "POST", fields);
     selectedId = result.entry.id;
     form.reset();
+    setCreateEmail(false);
+    updateCreateKind();
+    updateCreateLink();
     await load();
     showView("queue");
     notify(result.duplicate ? "Already captured. Opened the existing item." : "Saved locally and synced to Notion when available.");
@@ -523,9 +818,30 @@ $("gmail-connect-button").addEventListener("click", async () => {
   catch (error) { notify(error.message, true); }
 });
 $("gmail-refresh-button").addEventListener("click", () => load().then(() => notify("Gmail status refreshed.")).catch(error => notify(error.message, true)));
+$("codex-check-button").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const result = await api("/api/settings/codex/check", "POST", {});
+    state.codex = result.codex; state.ats_usage = result.usage;
+    renderSettings();
+    notify(result.codex.connected ? "Connected to ChatGPT Plus through Codex." : result.codex.message, !result.codex.connected);
+  } catch (error) { notify(error.message, true); }
+  finally { button.disabled = false; }
+});
 $("editor-delete").addEventListener("click", event => performAction("local-delete", event.currentTarget));
+$("refresh-button").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const result = await api("/api/sync", "POST", {});
+    await load();
+    notify(result.reconciliation?.error ? "Notion check needs attention: " + result.reconciliation.error : "Notion changes refreshed. Imported " + (result.reconciliation?.updated || 0) + " update(s) and removed " + (result.reconciliation?.removed || 0) + " trashed item(s) locally.");
+  } catch (error) { notify(error.message, true); }
+  finally { button.disabled = false; }
+});
 $("sync-button").addEventListener("click", async () => {
-  try { const result = await api("/api/sync", "POST", {}); await load(); notify(result.reconciliation?.error ? "Notion check needs attention: " + result.reconciliation.error : "Notion sync complete. Removed " + (result.reconciliation?.removed || 0) + " trashed item(s) locally."); }
+  try { const result = await api("/api/sync", "POST", {}); await load(); notify(result.reconciliation?.error ? "Notion check needs attention: " + result.reconciliation.error : "Notion sync complete. Imported " + (result.reconciliation?.updated || 0) + " update(s) and removed " + (result.reconciliation?.removed || 0) + " trashed item(s) locally."); }
   catch (error) { notify(error.message, true); }
 });
 document.addEventListener("keydown", event => {
