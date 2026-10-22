@@ -1,0 +1,12 @@
+# Tooling configuration only. ApplyDock is run directly (`py -3 server.py`), not installed as a package.
+
+[tool.ruff]
+target-version = "py312"
+# The codebase uses long single-line SQL and HTML strings; a formatter pass is intentionally not enforced yet
+# (it would rewrite nearly every line and bury real changes).
+line-length = 200
+extend-exclude = ["graphify-out", "docs/archive", ".tmp", "data"]
+
+[tool.ruff.lint]
+# Errors that indicate real bugs: syntax errors, undefined/unused names (pyflakes), and bugbear patterns.
+select = ["E9", "F", "B"]

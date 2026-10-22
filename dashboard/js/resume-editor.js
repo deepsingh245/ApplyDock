@@ -1,5 +1,5 @@
 // In-app resume editor: structured sections on the left, the real generated PDF on the right.
-// Loaded after app.js and uses its helpers through window.ApplyDock.
+// Loaded after main.js and uses the dashboard helpers through window.ApplyDock.
 (() => {
   const AD = () => window.ApplyDock;
   const esc = value => AD().esc(value);

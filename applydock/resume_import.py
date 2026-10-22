@@ -11,7 +11,7 @@ import json
 import re
 import unicodedata
 
-import resume_model
+from . import resume_model
 
 STRUCTURE_VERSION = "structure-v2"
 HEADINGS = {

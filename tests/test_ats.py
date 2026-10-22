@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-import ats
+from applydock import ats
 
 
 def docx_bytes(text):
@@ -190,8 +190,7 @@ class ATSAnalyzerTests(unittest.TestCase):
 
     def test_no_openai_api_key_or_billing_setting_exists(self):
         root = Path(__file__).resolve().parents[1]
-        modules = ("server.py", "ats.py", "resume_model.py", "resume_import.py", "resume_render.py", "resume_store.py")
-        source = "".join((root / name).read_text(encoding="utf-8") for name in modules)
+        source = "".join(path.read_text(encoding="utf-8") for path in [root / "server.py", *(root / "applydock").glob("*.py")])
         self.assertNotIn("OPENAI_API_KEY", source)
         self.assertNotIn("api.openai.com", source)
 
@@ -232,7 +231,7 @@ class ATSAnalyzerTests(unittest.TestCase):
         before = len(ats.get_analysis(self.db_path, run["id"])["events"])
         completed = type("Result", (), {"returncode": 0, "stdout": "{}", "stderr": ""})()
         with patch.object(ats.shutil, "which", return_value="codex"), patch.object(ats.subprocess, "run", return_value=completed):
-            ats._run_codex(Path(__file__).resolve().parents[1], "prompt", "resume-suggestions-schema.json", "resume_suggestions", run["id"], self.db_path)
+            ats._run_codex(Path(__file__).resolve().parents[1] / "applydock" / "schemas", "prompt", "resume-suggestions-schema.json", "resume_suggestions", run["id"], self.db_path)
         self.assertEqual(len(ats.get_analysis(self.db_path, run["id"])["events"]), before)
 
     def test_analysis_queue_does_not_change_email_delivery_fields(self):

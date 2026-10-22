@@ -20,10 +20,10 @@ import threading
 import time
 import uuid
 
-import ats
-import resume_import
-import resume_model
-import resume_render
+from . import ats
+from . import resume_import
+from . import resume_model
+from . import resume_render
 
 SUGGESTION_VERSION = "suggest-v1"
 JOB_WAKE = threading.Event()

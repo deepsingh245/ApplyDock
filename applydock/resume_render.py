@@ -10,7 +10,7 @@ import re
 import threading
 import unicodedata
 
-import resume_model
+from . import resume_model
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "resume_templates"
 FONT_DIR = TEMPLATE_DIR / "fonts"

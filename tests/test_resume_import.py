@@ -1,6 +1,7 @@
 import unittest
 
-import resume_import
+from applydock import resume_import
+
 
 TEXT = """Priya Sharma
 Backend Developer

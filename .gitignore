@@ -34,3 +34,5 @@ Thumbs.db
 .DS_Store
 
 graphify-out/
+# Browser test screenshots
+tests/ui/output/

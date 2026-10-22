@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 import unittest
 
-import resume_model
-import resume_render
+from applydock import resume_model, resume_render
+
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "sample_resume.json"
 

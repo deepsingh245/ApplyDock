@@ -1,4 +1,4 @@
-# Resume editor: decisions and invariants
+# Resume editor
 
 This file records how in-app resume editing works and why, so future changes can build on it without rediscovering it. Read it before changing resume storage, rendering, tailoring, AI suggestions or attachments.
 
@@ -6,14 +6,29 @@ This file records how in-app resume editing works and why, so future changes can
 
 `Upload (immutable v1) → import to structured draft → review → edit / AI suggestions → render with Typst → validate → immutable version → pin to application → Gmail/SMTP attaches that exact file`
 
+User-facing steps are in [USER_GUIDE → Resume editor](../USER_GUIDE.md#resume-editor-and-job-specific-versions).
+
+## Files
+
+| File | Role |
+|---|---|
+| `applydock/resume_model.py` | Schema `applydock-resume/1`, `normalize`, layout presets and clamping, edits, diff, `fact_guard` (pure functions) |
+| `applydock/resume_import.py` | Local heuristic parser, Codex structure prompt, grounding of Codex output |
+| `applydock/resume_render.py` | Typst render (deterministic, cached), `fit_to_pages`, `validate` (re-extracts the PDF) |
+| `applydock/resume_store.py` | Drafts (revisioned), editor versions, tailored copies, AI job queue and worker, suggestions |
+| `applydock/resume_workflows.py` | HTTP-facing orchestration: `editor_state`, `import_draft`, `reset_draft`, `tailor_resume`, `queue_suggestions`, `save_editor_version` |
+| `applydock/resume_templates/` | `_common.typ` layout, `ats-classic.typ` and `compact.typ` presets, bundled fonts |
+| `dashboard/js/resume-editor.js` | Editor UI: Content/Design tabs, preview, versions, compare, job match, suggestion cards, autosave, undo/redo |
+| `tests/test_resume_*.py`, `tests/ui/flow-*.mjs` | Model, import, render and workflow tests; browser flows |
+
 ## Key decisions
 
 | Decision | Choice | Why |
 |---|---|---|
 | Editing model | Structured data plus template rendering. The PDF is never edited directly. | PDFs have no reflow. Overlays leave stale extractable text, which is bad for ATS. Structured data can be reused across jobs. |
-| Data format | `applydock-resume/1`: JSON Resume superset with stable ids on every item and bullet (`resume_model.py`) | Suggestions and edits target ids, not fragile strings. `to_json_resume()` / `from_json_resume()` exchange with other tools. |
-| PDF engine | `typst` PyPI wheel (Apache-2.0). Single-column templates in `resume_templates/`. | No Chromium, Pango or Node. Real page breaking, embedded fonts, links, tagged PDF. Byte-deterministic output. |
-| Fonts | Bundled Carlito (OFL; `resume_templates/fonts/OFL.txt`), with `ignore_system_fonts=True` | Same output on any machine; no scanning of system fonts. |
+| Data format | `applydock-resume/1`: JSON Resume superset with stable ids on every item and bullet (`applydock/resume_model.py`) | Suggestions and edits target ids, not fragile strings. `to_json_resume()` / `from_json_resume()` exchange with other tools. |
+| PDF engine | `typst` PyPI wheel (Apache-2.0). Single-column templates in `applydock/resume_templates/`. | No Chromium, Pango or Node. Real page breaking, embedded fonts, links, tagged PDF. Byte-deterministic output. |
+| Fonts | Bundled Carlito (OFL; `applydock/resume_templates/fonts/OFL.txt`), with `ignore_system_fonts=True` | Same output on any machine; no scanning of system fonts. |
 | Determinism | Templates set `date: none`, no ligatures, no hyphenation, no smart quotes. Values are inserted as strings, never evaluated. | Identical content gives an identical file and SHA, so deduplication and the analysis cache work. Extracted text matches what the user typed. Markup characters render literally. |
 | Import | Local heuristic (`resume_import.heuristic_parse`, which reimplements ideas from OpenResume; none of its AGPL code is copied), plus an optional Codex structure job. The Codex result is cached per document SHA and grounded against the source text. | Free and instant by default; better accuracy on request. Codex can only reorganize the source text, never add to it. Every import needs user review (`needs_review`) before the first save. |
 | AI provider | The existing local Codex CLI only (`ats._run_codex`). No API key. | Preserves the existing no-API-key rule (tested in `tests/test_ats.py`). Non-analysis purposes report progress to `resume_ai_jobs`, not `analysis_events`. |
