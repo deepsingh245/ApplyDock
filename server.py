@@ -1597,6 +1597,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         analysis_match = re.fullmatch(r"/api/analyses/([a-f0-9-]+)", path.path)
         if path.path == "/api/settings/codex":
             self.respond(200, {"codex": ats.codex_status(), "usage": ats.usage_summary(DB)})
+        elif path.path == "/api/analyses/queue":
+            self.respond(200, {"queue": ats.analysis_queue(DB)})
         elif versions_match:
             if not get_resume(versions_match.group(1), include_deleted=True):
                 self.respond(404, {"error": "Resume not found."}); return

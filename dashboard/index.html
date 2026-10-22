@@ -5,19 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>ApplyDock · Workspace</title>
-  <link rel="stylesheet" href="/style.css?v=0.8.1">
-  <script src="/app.js?v=0.8.1" defer></script>
+  <link rel="stylesheet" href="/style.css?v=0.9.0">
+  <script src="/app.js?v=0.9.0" defer></script>
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar">
       <div class="brand"><span class="brand-mark" aria-hidden="true">A</span><div><strong>ApplyDock</strong><small>APPLICATION WORKSPACE</small></div></div>
+      <div class="topbar-context"><span>Workspace</span><span aria-hidden="true">›</span><strong id="breadcrumb-current">Applications</strong></div>
+      <label class="global-search"><span class="sr-only">Search applications, companies, or roles</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg><input id="global-search" type="search" placeholder="Search applications, companies, or roles"><kbd>/</kbd></label>
       <div class="topbar-actions">
         <span id="connection-state" class="connection-state"><span class="status-dot"></span><span id="connection-label">Local helper</span></span>
         <button id="refresh-button" class="icon-action" type="button" aria-label="Refresh from Notion" title="Refresh from Notion"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></svg></button>
         <button id="theme-button" class="icon-action" type="button" aria-label="Switch color theme" title="Switch color theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.1A8.5 8.5 0 0 1 8.9 4a8.5 8.5 0 1 0 11.1 11.1Z"/></svg></button>
-        <button id="resumes-button" class="topbar-button" type="button">Resumes</button>
-        <button id="settings-button" class="topbar-button" type="button">Settings</button>
+        <span class="profile-avatar" aria-label="Simrandeep Singh" title="Simrandeep Singh">DS</span>
       </div>
     </header>
 
@@ -28,13 +29,25 @@
       </div>
     </main>
 
-    <div id="app-view" hidden>
+    <div id="app-view" class="app-body" hidden>
+      <aside class="global-sidebar" aria-label="Workspace navigation">
+        <div>
+          <span class="nav-label">WORKSPACE</span>
+          <nav class="workspace-nav">
+            <button id="applications-button" class="workspace-nav-item active" type="button"><span aria-hidden="true">▣</span><span>Applications</span><small id="nav-application-count">0</small></button>
+            <button id="resumes-button" class="workspace-nav-item" type="button"><span aria-hidden="true">▤</span><span>Resume Library</span></button>
+            <button id="analysis-nav-button" class="workspace-nav-item" type="button"><span aria-hidden="true">⌾</span><span>ATS Analysis</span></button>
+            <button id="settings-button" class="workspace-nav-item" type="button"><span aria-hidden="true">⚙</span><span>Settings</span></button>
+          </nav>
+        </div>
+        <div class="workspace-profile"><p class="system-ready"><span></span>All systems ready</p><span>Personal workspace</span><strong>Simrandeep Singh</strong><small>Synced with Notion</small></div>
+      </aside>
+      <main class="workspace-content">
       <div id="queue-view" class="workspace">
         <aside class="queue-rail" aria-label="Application queue">
-          <div class="rail-heading"><span class="eyebrow">YOUR WORKSPACE</span><h1>Applications <span id="active-count" class="count">0</span></h1><p>Review the jobs you selected and prepare each application.</p></div>
-          <button id="new-item-button" class="button primary new-item" type="button"><span aria-hidden="true">+</span> Add a job or post</button>
+          <div class="rail-heading"><div><span class="eyebrow">YOUR WORKSPACE</span><h1>Applications <span id="active-count" class="count">0</span></h1><p>Review the jobs you selected and prepare each application.</p></div><button id="new-item-button" class="button primary new-item" type="button" aria-label="Add a job or post" title="Add a job or post"><span aria-hidden="true">+</span></button></div>
           <div class="search-wrap"><label class="sr-only" for="search-input">Search active applications</label><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg><input id="search-input" type="search" placeholder="Search applications"></div>
-          <div id="filters" class="filter-row" role="group" aria-label="Filter applications"><button data-filter="all" class="active" type="button" aria-pressed="true">All</button><button data-filter="review" type="button" aria-pressed="false">Review</button><button data-filter="applied" type="button" aria-pressed="false">Applied</button><button data-filter="scheduled" type="button" aria-pressed="false">Scheduled</button></div>
+          <div id="filters" class="filter-row" role="group" aria-label="Filter applications"><button data-filter="all" class="active" type="button" aria-pressed="true">All</button><button data-filter="to_apply" type="button" aria-pressed="false">To apply</button><button data-filter="review" type="button" aria-pressed="false">Review</button><button data-filter="applied" type="button" aria-pressed="false">Applied</button><button data-filter="scheduled" type="button" aria-pressed="false">Scheduled</button></div>
           <div class="analysis-controls"><label><span>Analysis</span><select id="analysis-filter"><option value="all">All results</option><option value="complete">Complete</option><option value="stale">Needs reanalysis</option><option value="failed">Failed or limited</option><option value="not_analyzed">Not analyzed</option></select></label><label><span>Score</span><select id="score-filter"><option value="all">Any score</option><option value="high">75–100</option><option value="medium">50–74</option><option value="low">0–49</option></select></label><label class="analysis-sort-control"><span>Sort</span><select id="analysis-sort"><option value="newest">Newest</option><option value="score_desc">Highest match</option><option value="score_asc">Lowest match</option><option value="analyzed">Last analyzed</option></select></label></div>
           <div id="entry-list" class="entry-list" aria-live="polite"></div>
           <p class="rail-foot">Sent applications leave this list and remain in Notion.</p>
@@ -45,6 +58,7 @@
           <div id="editor-view" hidden>
             <div class="editor-topline"><span class="eyebrow">APPLICATION EDITOR</span><span id="editor-meta"></span></div>
             <div class="editor-heading"><div><h2 id="editor-title"></h2><p id="editor-subtitle"></p></div><div class="editor-heading-actions"><span id="editor-stage-badge" class="badge stage-badge"></span><span id="editor-badge" class="badge"></span><button id="editor-delete" class="button danger-button" type="button">Delete</button></div></div>
+            <nav class="editor-tabs" aria-label="Application sections"><button class="active" data-editor-tab="overview" type="button">Overview</button><button data-editor-tab="analysis" type="button">ATS Analysis</button><button data-editor-tab="email" type="button">Email</button><button data-editor-tab="activity" type="button">Activity</button></nav>
             <div id="editor-alerts"></div>
             <form id="editor-form">
               <section class="form-section"><div class="section-title"><span class="section-index">01</span><div><h3>Opportunity</h3><p>Keep the job details accurate before drafting.</p></div></div>
@@ -55,6 +69,7 @@
                 <label><span id="contact-emails-label">Contact emails</span><span id="contact-emails-help" class="field-help">Saved as reference. One address per line.</span><textarea name="contact_emails" rows="3" placeholder="hiring@company.com"></textarea></label>
                 <label><span id="post-details-label">Application notes or instructions</span><textarea name="post_details" rows="4" placeholder="Application instructions, deadline, location, or contact person"></textarea></label>
                 <label class="check-line"><input name="needs_review" type="checkbox"> Needs more review</label>
+                <div class="assigned-resume-card"><div><strong>Assigned resume</strong><span id="resume-name" class="attachment-note"></span></div><label><span class="sr-only">Assigned resume</span><select name="resume_id"></select></label><button id="manage-resumes-inline" class="back-button" type="button">Manage resumes</button></div>
               </section>
               <section class="form-section email-section"><button id="email-section-toggle" class="email-section-toggle" type="button" aria-expanded="false" aria-controls="email-section-fields"><span class="section-index">02</span><span class="email-toggle-copy"><strong id="email-section-title">Email application</strong><small id="email-section-description">Optional. Open this only when you want to contact the employer by email.</small></span><span id="email-toggle-label" class="email-toggle-label">Add email</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>
                 <div id="email-section-fields" class="email-section-fields" hidden>
@@ -62,7 +77,7 @@
                   <label>Recipient email <span class="field-help">The single address that will receive this application</span><input name="recipient" type="email" placeholder="hiring@company.com"></label>
                   <label>Subject<input name="subject" placeholder="Application for..."></label>
                   <label>Message<textarea name="body" class="body-editor" rows="16" placeholder="Write your application email here..."></textarea></label>
-                  <div class="delivery-card"><div><strong>Attachment and delivery</strong><p>Choose a resume. Set the date only for ApplyDock's local 9 AM sender; Gmail scheduling is selected later from the action panel.</p></div><div class="field-grid"><label>Resume <span class="field-help">From your private resume library</span><select name="resume_id"></select></label><label>Local 9 AM send date <span class="field-help">Leave empty when using Gmail drafts</span><input name="send_at" type="datetime-local" step="60"></label></div><div class="resume-selection-line"><p id="resume-name" class="attachment-note"></p><button id="manage-resumes-inline" class="back-button" type="button">Manage resumes</button></div></div>
+                  <div class="delivery-card"><div><strong>Delivery timing</strong><p>Set the date only for ApplyDock's local 9 AM sender; Gmail scheduling is selected later from the action panel.</p></div><label>Local 9 AM send date <span class="field-help">Leave empty when using Gmail drafts</span><input name="send_at" type="datetime-local" step="60"></label></div>
                 </div>
               </section>
               <div class="editor-footer"><p id="edit-hint">Changes to an approved item remove its approval.</p><button id="save-button" class="button primary" type="submit">Save changes</button></div>
@@ -81,8 +96,8 @@
 
       <section id="resumes-view" class="secondary-view" hidden>
         <button class="back-button" data-back type="button">← Back to applications</button>
-        <div class="view-heading"><span class="eyebrow">PRIVATE LOCAL STORAGE</span><h1>Resume Library</h1><p>Upload each resume once, then assign it to any application. Files stay on this computer and links work only through your local helper.</p></div>
-        <form id="resume-upload-form" class="view-card resume-upload-card">
+        <div class="view-heading view-heading-with-action"><div><span class="eyebrow">PRIVATE LOCAL STORAGE</span><h1>Resume Library</h1><p>Manage a small set of resumes and assign them to applications. Files remain on this device.</p></div><button id="resume-upload-toggle" class="button primary" type="button">＋ Upload resume</button></div>
+        <form id="resume-upload-form" class="view-card resume-upload-card" hidden>
           <div class="card-heading"><h2>Add a resume</h2><span id="resume-library-count" class="sub-status">0 saved</span></div>
           <div class="field-grid"><label>Resume name<input name="display_name" required maxlength="120" placeholder="Full Stack Resume"></label><label>Category<input name="category" list="resume-categories" required maxlength="80" placeholder="Full Stack Developer"></label></div>
           <label>PDF or DOCX file<input name="file" type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required></label>
@@ -96,21 +111,23 @@
       <section id="analysis-view" class="secondary-view analysis-view" hidden>
         <button class="back-button" data-back type="button">← Back to applications</button>
         <div class="view-heading"><span class="eyebrow">ATS MATCH ANALYZER</span><h1 id="analysis-title">Analysis</h1><p id="analysis-subtitle">Evidence based comparison using your selected resume and captured job description.</p></div>
+        <section class="analysis-queue-card" aria-labelledby="analysis-queue-title"><div class="analysis-queue-heading"><div><span class="eyebrow">LOCAL WORKER</span><h2 id="analysis-queue-title">Analysis queue</h2></div><span id="analysis-queue-count" class="sub-status">0 waiting</span></div><div id="analysis-queue" class="analysis-queue-list" aria-live="polite"><p class="analysis-queue-empty">No analyses are waiting.</p></div></section>
         <div id="analysis-content" aria-live="polite"><div class="view-card"><p>Choose an application and run analysis to see its results.</p></div></div>
       </section>
 
       <section id="settings-view" class="secondary-view" hidden>
         <button class="back-button" data-back type="button">← Back to applications</button>
         <div class="view-heading"><span class="eyebrow">PREFERENCES & CONNECTIONS</span><h1>Settings</h1><p>Connections and personal details stay with this local helper.</p></div>
-        <div class="settings-grid">
+        <div class="settings-layout"><div class="settings-grid">
           <div class="view-card"><div class="card-heading"><h2>ATS analysis with Codex</h2><span id="codex-state" class="sub-status"></span></div><p id="codex-detail">Uses Codex CLI signed into your ChatGPT Plus account. No API key or separate billing is configured.</p><div class="usage-strip"><span><strong id="codex-calls">0</strong> Codex calls</span><span><strong id="codex-cache">0</strong> cached results</span></div><button id="codex-check-button" class="button secondary" type="button">Check Codex connection</button><a class="small-link settings-link" href="https://chatgpt.com/#settings/usage" target="_blank" rel="noopener noreferrer">Open ChatGPT Usage ↗</a><p class="subtle">Keep optional credits and automatic credit purchases disabled. ApplyDock stops its analysis queue when the included plan limit is reached.</p></div>
           <form id="notion-form" class="view-card"><div class="card-heading"><h2>Notion</h2><span id="notion-state" class="sub-status"></span></div><p>Captures sync to the connected Applications database.</p><label>Data source ID<input name="data_source_id" required></label><label>Integration token <span class="field-help">Leave blank to keep the saved token</span><input name="token" type="password" autocomplete="off"></label><p id="notion-sync-detail" class="subtle"></p><button class="button secondary" type="submit">Save Notion connection</button></form>
           <form id="smtp-form" class="view-card"><div class="card-heading"><h2>Local email</h2><span id="smtp-state" class="sub-status"></span></div><p>Used only for applications you approve for the local 9 AM sender.</p><div class="field-grid"><label>SMTP host<input name="host" placeholder="smtp.gmail.com" required></label><label>Port<select name="port"><option>465</option><option>587</option></select></label></div><label>Username<input name="username" autocomplete="username" required></label><label>From address<input name="from" type="email" required></label><label>App password <span class="field-help">Leave blank to keep the verified password</span><input name="password" type="password" autocomplete="off"></label><button class="button secondary" type="submit">Verify and save</button></form>
           <div class="view-card"><div class="card-heading"><h2>Gmail drafts</h2><span id="gmail-state" class="sub-status"></span></div><p id="gmail-account">Create drafts with attachments in your connected Gmail account.</p><p id="gmail-client-info" class="subtle"></p><form id="gmail-client-form"><label>Google OAuth Desktop app client JSON<input name="client" type="file" accept=".json,application/json" required></label><button class="button secondary" type="submit">Save OAuth client</button></form><div class="stack-actions"><button id="gmail-connect-button" class="button secondary" type="button">Connect Gmail</button><button id="gmail-refresh-button" class="button quiet-button" type="button">Refresh status</button></div></div>
           <form id="profile-form" class="view-card"><div class="card-heading"><h2>AI writing background</h2><span id="profile-state" class="sub-status"></span></div><p>Use factual experience for Codex suggestions or copy a prompt into this chat.</p><label>Your background<textarea name="profile" rows="8" placeholder="Your real experience, skills, and relevant work"></textarea></label><button class="button secondary" type="submit">Save background</button></form>
-        </div>
+        </div><aside class="settings-side"><section class="view-card"><h2>Preferences</h2><label>Appearance<span class="field-help">Use dark or light mode</span><select id="appearance-select"><option value="light">Light</option><option value="dark">Dark</option></select></label><label>Default resume<span class="field-help">Used for new applications</span><select id="default-resume-select"></select></label><label class="settings-toggle-row"><span><strong>Notifications</strong><small>Important local status updates</small></span><input id="notifications-toggle" type="checkbox"></label></section><section class="view-card system-status-card"><h2>System status</h2><p class="status-summary">Saved tokens and secrets remain hidden in the interface.</p><div class="status-list"><span>Notion sync <b id="system-notion-state">—</b></span><span>Gmail OAuth <b id="system-gmail-state">—</b></span><span>Local helper <b>Running</b></span><span>Codex ATS <b id="system-codex-state">—</b></span></div><button id="connection-checks-button" class="button secondary" type="button">Run connection checks</button></section></aside></div>
         <div class="settings-foot"><button id="sync-button" class="button quiet-button" type="button">Retry Notion sync</button><p>Gmail scheduled messages send from Gmail after this computer is off. Local SMTP still needs the helper running at 9:00 AM.</p></div>
       </section>
+      </main>
     </div>
     <div id="notice" class="notice" role="status" hidden></div>
   </div>

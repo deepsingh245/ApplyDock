@@ -9,6 +9,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -407,7 +408,36 @@ def _codex_failure(diagnostic, exit_status):
         return "model_unavailable", f"The {MODEL} model is unavailable in this Codex CLI session."
     if "schema" in diagnostic and any(term in diagnostic for term in ("invalid", "unsupported", "failed")):
         return "schema_rejected", "Codex rejected the structured output schema. Update Codex CLI and try again."
+    if any(term in diagnostic for term in ("access is denied", "permission denied", "os error 5")):
+        return "local_permissions", "Codex could not access its local working files. Restart ApplyDock and try again."
+    if "sandbox" in diagnostic and any(term in diagnostic for term in ("failed", "refusing", "unsupported", "cannot")):
+        return "sandbox_failed", "Codex could not start its read-only local sandbox."
+    if any(term in diagnostic for term in ("connection reset", "connection refused", "stream disconnected", "network is unreachable")):
+        return "connection_failed", "The Codex connection ended before the analysis response arrived."
     return "codex_failed", f"Codex exited with status {exit_status} before producing a result."
+
+
+def _safe_cli_diagnostics(value):
+    value = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", str(value or ""))
+    lines = []
+    for raw in value.splitlines():
+        line = normalize_text(raw)
+        if not line:
+            continue
+        line = re.sub(r"(?i)\b[A-Z]:\\[^\s\"']+", "[local path]", line)
+        line = re.sub(r"(?<![\w.+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", "[email]", line, flags=re.I)
+        line = re.sub(r"\b[A-Za-z0-9_-]{40,}\b", "[redacted]", line)
+        if line not in lines:
+            lines.append(line[:360])
+        if len(lines) == 8:
+            break
+    return lines
+
+
+def _record_cli_diagnostics(db_path, analysis_id, percent, stderr):
+    for line in _safe_cli_diagnostics(stderr):
+        record_event(db_path, analysis_id, percent, "codex_log", "Codex CLI: " + line, "error")
+        print("[ApplyDock ATS] Codex CLI: " + line, file=sys.stderr, flush=True)
 
 
 def _run_codex(root: Path, prompt: str, schema_name: str, purpose: str, analysis_id: str, db_path: Path):
@@ -415,9 +445,9 @@ def _run_codex(root: Path, prompt: str, schema_name: str, purpose: str, analysis
     if not executable:
         raise RuntimeError("codex_missing|Codex CLI is not installed. Install it, sign in with ChatGPT Plus, then check the connection in Settings.")
     schema_source = root / schema_name
-    command = [executable, "exec", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check",
+    command = [executable, "--no-daemon", "--ask-for-approval", "never", "exec", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check",
                "--ignore-user-config", "--ignore-rules", "--model", MODEL,
-               "--config", "model_reasoning_effort=low", "-C", "", "--output-schema", "", "--color", "never", "-"]
+               "--config", "model_reasoning_effort=low", "-C", "", "--output-schema", "", "--output-last-message", "", "--color", "never", "-"]
     started = time.monotonic()
     exit_status = -1; failure = ""
     label = "resume profile" if purpose == "resume_parse" else "job comparison"
@@ -426,14 +456,17 @@ def _run_codex(root: Path, prompt: str, schema_name: str, purpose: str, analysis
     try:
         with tempfile.TemporaryDirectory(prefix="applydock-ats-") as sandbox, tempfile.TemporaryDirectory(prefix="applydock-schema-") as schema_dir:
             schema = Path(schema_dir) / "output-schema.json"
+            final_message = Path(schema_dir) / "final-response.json"
             schema.write_bytes(schema_source.read_bytes())
             command[command.index("-C") + 1] = sandbox
             command[command.index("--output-schema") + 1] = str(schema)
+            command[command.index("--output-last-message") + 1] = str(final_message)
             result = None
             for attempt in range(2):
                 record_event(db_path, analysis_id, start_percent, purpose, f"Starting {label} with Codex" + (" (retry)." if attempt else "."))
                 try:
-                    result = subprocess.run(command, input=prompt, text=True, capture_output=True, timeout=180)
+                    result = subprocess.run(command, input=prompt, text=True, encoding="utf-8", errors="strict",
+                                            capture_output=True, timeout=180)
                 except subprocess.TimeoutExpired:
                     if attempt == 0:
                         record_event(db_path, analysis_id, start_percent, purpose, f"The {label} timed out. Retrying once.", "warning")
@@ -446,19 +479,23 @@ def _run_codex(root: Path, prompt: str, schema_name: str, purpose: str, analysis
                     record_event(db_path, analysis_id, success_percent, purpose, f"Codex completed the {label} response.", "success")
                     break
                 if any(term in diagnostic for term in ("usage limit", "limit reached", "credits", "quota")):
+                    _record_cli_diagnostics(db_path, analysis_id, start_percent, result.stderr)
                     failure = "plan_limit"
                     raise RuntimeError("plan_limit|ChatGPT Plus plan limit reached. Wait for the included usage to reset.")
                 if any(term in diagnostic for term in ("sign in", "not logged", "authentication", "unauthorized")):
+                    _record_cli_diagnostics(db_path, analysis_id, start_percent, result.stderr)
                     failure = "auth"
                     raise RuntimeError("auth|Codex is not signed in. Sign in with your ChatGPT Plus account.")
                 if attempt == 1:
+                    _record_cli_diagnostics(db_path, analysis_id, start_percent, result.stderr)
                     failure, detail = _codex_failure(diagnostic, result.returncode)
                     raise RuntimeError(f"{failure}|{detail}")
                 record_event(db_path, analysis_id, start_percent, purpose, f"Codex exited with status {result.returncode}. Retrying once.", "warning")
-        if result is None:
-            raise RuntimeError("codex_failed|Codex did not return a result.")
+            if result is None:
+                raise RuntimeError("codex_failed|Codex did not return a result.")
+            response_text = final_message.read_text(encoding="utf-8") if final_message.is_file() else result.stdout
         try:
-            return json.loads(result.stdout)
+            return json.loads(response_text)
         except (TypeError, ValueError):
             failure = "invalid_output"
             raise RuntimeError("invalid_output|Codex returned an unreadable analysis.") from None
@@ -703,6 +740,31 @@ def analysis_history(db_path: Path, entry_id: str):
     with _connect(db_path) as db:
         rows = list(db.execute("SELECT * FROM analysis_runs WHERE entry_id=? ORDER BY created_at DESC", (entry_id,)))
     return [_public_analysis(row, include_result=False) for row in rows]
+
+
+def analysis_queue(db_path: Path):
+    with _connect(db_path) as db:
+        rows = list(db.execute("""SELECT ar.id,ar.entry_id,ar.status,ar.model,ar.created_at,ar.started_at,
+                                 e.title,e.company,
+                                 COALESCE((SELECT ae.percent FROM analysis_events ae WHERE ae.analysis_id=ar.id ORDER BY ae.id DESC LIMIT 1),0) AS progress_percent,
+                                 COALESCE((SELECT ae.stage FROM analysis_events ae WHERE ae.analysis_id=ar.id ORDER BY ae.id DESC LIMIT 1),ar.status) AS progress_stage,
+                                 COALESCE((SELECT ae.message FROM analysis_events ae WHERE ae.analysis_id=ar.id ORDER BY ae.id DESC LIMIT 1),'Waiting for the local worker.') AS progress_message
+                                 FROM analysis_runs ar LEFT JOIN entries e ON e.id=ar.entry_id
+                                 WHERE ar.status IN ('pending','analyzing')
+                                 ORDER BY CASE ar.status WHEN 'analyzing' THEN 0 ELSE 1 END,ar.created_at"""))
+    pending_position = 0
+    result = []
+    for row in rows:
+        item = dict(row)
+        if item["status"] == "pending":
+            pending_position += 1
+            item["position"] = pending_position
+            item["label"] = f"Waiting #{pending_position}"
+        else:
+            item["position"] = 0
+            item["label"] = "Running now"
+        result.append(item)
+    return result
 
 
 def get_analysis(db_path: Path, analysis_id: str):

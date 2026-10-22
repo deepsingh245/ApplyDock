@@ -59,7 +59,9 @@ Fewer than two scorable requirements or fewer than 200 meaningful JD characters 
 
 ## Queue and interfaces
 
-Each run records safe operational events for queueing, resume parsing, job comparison, evidence validation, Python scoring, result preparation, and Notion synchronization. The dashboard displays these events in a live activity sidebar and polls while work is active. Its percentage is a stage estimate because Codex CLI does not expose a reliable token level completion percentage. Partial model output, resume text, job text, prompts, and internal model reasoning are never streamed to the browser. Validated results appear only after schema and evidence checks finish.
+Each run records safe operational events for queueing, resume parsing, job comparison, evidence validation, Python scoring, result preparation, and Notion synchronization. The dashboard displays the full local queue above the analysis, with a running row, numbered waiting rows, stages, and progress. It also displays the selected run's events in a live activity sidebar and polls while work is active. Its percentage is a stage estimate because Codex CLI does not expose a reliable token level completion percentage. Partial model output, resume text, job text, prompts, and internal model reasoning are never streamed to the browser. Validated results appear only after schema and evidence checks finish.
+
+Each Codex call bypasses the shared local daemon, runs ephemerally, and writes its final structured response to a dedicated temporary file before ApplyDock parses it. This keeps daemon state and mixed console output from corrupting analyzer results. Safe failure categories distinguish authentication, plan limits, model availability, schema rejection, local access, sandbox startup, connectivity, timeouts, and invalid structured responses.
 
 A single durable worker processes one analysis at a time. Cache key uniqueness prevents duplicate concurrent work. Temporary Codex failures retry once. Authentication and plan limit failures do not retry automatically. Active runs found after a helper restart become **Analysis Failed — Interrupted** and require manual retry.
 

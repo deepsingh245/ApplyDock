@@ -19,8 +19,10 @@ let analysisSort = "newest";
 let analysisDetail = null;
 let analysisHistory = [];
 let analysisVersions = [];
+let analysisQueue = [];
 let previousAnalysisDetail = null;
 let analysisPollTimer;
+let selectedResumeId = "";
 const FALLBACK_APPLICATION_STAGES = ["Initiated", "To apply", "No Answer", "Applied", "Offer", "Rejected"];
 const STAGES_AFTER_APPLY = new Set(["applied", "no answer", "offer", "rejected"]);
 
@@ -177,6 +179,7 @@ function showPair() {
 
 function showView(name, scrollToTop = true) {
   if (dirty && name !== currentView && !window.confirm("Discard unsaved changes in this application?")) return;
+  if (name !== "analysis") clearTimeout(analysisPollTimer);
   dirty = false;
   currentView = name;
   $("queue-view").hidden = name !== "queue";
@@ -184,16 +187,21 @@ function showView(name, scrollToTop = true) {
   $("resumes-view").hidden = name !== "resumes";
   $("analysis-view").hidden = name !== "analysis";
   $("settings-view").hidden = name !== "settings";
-  $("settings-button").textContent = name === "settings" ? "Workspace" : "Settings";
-  $("resumes-button").textContent = name === "resumes" ? "Workspace" : "Resumes";
+  const navView = name === "create" ? "queue" : name;
+  const labels = {queue: "Applications", create: "Applications", resumes: "Resume Library", analysis: "ATS Analysis", settings: "Settings"};
+  $("breadcrumb-current").textContent = labels[name] || "Applications";
+  for (const [id, view] of [["applications-button", "queue"], ["resumes-button", "resumes"], ["analysis-nav-button", "analysis"], ["settings-button", "settings"]])
+    $(id).classList.toggle("active", view === navView);
   if (scrollToTop) window.scrollTo(0, 0);
 }
 
 function renderList() {
   let entries = activeEntries();
   $("active-count").textContent = entries.length;
+  $("nav-application-count").textContent = entries.length;
   const query = $("search-input").value.trim().toLowerCase();
   let shown = entries.filter(entry => {
+    if (filter === "to_apply" && !["initiated", "to apply"].includes(String(entry.application_stage || "").trim().toLowerCase())) return false;
     if (filter === "review" && (!entry.needs_review || stageIsAfterApply(entry.application_stage)) && entry.status !== "failed") return false;
     if (filter === "applied" && !stageIsAfterApply(entry.application_stage)) return false;
     if (filter === "scheduled" && (entry.apply_method !== "email" || !["gmail_schedule_pending", "gmail_scheduled"].includes(entry.delivery_mode))) return false;
@@ -213,8 +221,9 @@ function renderList() {
   $("entry-list").innerHTML = shown.length ? shown.map(entry => {
     const selected = entry.id === selectedId;
     const category = entry.delivery_mode === "local" ? entry.status : entry.delivery_mode;
+    const initial = (entry.company || entry.title || "A").trim().charAt(0).toUpperCase();
     return '<button class="queue-item' + (selected ? ' selected' : '') + '" type="button" data-id="' + esc(entry.id) +
-      '" aria-pressed="' + selected + '"><span class="queue-item-top"><strong>' + esc(entry.title) +
+      '" aria-pressed="' + selected + '"><span class="queue-avatar" aria-hidden="true">' + esc(initial) + '</span><span class="queue-item-copy"><span class="queue-item-top"><strong>' + esc(entry.title) +
       '</strong><span class="mini-badge ' + esc(category) + '">' + esc(labelFor(entry)) + '</span></span><span class="queue-item-company">' +
       esc(entry.company || (entry.kind === "post" ? "Hiring post" : "Company not set")) + '</span><span class="queue-item-bottom">' +
       esc(entry.platform || "Other") + ' · ' + esc(entry.kind === "post" ? "Hiring post" : "Job") + (entry.application_stage ? ' · ' + esc(entry.application_stage) : '') +
@@ -223,7 +232,7 @@ function renderList() {
       (entry.analysis?.overall_score != null ? esc(entry.analysis.overall_score) + '% match' : esc(entry.analysis?.label || "Not Analyzed")) +
       (entry.analysis?.missing_mandatory ? ' · ' + esc(entry.analysis.missing_mandatory) + ' required missing' : '') + '</span>' +
       '<span class="analysis-meta">' + esc(entry.resume?.name || "No resume") + (entry.resume?.current_version_number ? ' · v' + esc(entry.resume.current_version_number) : '') +
-      (entry.analysis?.analyzed_at ? ' · ' + esc(new Date(entry.analysis.analyzed_at).toLocaleDateString()) : '') + '</span></span></button>';
+      (entry.analysis?.analyzed_at ? ' · ' + esc(new Date(entry.analysis.analyzed_at).toLocaleDateString()) : '') + '</span></span></span></button>';
   }).join("") : '<div class="queue-empty"><strong>' + (entries.length ? "Nothing matches this view." : "Your queue is clear.") +
     '</strong><p>' + (entries.length ? "Try another filter or search." : "Add a selected job or hiring post. Sent emails stay in Notion.") + '</p></div>';
   for (const button of $("entry-list").querySelectorAll("[data-id]")) {
@@ -388,6 +397,12 @@ function renderSettings() {
     : (codex.message || "Install Codex CLI and sign in with ChatGPT Plus.");
   $("codex-calls").textContent = state.ats_usage?.uncached_calls || 0;
   $("codex-cache").textContent = state.ats_usage?.cache_hits || 0;
+  $("appearance-select").value = document.documentElement.dataset.theme || "light";
+  $("default-resume-select").innerHTML = resumeOptions((state.resumes || []).find(resume => resume.is_default)?.id || "");
+  $("notifications-toggle").checked = localStorage.getItem("applydock-notifications") !== "off";
+  $("system-notion-state").textContent = state.notion_sync_error ? "Attention" : state.notion_connected ? "Healthy" : "Setup needed";
+  $("system-gmail-state").textContent = state.gmail_connected ? "Active" : state.gmail_client_ready ? "Configured" : "Setup needed";
+  $("system-codex-state").textContent = codex.connected ? "Active" : codex.installed ? "Sign in" : "Unavailable";
 }
 
 function renderResumeLibrary() {
@@ -397,22 +412,35 @@ function renderResumeLibrary() {
   const currentCreateResume = createSelect.value;
   createSelect.innerHTML = resumeOptions(currentCreateResume);
   if (!currentCreateResume) createSelect.value = library.find(resume => resume.is_default && resume.available)?.id || "";
-  $("resume-library").innerHTML = library.length ? library.map(resume => {
+  if (!library.some(resume => resume.id === selectedResumeId)) selectedResumeId = library[0]?.id || "";
+  const selected = library.find(resume => resume.id === selectedResumeId);
+  const totals = '<div class="resume-stats"><strong>' + library.length + '</strong> resumes <strong>' + library.filter(resume => resume.is_default).length + '</strong> default <strong>' + (state.entries || []).filter(entry => entry.resume_id).length + '</strong> applications linked</div>';
+  const rows = library.map(resume => {
     const assigned = (state.entries || []).filter(entry => entry.resume_id === resume.id).length;
-    const fileUrl = esc(resume.file_url);
-    const previewUrl = esc(resume.preview_url || resume.file_url);
-    return '<article class="resume-card"><form class="resume-edit-form" data-resume-id="' + esc(resume.id) + '">' +
-      '<div class="resume-card-top"><div><span class="eyebrow">' + esc(resume.category) + '</span><h2>' + esc(resume.name) + '</h2></div>' +
-      (resume.is_default ? '<span class="sub-status success">Default</span>' : '<span class="sub-status">' + assigned + ' assigned</span>') + '</div>' +
-      '<p class="resume-file-meta">' + esc(resume.original_filename) + ' · ' + esc(bytesLabel(resume.size_bytes)) + ' · Version ' + esc(resume.current_version_number || 1) + ' of ' + esc(resume.version_count || 1) + ' · ' + (resume.available ? 'Available' : 'Missing file') + '</p>' +
-      (resume.extraction_status !== "ready" ? '<p class="inline-alert resume-extraction">' + esc(resume.extraction_error || "Resume text extraction needs attention.") + '</p>' : '') +
-      '<div class="resume-links"><a class="button quiet-button" href="' + previewUrl + '" target="_blank" rel="noreferrer">Preview</a><a class="button quiet-button" href="' + fileUrl + '&download=1" download>Download</a></div>' +
-      '<div class="field-grid"><label>Name<input name="name" value="' + esc(resume.name) + '" maxlength="120" required></label><label>Category<input name="category" list="resume-categories" value="' + esc(resume.category) + '" maxlength="80" required></label></div>' +
+    const extension = String(resume.original_filename || "").split(".").pop().toUpperCase() || "FILE";
+    const updated = resume.updated_at || resume.created_at;
+    const date = updated ? new Date(updated).toLocaleDateString([], {year: "numeric", month: "short", day: "numeric"}) : "—";
+    return '<button class="resume-table-row' + (resume.id === selectedResumeId ? ' selected' : '') + '" type="button" data-resume-select="' + esc(resume.id) + '">' +
+      '<span class="resume-name-cell"><b class="file-type ' + esc(extension.toLowerCase()) + '">' + esc(extension === "DOCX" ? "DOC" : extension) + '</b><span><strong>' + esc(resume.name) + '</strong><small>' + esc(resume.original_filename) + '</small></span></span>' +
+      '<span>' + esc(resume.category) + '</span><span>v' + esc(resume.current_version_number || 1) + '</span><span>' + esc(date) + '</span><span>' + assigned + ' application' + (assigned === 1 ? '' : 's') + '</span><span>' + (resume.is_default ? '<i class="default-pill">Default</i>' : '—') + '</span><span aria-hidden="true">•••</span></button>';
+  }).join("");
+  let details = "";
+  if (selected) {
+    const assigned = (state.entries || []).filter(entry => entry.resume_id === selected.id).length;
+    const fileUrl = esc(selected.file_url);
+    const previewUrl = esc(selected.preview_url || selected.file_url);
+    const isPdf = String(selected.original_filename || "").toLowerCase().endsWith(".pdf");
+    details = '<div class="resume-detail-grid"><article class="resume-preview-card"><div class="resume-preview-heading"><div><h2>' + esc(selected.name) + ' ' + (selected.is_default ? '<i class="default-pill">Default</i>' : '') + '</h2><small>Document preview · ' + esc(bytesLabel(selected.size_bytes)) + ' · ' + esc(isPdf ? "PDF" : "DOCX") + '</small></div><div><a class="button secondary" href="' + previewUrl + '" target="_blank" rel="noreferrer">Preview</a><a class="button secondary" href="' + fileUrl + '&download=1" download>Download</a></div></div>' +
+      (isPdf ? '<iframe class="resume-preview-frame" src="' + previewUrl + '#toolbar=0&navpanes=0" title="Preview of ' + esc(selected.name) + '"></iframe>' : '<div class="resume-docx-preview"><b>DOC</b><strong>' + esc(selected.original_filename) + '</strong><span>Open Preview to inspect this DOCX file.</span></div>') + '</article>' +
+      '<aside class="resume-detail-card"><form class="resume-edit-form" data-resume-id="' + esc(selected.id) + '"><h2>Document details</h2>' +
+      '<dl><div><dt>Category</dt><dd>' + esc(selected.category) + '</dd></div><div><dt>Current version</dt><dd>Version ' + esc(selected.current_version_number || 1) + '</dd></div><div><dt>Linked applications</dt><dd>' + assigned + '</dd></div><div><dt>Storage</dt><dd>Local helper</dd></div><div><dt>File type</dt><dd>' + esc(isPdf ? "PDF" : "DOCX") + '</dd></div></dl>' +
+      (selected.extraction_status !== "ready" ? '<p class="inline-alert resume-extraction">' + esc(selected.extraction_error || "Resume text extraction needs attention.") + '</p>' : '') +
+      '<label>Name<input name="name" value="' + esc(selected.name) + '" maxlength="120" required></label><label>Category<input name="category" list="resume-categories" value="' + esc(selected.category) + '" maxlength="80" required></label>' +
       '<label>Replace file <span class="field-help">Optional PDF or DOCX, up to 8 MB</span><input name="file" type="file" accept=".pdf,.docx"></label>' +
-      '<div class="resume-card-actions"><button class="button secondary" type="submit">Save changes</button>' +
-      (resume.is_default ? '' : '<button class="button quiet-button" type="button" data-resume-action="default">Make default</button>') +
-      '<button class="button danger-button" type="button" data-resume-action="delete">Delete</button></div></form></article>';
-  }).join("") : '<div class="queue-empty resume-empty"><strong>No resumes saved yet.</strong><p>Upload a PDF or DOCX above. You can then reuse it for every application.</p></div>';
+      '<div class="resume-card-actions"><button class="button secondary" type="submit">Save details</button>' + (selected.is_default ? '' : '<button class="button quiet-button" type="button" data-resume-action="default">Make default</button>') + '<button class="button danger-button" type="button" data-resume-action="delete">Delete</button></div></form></aside></div>';
+  }
+  $("resume-library").innerHTML = library.length ? totals + '<div class="resume-table"><div class="resume-table-head"><span>Resume</span><span>Category</span><span>Version</span><span>Last updated</span><span>Usage</span><span>Default</span><span></span></div>' + rows + '</div>' + details : '<div class="queue-empty resume-empty"><strong>No resumes saved yet.</strong><p>Use Upload resume to add a reusable PDF or DOCX.</p></div>';
+  for (const button of $("resume-library").querySelectorAll("[data-resume-select]")) button.addEventListener("click", () => { selectedResumeId = button.dataset.resumeSelect; renderResumeLibrary(); });
   for (const form of $("resume-library").querySelectorAll(".resume-edit-form")) {
     form.addEventListener("submit", saveResumeChanges);
     for (const button of form.querySelectorAll("[data-resume-action]"))
@@ -428,7 +456,7 @@ function scoreTone(score) {
 }
 
 function analysisStageLabel(stage) {
-  return ({queued: "Queued", validation: "Checking inputs", preparing: "Preparing files", resume_parse: "Parsing resume", job_comparison: "Comparing job", jd_match: "Comparing job", evidence_validation: "Validating evidence", scoring: "Calculating score", result_ready: "Preparing result", notion_sync: "Syncing Notion", complete: "Complete", plan_limit: "Plan limit reached", auth: "Sign-in required", codex_missing: "Codex unavailable", cli_options: "Codex update needed", model_unavailable: "Model unavailable", schema_rejected: "Schema rejected", invalid_output: "Invalid response", timeout: "Codex timed out", codex_failed: "Codex stopped", insufficient_jd: "Job description incomplete", interrupted: "Interrupted", failed: "Analysis failed"})[stage] || String(stage || "Processing").replaceAll("_", " ");
+  return ({queued: "Queued", validation: "Checking inputs", preparing: "Preparing files", resume_parse: "Parsing resume", job_comparison: "Comparing job", jd_match: "Comparing job", evidence_validation: "Validating evidence", scoring: "Calculating score", result_ready: "Preparing result", notion_sync: "Syncing Notion", complete: "Complete", plan_limit: "Plan limit reached", auth: "Sign-in required", codex_log: "Codex CLI", codex_missing: "Codex unavailable", cli_options: "Codex update needed", model_unavailable: "Model unavailable", schema_rejected: "Schema rejected", local_permissions: "Local access failed", sandbox_failed: "Sandbox failed", connection_failed: "Connection ended", invalid_output: "Invalid response", timeout: "Codex timed out", codex_failed: "Codex stopped", insufficient_jd: "Job description incomplete", interrupted: "Interrupted", failed: "Analysis failed"})[stage] || String(stage || "Processing").replaceAll("_", " ");
 }
 
 function analysisConsoleHtml(detail, live = false) {
@@ -446,9 +474,22 @@ function scrollAnalysisConsole() {
   if (output) output.scrollTop = output.scrollHeight;
 }
 
+function renderAnalysisQueue() {
+  const active = analysisQueue || [];
+  $("analysis-queue-count").textContent = active.length ? active.length + " active" : "Queue empty";
+  $("analysis-queue").innerHTML = active.length ? active.map(item => {
+    const progress = Math.max(0, Math.min(100, Number(item.progress_percent || 0)));
+    const current = item.id === analysisDetail?.id;
+    return '<button class="analysis-queue-row' + (item.status === "analyzing" ? ' running' : '') + (current ? ' current' : '') + '" type="button" data-queue-analysis="' + esc(item.id) + '"><span class="analysis-queue-position">' + (item.status === "analyzing" ? '<i aria-hidden="true"></i>NOW' : '#' + esc(item.position)) + '</span><span class="analysis-queue-copy"><strong>' + esc(item.title || "Untitled application") + '</strong><small>' + esc(item.company || "Company not set") + ' · ' + esc(analysisStageLabel(item.progress_stage)) + '</small></span><span class="analysis-queue-meter"><span><i style="width:' + progress + '%"></i></span><b>' + progress + '%</b></span></button>';
+  }).join("") : '<div class="analysis-queue-empty"><span aria-hidden="true">✓</span><div><strong>No analyses are waiting</strong><p>Run an analysis from any application to add it here.</p></div></div>';
+  for (const button of $("analysis-queue").querySelectorAll("[data-queue-analysis]"))
+    button.addEventListener("click", () => openAnalysis(button.dataset.queueAnalysis));
+}
+
 function renderAnalysis() {
   const detail = analysisDetail;
   if (!detail) return;
+  renderAnalysisQueue();
   const entry = (state.entries || []).find(item => item.id === detail.entry_id);
   $("analysis-title").textContent = entry?.title || "ATS analysis";
   $("analysis-subtitle").textContent = (entry?.company || "Company not set") + " · Resume version " + (detail.result?.resume_version || "—") + " · " + (detail.model || "Codex");
@@ -464,6 +505,7 @@ function renderAnalysis() {
     $("analysis-content").querySelector("[data-analysis-rerun]")?.addEventListener("click", () => runAnalysis(entry));
     $("analysis-content").querySelector("[data-analysis-settings]")?.addEventListener("click", () => showView("settings"));
     scrollAnalysisConsole();
+    if (analysisQueue.length) analysisPollTimer = setTimeout(() => openAnalysis(detail.id, true), 1200);
     return;
   }
   const result = detail.result || {};
@@ -474,6 +516,12 @@ function renderAnalysis() {
   const delta = previous?.overall_score == null || detail.overall_score == null ? null : Math.round((detail.overall_score - previous.overall_score) * 10) / 10;
   const warnings = [...(result.warnings || [])];
   if (detail.error_message) warnings.unshift(detail.error_message);
+  const matchCounts = requirements.reduce((counts, item) => {
+    if (item.status === "demonstrated") counts.matched += 1;
+    else if (["partial", "listed"].includes(item.status)) counts.partial += 1;
+    else counts.missing += 1;
+    return counts;
+  }, {matched: 0, partial: 0, missing: 0});
   const categoryNames = {required_skills: "Required technical skills", experience: "Relevant work experience", responsibilities: "Responsibilities and projects", preferred_skills: "Preferred skills", education: "Education and qualifications"};
   const categoryHtml = Object.entries(categoryNames).map(([keyName, label]) => {
     const score = categories[keyName] || {earned: 0, possible: 0, score: 0};
@@ -482,8 +530,11 @@ function renderAnalysis() {
   const requirementHtml = requirements.length ? requirements.map(item => {
     const checklist = detail.checklist?.[item.id] || "pending";
     const evidence = item.resume_evidence || [];
-    return '<article class="requirement-card"><div class="requirement-head"><span class="match-status ' + esc(item.status) + '">' + esc(item.status) + '</span>' + (item.mandatory ? '<span class="required-pill">Required</span>' : '<span class="preferred-pill">Preferred</span>') + '<span class="priority-pill">' + esc(item.priority) + ' priority</span></div><h3>' + esc(item.requirement) + '</h3><p>' + esc(item.explanation || "No explanation supplied.") + '</p>' + (evidence.length ? '<div class="evidence-list">' + evidence.map(block => '<blockquote><strong>' + esc(block.id) + '</strong>' + esc(block.text) + '</blockquote>').join("") + '</div>' : '<small>No supporting resume evidence</small>') + (item.recommendation ? '<div class="recommendation"><strong>Recommendation</strong><p>' + esc(item.recommendation) + '</p><label>Checklist state<select data-recommendation="' + esc(item.id) + '"><option value="pending"' + (checklist === "pending" ? " selected" : "") + '>Pending</option><option value="reviewed"' + (checklist === "reviewed" ? " selected" : "") + '>Reviewed</option><option value="addressed"' + (checklist === "addressed" ? " selected" : "") + '>Addressed</option></select></label></div>' : '') + '</article>';
+    const filterStatus = item.status === "demonstrated" ? "matched" : ["partial", "listed"].includes(item.status) ? "partial" : "missing";
+    return '<details class="requirement-card" data-requirement-status="' + filterStatus + '" data-requirement-text="' + esc(item.requirement).toLowerCase() + '"><summary><span class="requirement-dot ' + filterStatus + '"></span><span><strong>' + esc(item.requirement) + '</strong><small>' + esc(item.explanation || "Open to inspect evidence and recommendation.") + '</small></span><span class="match-status ' + esc(item.status) + '">' + esc(item.status) + '</span><b aria-hidden="true">›</b></summary><div class="requirement-body"><div class="requirement-head">' + (item.mandatory ? '<span class="required-pill">Required</span>' : '<span class="preferred-pill">Preferred</span>') + '<span class="priority-pill">' + esc(item.priority) + ' priority</span></div>' + (evidence.length ? '<div class="evidence-list">' + evidence.map(block => '<blockquote><strong>' + esc(block.id) + '</strong>' + esc(block.text) + '</blockquote>').join("") + '</div>' : '<small>No supporting resume evidence</small>') + (item.recommendation ? '<div class="recommendation"><strong>Recommendation</strong><p>' + esc(item.recommendation) + '</p><label>Checklist state<select data-recommendation="' + esc(item.id) + '"><option value="pending"' + (checklist === "pending" ? " selected" : "") + '>Pending</option><option value="reviewed"' + (checklist === "reviewed" ? " selected" : "") + '>Reviewed</option><option value="addressed"' + (checklist === "addressed" ? " selected" : "") + '>Addressed</option></select></label></div>' : '') + '</div></details>';
   }).join("") : '<div class="view-card"><p>No scorable requirements are available for this run.</p></div>';
+  const priorityItems = requirements.filter(item => item.recommendation && item.status !== "demonstrated").slice(0, 3);
+  const priorityHtml = '<div class="view-card priority-improvements"><div class="card-heading"><h2>Priority improvements</h2><span class="sub-status">' + priorityItems.length + ' high impact</span></div>' + (priorityItems.length ? priorityItems.map(item => '<article><strong>' + esc(item.requirement) + '</strong><p>' + esc(item.recommendation) + '</p></article>').join("") : '<p>No priority gaps were returned for this analysis.</p>') + '</div>';
   const historyHtml = analysisHistory.length ? analysisHistory.map(item => '<button type="button" data-analysis-history="' + esc(item.id) + '" class="history-row' + (item.id === detail.id ? ' active' : '') + '"><span>' + esc(item.label) + '</span><strong>' + (item.overall_score == null ? '—' : esc(item.overall_score) + '%') + '</strong><small>' + esc(dateLabel(item.completed_at || item.created_at)) + '</small></button>').join("") : '<p class="subtle">No prior analyses.</p>';
   let comparisonHtml = "";
   if (previousAnalysisDetail?.result) {
@@ -498,9 +549,21 @@ function renderAnalysis() {
     comparisonHtml = '<section class="view-card comparison-card"><div class="card-heading"><h2>Changes from previous run</h2><span class="sub-status">' + (delta > 0 ? '+' : '') + esc(delta ?? 0) + ' points</span></div><div class="comparison-grid"><div><strong>Newly matched</strong>' + comparisonList(newlyMatched, "No newly matched requirements.") + '</div><div><strong>Remaining gaps</strong>' + comparisonList(remainingGaps, "No remaining gaps were classified.") + '</div><div><strong>Resolved recommendations</strong>' + comparisonList(resolved, "No recommendations resolved yet.") + '</div><div><strong>New warnings</strong>' + comparisonList(newWarnings, "No new warnings.") + '</div></div></section>';
   }
   $("analysis-content").innerHTML =
-    '<div class="analysis-hero"><div class="score-orb ' + scoreTone(detail.overall_score) + '"><strong>' + (detail.overall_score == null ? '—' : esc(detail.overall_score) + '%') + '</strong><span>Estimated match</span></div><div><span class="sub-status">' + esc(detail.label) + '</span><h2>' + esc(result.summary || "Analysis result") + '</h2><p>Job relevance: ' + (detail.relevance_score == null ? '—' : esc(detail.relevance_score) + '%') + ' · ATS readability: ' + (detail.readability_score == null ? '—' : esc(detail.readability_score) + '%') + ' · Missing mandatory: ' + esc(detail.missing_mandatory || 0) + '</p>' + (delta == null ? '' : '<p class="score-change">Change from previous run: ' + (delta > 0 ? '+' : '') + esc(delta) + ' points</p>') + '</div><button class="button secondary" data-analysis-rerun type="button">Run again</button></div>' +
+    '<div class="analysis-hero"><div class="score-orb ' + scoreTone(detail.overall_score) + '"><strong>' + (detail.overall_score == null ? '—' : esc(detail.overall_score) + '%') + '</strong><span>Estimated match</span></div><div><span class="sub-status">' + esc(detail.label) + '</span><h2>' + esc(result.summary || "Analysis result") + '</h2><div class="analysis-totals"><span><strong>' + matchCounts.matched + '</strong>Matched</span><span><strong>' + matchCounts.partial + '</strong>Partial</span><span><strong>' + matchCounts.missing + '</strong>Missing evidence</span></div><p>Job relevance: ' + (detail.relevance_score == null ? '—' : esc(detail.relevance_score) + '%') + ' · ATS readability: ' + (detail.readability_score == null ? '—' : esc(detail.readability_score) + '%') + ' · Missing mandatory: ' + esc(detail.missing_mandatory || 0) + '</p>' + (delta == null ? '' : '<p class="score-change">Change from previous run: ' + (delta > 0 ? '+' : '') + esc(delta) + ' points</p>') + '</div><button class="button secondary" data-analysis-rerun type="button">Run analysis again</button></div>' +
     (warnings.length ? '<div class="analysis-warnings">' + warnings.map(value => '<p>' + esc(value) + '</p>').join("") + '</div>' : '') +
-    '<div class="analysis-layout"><main><section class="view-card"><div class="card-heading"><h2>Score breakdown</h2><span class="sub-status">Python calculated</span></div><div class="category-list">' + categoryHtml + '<div class="category-row readability-row"><div><strong>ATS readability and structure</strong><span>5% of estimated match</span></div><b>' + (detail.readability_score == null ? '—' : esc(detail.readability_score) + '%') + '</b></div></div></section>' + comparisonHtml + '<section class="analysis-section"><div class="card-heading"><h2>Evidence and recommendations</h2><span class="sub-status">' + requirements.length + ' requirements</span></div><div class="requirements-list">' + requirementHtml + '</div></section></main><aside class="analysis-history">' + analysisConsoleHtml(detail, false) + '<div class="view-card"><div class="card-heading"><h2>Analysis history</h2><span class="sub-status">' + analysisHistory.length + '</span></div><div class="history-list">' + historyHtml + '</div></div><div class="view-card"><div class="card-heading"><h2>Resume versions</h2><span class="sub-status">' + analysisVersions.length + '</span></div><p>This run stays linked to version ' + esc(result.resume_version || "—") + '. Replacing a resume keeps earlier results for comparison.</p><div class="version-list">' + analysisVersions.map(version => '<div><strong>Version ' + esc(version.version_number) + (version.is_current ? ' · Current' : '') + '</strong><span>' + esc(version.original_filename) + '</span><small>' + esc(version.extraction_status) + ' · ' + esc(dateLabel(version.created_at)) + '</small></div>').join("") + '</div></div></aside></div>';
+    '<div class="analysis-layout"><main><section class="view-card"><div class="card-heading"><h2>Score breakdown</h2><span class="sub-status">Python calculated</span></div><div class="category-list">' + categoryHtml + '<div class="category-row readability-row"><div><strong>ATS readability and structure</strong><span>5% of estimated match</span></div><b>' + (detail.readability_score == null ? '—' : esc(detail.readability_score) + '%') + '</b></div></div></section>' + comparisonHtml + '<section class="analysis-section"><div class="card-heading"><div><h2>Requirements explorer</h2><p>Inspect matched evidence and gaps in your resume.</p></div><span class="sub-status">' + requirements.length + ' requirements</span></div><div class="requirements-toolbar"><div class="requirement-filters"><button class="active" type="button" data-requirement-filter="all">All</button><button type="button" data-requirement-filter="missing">Missing</button><button type="button" data-requirement-filter="partial">Partial</button><button type="button" data-requirement-filter="matched">Matched</button></div><label><span class="sr-only">Search requirements</span><input id="requirements-search" type="search" placeholder="Search requirements"></label></div><div class="requirements-list">' + requirementHtml + '</div></section></main><aside class="analysis-history">' + priorityHtml + analysisConsoleHtml(detail, false) + '<div class="view-card"><div class="card-heading"><h2>Analysis history</h2><span class="sub-status">' + analysisHistory.length + '</span></div><div class="history-list">' + historyHtml + '</div></div><div class="view-card"><div class="card-heading"><h2>Resume versions</h2><span class="sub-status">' + analysisVersions.length + '</span></div><p>This run stays linked to version ' + esc(result.resume_version || "—") + '. Replacing a resume keeps earlier results for comparison.</p><div class="version-list">' + analysisVersions.map(version => '<div><strong>Version ' + esc(version.version_number) + (version.is_current ? ' · Current' : '') + '</strong><span>' + esc(version.original_filename) + '</span><small>' + esc(version.extraction_status) + ' · ' + esc(dateLabel(version.created_at)) + '</small></div>').join("") + '</div></div></aside></div>';
+  let requirementFilter = "all";
+  const applyRequirementFilters = () => {
+    const query = ($("requirements-search")?.value || "").trim().toLowerCase();
+    for (const card of $("analysis-content").querySelectorAll("[data-requirement-status]"))
+      card.hidden = (requirementFilter !== "all" && card.dataset.requirementStatus !== requirementFilter) || (query && !card.dataset.requirementText.includes(query));
+  };
+  for (const button of $("analysis-content").querySelectorAll("[data-requirement-filter]")) button.addEventListener("click", () => {
+    requirementFilter = button.dataset.requirementFilter;
+    for (const item of $("analysis-content").querySelectorAll("[data-requirement-filter]")) item.classList.toggle("active", item === button);
+    applyRequirementFilters();
+  });
+  $("requirements-search")?.addEventListener("input", applyRequirementFilters);
   for (const select of $("analysis-content").querySelectorAll("[data-recommendation]")) select.addEventListener("change", async () => {
     try {
       const response = await api("/api/analyses/" + detail.id + "/recommendations/" + select.dataset.recommendation, "PATCH", {state: select.value});
@@ -510,6 +573,7 @@ function renderAnalysis() {
   for (const button of $("analysis-content").querySelectorAll("[data-analysis-history]")) button.addEventListener("click", () => openAnalysis(button.dataset.analysisHistory));
   $("analysis-content").querySelector("[data-analysis-rerun]")?.addEventListener("click", () => runAnalysis(entry));
   scrollAnalysisConsole();
+  if (analysisQueue.length) analysisPollTimer = setTimeout(() => openAnalysis(detail.id, true), 1200);
 }
 
 async function openAnalysis(id, preserveView = false) {
@@ -517,6 +581,8 @@ async function openAnalysis(id, preserveView = false) {
   try {
     const response = await api("/api/analyses/" + id);
     analysisDetail = response.analysis;
+    const queueResponse = await api("/api/analyses/queue");
+    analysisQueue = queueResponse.queue || [];
     const history = await api("/api/entries/" + analysisDetail.entry_id + "/analyses");
     analysisHistory = history.analyses || [];
     const currentHistoryIndex = analysisHistory.findIndex(item => item.id === analysisDetail.id);
@@ -692,8 +758,28 @@ async function performAction(action, button) {
 function setTheme(theme) {
   document.documentElement.dataset.theme = theme;
   localStorage.setItem("applydock-theme", theme);
+  if ($("appearance-select")) $("appearance-select").value = theme;
   $("theme-button").setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
   $("theme-button").title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+}
+
+function initializeSettingsDisclosures() {
+  for (const card of document.querySelectorAll(".settings-grid > .view-card")) {
+    card.classList.add("settings-config-card");
+    const heading = card.querySelector(":scope > .card-heading");
+    if (!heading || heading.querySelector(".settings-card-toggle")) continue;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "settings-card-toggle";
+    button.textContent = "Configure";
+    button.setAttribute("aria-expanded", "false");
+    button.addEventListener("click", () => {
+      const expanded = card.classList.toggle("expanded");
+      button.textContent = expanded ? "Close" : "Configure";
+      button.setAttribute("aria-expanded", String(expanded));
+    });
+    heading.append(button);
+  }
 }
 
 $("pair-form").addEventListener("submit", async event => {
@@ -703,8 +789,44 @@ $("pair-form").addEventListener("submit", async event => {
   catch (error) { sessionStorage.removeItem("pairingKey"); showPair(); notify(error.message, true); }
 });
 $("theme-button").addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
-$("settings-button").addEventListener("click", () => showView(currentView === "settings" ? "queue" : "settings"));
-$("resumes-button").addEventListener("click", () => showView(currentView === "resumes" ? "queue" : "resumes"));
+$("appearance-select").addEventListener("change", event => setTheme(event.target.value));
+$("notifications-toggle").addEventListener("change", event => localStorage.setItem("applydock-notifications", event.target.checked ? "on" : "off"));
+$("default-resume-select").addEventListener("change", event => {
+  if (event.target.value) manageResume(event.target.value, "default", event.target);
+});
+$("applications-button").addEventListener("click", () => showView("queue"));
+$("settings-button").addEventListener("click", () => showView("settings"));
+$("resumes-button").addEventListener("click", () => showView("resumes"));
+$("resume-upload-toggle").addEventListener("click", () => {
+  const form = $("resume-upload-form");
+  form.hidden = !form.hidden;
+  $("resume-upload-toggle").textContent = form.hidden ? "＋ Upload resume" : "Close upload";
+});
+$("analysis-nav-button").addEventListener("click", async () => {
+  const entry = selectedEntry();
+  if (entry?.analysis?.id) await openAnalysis(entry.analysis.id);
+  else showView("analysis");
+});
+for (const button of document.querySelectorAll("[data-editor-tab]")) button.addEventListener("click", async () => {
+  const entry = selectedEntry();
+  if (!entry) return;
+  for (const tab of document.querySelectorAll("[data-editor-tab]")) tab.classList.toggle("active", tab === button);
+  if (button.dataset.editorTab === "analysis") {
+    if (entry.analysis?.id) await openAnalysis(entry.analysis.id);
+    else await runAnalysis(entry);
+    return;
+  }
+  if (button.dataset.editorTab === "email") {
+    setEmailPanel(true, entry);
+    $("email-section-toggle").scrollIntoView({behavior: "smooth", block: "start"});
+    return;
+  }
+  if (button.dataset.editorTab === "activity") {
+    $("inspector").scrollIntoView({behavior: "smooth", block: "start"});
+    return;
+  }
+  $("editor-form").scrollIntoView({behavior: "smooth", block: "start"});
+});
 $("manage-resumes-inline").addEventListener("click", () => showView("resumes"));
 $("email-section-toggle").addEventListener("click", () => {
   const form = $("editor-form");
@@ -730,6 +852,17 @@ $("create-apply-link").addEventListener("input", updateCreateLink);
 $("create-apply-open").addEventListener("click", event => { if (!usableLink($("create-apply-link").value)) event.preventDefault(); });
 for (const button of document.querySelectorAll("[data-back]")) button.addEventListener("click", () => showView("queue"));
 $("search-input").addEventListener("input", renderList);
+$("global-search").addEventListener("input", event => {
+  $("search-input").value = event.target.value;
+  if (currentView !== "queue") showView("queue", false);
+  renderList();
+});
+document.addEventListener("keydown", event => {
+  if (event.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
+    event.preventDefault();
+    $("global-search").focus();
+  }
+});
 for (const button of $("filters").querySelectorAll("[data-filter]")) button.addEventListener("click", () => { filter = button.dataset.filter; renderList(); });
 $("analysis-filter").addEventListener("change", event => { analysisFilter = event.target.value; renderList(); });
 $("score-filter").addEventListener("change", event => { scoreFilter = event.target.value; renderList(); });
@@ -829,6 +962,18 @@ $("codex-check-button").addEventListener("click", async event => {
   } catch (error) { notify(error.message, true); }
   finally { button.disabled = false; }
 });
+$("connection-checks-button").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const [codexResult] = await Promise.all([api("/api/settings/codex/check", "POST", {}), api("/api/sync", "POST", {})]);
+    state.codex = codexResult.codex;
+    state.ats_usage = codexResult.usage;
+    await load(true);
+    notify("Connection checks completed.");
+  } catch (error) { notify(error.message, true); }
+  finally { button.disabled = false; }
+});
 $("editor-delete").addEventListener("click", event => performAction("local-delete", event.currentTarget));
 $("refresh-button").addEventListener("click", async event => {
   const button = event.currentTarget;
@@ -852,6 +997,7 @@ document.addEventListener("keydown", event => {
 });
 window.addEventListener("beforeunload", event => { if (dirty) { event.preventDefault(); event.returnValue = ""; } });
 window.addEventListener("applydock-paired", () => load().catch(error => { showPair(); notify(error.message, true); }));
+initializeSettingsDisclosures();
 setTheme(localStorage.getItem("applydock-theme") === "dark" ? "dark" : "light");
 if (key()) load().catch(error => { showPair(); notify(error.message, true); });
 else showPair();
