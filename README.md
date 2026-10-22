@@ -72,7 +72,8 @@ py -3 scripts/check.py --ui                    # plus browser flows (needs Chrom
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Modules, data flow, security boundaries, storage |
 | [docs/FEATURES.md](docs/FEATURES.md) | Feature index with status and links |
 | [docs/features/](docs/features/) | One document per complex feature |
-| [docs/DESIGN_HANDOFF.md](docs/DESIGN_HANDOFF.md) | UI structure, tokens and components for the redesign phase |
+| [DESIGN.md](DESIGN.md) | Design system: tokens, components, layout and accessibility rules |
+| [docs/DESIGN_HANDOFF.md](docs/DESIGN_HANDOFF.md) | What the 2026-10 redesign changed, measured results, remaining UI issues |
 | [docs/TECH_DEBT.md](docs/TECH_DEBT.md) | Deferred work, including the dashboard Content-Security-Policy |
 
 ## Privacy

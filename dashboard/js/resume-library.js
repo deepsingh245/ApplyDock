@@ -2,14 +2,14 @@
 
 function renderResumeLibrary() {
   const library = state.resumes || [];
-  $("resume-library-count").textContent = library.length + (library.length === 1 ? " saved" : " saved");
+  $("resume-library-count").textContent = library.length + " saved";
   const createSelect = $("create-form").elements.resume_id;
   const currentCreateResume = createSelect.value;
   createSelect.innerHTML = resumeOptions(currentCreateResume);
   if (!currentCreateResume) createSelect.value = library.find(resume => resume.is_default && resume.available)?.id || "";
   if (!library.some(resume => resume.id === selectedResumeId)) selectedResumeId = library[0]?.id || "";
   const selected = library.find(resume => resume.id === selectedResumeId);
-  const totals = '<div class="resume-stats"><strong>' + library.length + '</strong> resumes <strong>' + library.filter(resume => resume.is_default).length + '</strong> default <strong>' + (state.entries || []).filter(entry => entry.resume_id).length + '</strong> applications linked</div>';
+  const totals = '<div class="resume-stats"><span><strong>' + library.length + '</strong> ' + plural(library.length, "resume") + '</span><span><strong>' + (state.entries || []).filter(entry => entry.resume_id).length + '</strong> linked ' + plural((state.entries || []).filter(entry => entry.resume_id).length, "application") + '</span></div>';
   const ordered = library.filter(resume => resume.kind !== "tailored").flatMap(master => [master, ...library.filter(resume => resume.kind === "tailored" && resume.parent_resume_id === master.id)])
     .concat(library.filter(resume => resume.kind === "tailored" && !library.some(master => master.id === resume.parent_resume_id)));
   const rows = ordered.map(resume => {
@@ -32,7 +32,7 @@ function renderResumeLibrary() {
     details = '<div class="resume-detail-grid"><article class="resume-preview-card"><div class="resume-preview-heading"><div><h2>' + esc(selected.name) + ' ' + (selected.is_default ? '<i class="default-pill">Default</i>' : '') + '</h2><small>Document preview · ' + esc(bytesLabel(selected.size_bytes)) + ' · ' + esc(isPdf ? "PDF" : "DOCX") + '</small></div><div><button class="button primary" type="button" data-open-resume-editor="' + esc(selected.id) + '">' + (selected.has_draft ? "Edit in ApplyDock" : "Import &amp; edit") + '</button><a class="button secondary" href="' + previewUrl + '" target="_blank" rel="noreferrer">Preview</a><a class="button secondary" href="' + fileUrl + '&download=1" download>Download</a></div></div>' +
       (isPdf ? '<iframe class="resume-preview-frame" src="' + previewUrl + '#toolbar=0&navpanes=0" title="Preview of ' + esc(selected.name) + '"></iframe>' : '<div class="resume-docx-preview"><b>DOC</b><strong>' + esc(selected.original_filename) + '</strong><span>Open Preview to inspect this DOCX file.</span></div>') + '</article>' +
       '<aside class="resume-detail-card"><form class="resume-edit-form" data-resume-id="' + esc(selected.id) + '"><h2>Document details</h2>' +
-      '<dl><div><dt>Category</dt><dd>' + esc(selected.category) + '</dd></div><div><dt>Current version</dt><dd>Version ' + esc(selected.current_version_number || 1) + '</dd></div><div><dt>Linked applications</dt><dd>' + assigned + '</dd></div><div><dt>Storage</dt><dd>Local helper</dd></div><div><dt>File type</dt><dd>' + esc(isPdf ? "PDF" : "DOCX") + '</dd></div></dl>' +
+      '<p class="subtle">Version ' + esc(selected.current_version_number || 1) + ' · ' + esc(isPdf ? "PDF" : "DOCX") + ' · used by ' + assigned + ' ' + plural(assigned, "application") + '</p>' +
       (selected.extraction_status !== "ready" ? '<p class="inline-alert resume-extraction">' + esc(selected.extraction_error || "Resume text extraction needs attention.") + '</p>' : '') +
       '<label>Name<input name="name" value="' + esc(selected.name) + '" maxlength="120" required></label><label>Category<input name="category" list="resume-categories" value="' + esc(selected.category) + '" maxlength="80" required></label>' +
       '<label>Replace file <span class="field-help">Optional PDF or DOCX, up to 8 MB</span><input name="file" type="file" accept=".pdf,.docx"></label>' +

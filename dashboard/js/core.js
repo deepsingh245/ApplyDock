@@ -93,6 +93,10 @@ function stageOptions(selected = "") {
   return ['<option value="">Not set</option>', ...values.map(value => '<option value="' + esc(value) + '"' + (value.toLowerCase() === selected.toLowerCase() ? ' selected' : '') + '>' + esc(value) + '</option>')].join("");
 }
 
+function plural(count, word) {
+  return count === 1 ? word : word + "s";
+}
+
 function bytesLabel(value) {
   const size = Number(value || 0);
   return size < 1_000_000 ? Math.max(1, Math.round(size / 1000)) + " KB" : (size / 1_000_000).toFixed(1) + " MB";

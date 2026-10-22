@@ -24,9 +24,9 @@ frame-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; 
 
 `client_secret_*.json` sits in the repo root. It is git-ignored and not tracked, and the app already stores the client in `data/config.json`. Move or delete the file so a `git add -f` can't publish it.
 
-## 3. Two stacked CSS layers — design phase
+## 3. ~~Two stacked CSS layers~~ — resolved 2026-10
 
-`dashboard/style.css` is the original stylesheet (lines 1–450) plus a redesign layer (from `/* ApplyDock workspace redesign */`) that overrides it, with 67 selectors defined twice. Consolidating them changes the cascade, so it belongs in the UI redesign. See [DESIGN_HANDOFF.md](DESIGN_HANDOFF.md).
+Resolved by the "Ledger" redesign: one `tokens.css` and one ordered `style.css` (see [DESIGN.md](../DESIGN.md)). `extension/sidepanel.css` holds a hand-copied set of the color tokens; `test_architecture.py` fails if they drift from `dashboard/tokens.css`. Other remaining UI items are listed in [DESIGN_HANDOFF.md](DESIGN_HANDOFF.md).
 
 ## 4. Extension duplicates dashboard code
 

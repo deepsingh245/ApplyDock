@@ -41,7 +41,8 @@ applydock/                Python helper (package)
   schemas/                Codex structured-output JSON schemas
   resume_templates/       Typst templates + bundled Carlito fonts (OFL)
 dashboard/                web workspace (no build step)
-  index.html, style.css
+  index.html, tokens.css, style.css   design tokens + one stylesheet (rules in DESIGN.md)
+  fonts/                  self-hosted IBM Plex Sans/Mono (OFL)
   js/core.js              shared state, api(), esc(), notify(), formatters — loads first
   js/applications.js      queue, application editor tabs, inspector/delivery actions
   js/resume-library.js    resume library view
@@ -75,7 +76,7 @@ config, events, resume_model           (no ApplyDock imports)
 ## Request flow
 
 1. `Handler.do_GET` and `do_POST`/`PATCH`/`DELETE` call `dispatch_get` or `dispatch_mutation`.
-2. Public GETs are handled first: `/`, `/style.css`, `/js/*.js`, the Gmail OAuth callback, and resume file links that carry their own `?access=` token.
+2. Public GETs are handled first: `/`, the stylesheets, `/js/*.js`, `/fonts/*.woff2`, the Gmail OAuth callback, and resume file links that carry their own `?access=` token.
 3. Everything else passes `authorized()`: the Host must be the loopback host and port, the Origin (if present) must be the dashboard or a Chrome extension, and `X-Local-Key` must match the pairing key (compared in constant time).
 4. The route is looked up in `ROUTES`. Mutations read the JSON body (12 MB maximum) before routing, as before; DELETE routes take no body.
 5. The handler returns a dict (sent as 200 JSON) or a `FileResponse`. Exceptions become JSON errors: `NotFound` gives 404, `ConflictError` gives 409 (with the current draft), `ValueError`/`KeyError` give 400, and anything else gives 500.
@@ -114,7 +115,7 @@ Codex runs as a sandboxed, read-only subprocess with prompts on stdin. Output is
 - **Local only:** the server binds to `127.0.0.1`. The pairing key is required for every API route.
 - **Resume links:** `?access=` tokens are scoped. The current-file token rotates when the file changes; per-version tokens never rotate but only open that version.
 - **Secrets:** Notion token, SMTP password and Gmail client secret/refresh token are DPAPI-encrypted. `/api/state` never returns them.
-- **Static files:** only `.js`/`.css` under `dashboard/` (plus `/`) are served; path traversal is rejected (tested).
+- **Static files:** only `.js`/`.css`/`.woff2` under `dashboard/` (plus `/`) are served, fonts with an immutable cache and everything else `no-store`; path traversal is rejected (tested).
 - **HTML rendering:** the dashboard builds HTML strings and escapes every interpolated value with `esc()`.
 - **Deferred:** a Content-Security-Policy on the dashboard. See [TECH_DEBT.md](TECH_DEBT.md).
 - **AI isolation:** AI never sends email or applies edits on its own. Approvals and suggestion acceptance are explicit user actions.

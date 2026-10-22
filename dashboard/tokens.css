@@ -1,0 +1,110 @@
+/* ApplyDock design tokens ("Ledger"). The single source for color, type, spacing, shape and motion.
+   Every text color meets WCAG AA (4.5:1) on every surface in both themes; see DESIGN.md. */
+
+@font-face { font-family: "Plex Sans"; src: url(/fonts/ibm-plex-sans-latin-400-normal.woff2) format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Plex Sans"; src: url(/fonts/ibm-plex-sans-latin-500-normal.woff2) format("woff2"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "Plex Sans"; src: url(/fonts/ibm-plex-sans-latin-600-normal.woff2) format("woff2"); font-weight: 600 700; font-display: swap; }
+@font-face { font-family: "Plex Mono"; src: url(/fonts/ibm-plex-mono-latin-400-normal.woff2) format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Plex Mono"; src: url(/fonts/ibm-plex-mono-latin-500-normal.woff2) format("woff2"); font-weight: 500 700; font-display: swap; }
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces: canvas (app background) < surface (panels, inputs) < surface-2 (hover, subtle fills). */
+  --canvas: #F6F5F1;
+  --surface: #FFFFFF;
+  --surface-2: #EFEDE7;
+  --surface-3: #E7E4DC;
+  --line: #E3DFD6;
+  --line-strong: #CFC9BC;
+
+  /* Text: ink (primary) > ink-2 (secondary) > ink-3 (tertiary; still AA). */
+  --ink: #1B1A17;
+  --ink-2: #55524A;
+  --ink-3: #6E6A60;
+
+  /* One accent, used for primary actions, selection and links. */
+  --accent: #0E6656;
+  --accent-hover: #0A5244;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #E1EFEA;
+
+  /* Status colors, each with a tinted background for chips and notes. */
+  --success: #256B43;
+  --success-soft: #E4F1E8;
+  --warn: #8A5300;
+  --warn-soft: #F7EBD3;
+  --danger: #B3261E;
+  --danger-soft: #F9E3E1;
+
+  /* Typography. Mono is for data: scores, dates, versions, hashes, counts, keyboard keys. */
+  --font-sans: "Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Plex Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+  --text-xs: 12px;   /* minimum size: captions, chips, metadata */
+  --text-sm: 13px;   /* body and controls */
+  --text-md: 14px;   /* emphasized body, inputs on touch */
+  --text-lg: 16px;   /* panel titles */
+  --text-xl: 20px;   /* view titles */
+  --text-2xl: 24px;  /* page titles, key figures */
+  --leading: 1.45;
+
+  /* 4px spacing grid. */
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-12: 48px;
+
+  /* Shape: small radii, borders instead of shadows; one shadow for floating layers. */
+  --radius-sm: 4px;      /* controls */
+  --radius-md: 6px;      /* panels */
+  --radius-pill: 999px;  /* chips only */
+  --shadow-pop: 0 8px 24px rgba(27, 26, 23, .12), 0 1px 3px rgba(27, 26, 23, .08);
+  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+
+  /* Motion: short, functional transitions only. */
+  --duration-fast: 120ms;
+  --duration: 160ms;
+  --ease: cubic-bezier(.2, 0, 0, 1);
+
+  /* Layout. */
+  --topbar-h: 52px;
+  --sidebar-w: 208px;
+  --list-w: 320px;
+  --context-w: 280px;
+  --control-h: 32px;
+
+  /* Legacy names still used by older rules; they map onto the tokens above. */
+  --muted: var(--ink-2);
+  --subtle: var(--ink-3);
+  --surface-soft: var(--surface-2);
+  --rail: var(--surface);
+  --inspector-surface: var(--canvas);
+  --shadow: none;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: #121211;
+  --surface: #1A1A18;
+  --surface-2: #23221F;
+  --surface-3: #2B2A26;
+  --line: #2E2D29;
+  --line-strong: #3D3B36;
+  --ink: #EDEBE6;
+  --ink-2: #B8B5AC;
+  --ink-3: #9A968C;
+  --accent: #5CC4AE;
+  --accent-hover: #7AD3C0;
+  --accent-ink: #0B1F1A;
+  --accent-soft: #16332D;
+  --success: #6FC593;
+  --success-soft: #17301F;
+  --warn: #E2B15A;
+  --warn-soft: #33270F;
+  --danger: #F28B82;
+  --danger-soft: #3A1C1A;
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, .5), 0 1px 3px rgba(0, 0, 0, .4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --duration-fast: 0ms; --duration: 0ms; }
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0ms !important; scroll-behavior: auto !important; }
+}

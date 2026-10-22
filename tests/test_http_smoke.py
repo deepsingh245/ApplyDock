@@ -68,9 +68,12 @@ class HttpSmokeTests(unittest.TestCase):
             status, headers, _ = self.request(asset, key="")
             self.assertEqual(status, 200, asset)
             self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+        status, headers, font = self.request("/fonts/ibm-plex-sans-latin-400-normal.woff2", key="")
+        self.assertEqual((status, headers["Content-Type"]), (200, "font/woff2"))
+        self.assertTrue(font.startswith(b"wOF2"))
 
     def test_files_outside_the_dashboard_are_never_served(self):
-        for path in ("/../server.py", "/js/../../server.py", "/%2e%2e/applydock/config.py", "/data/config.json", "/README.md"):
+        for path in ("/../server.py", "/js/../../server.py", "/%2e%2e/applydock/config.py", "/data/config.json", "/README.md", "/fonts/OFL.txt"):
             status, _, _ = self.request(path, key="")
             self.assertIn(status, (401, 404), path)
 

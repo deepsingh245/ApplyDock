@@ -25,7 +25,8 @@ Personal, local-first job-application app: Python helper (`applydock/`) + plain-
 - **Dashboard:**
   - Classic `defer` scripts that share globals, in the order listed in `index.html`: `core.js` first, `main.js` after the feature files.
   - Escape every interpolated value with `esc()`.
-  - Reuse the existing CSS classes (`.button`, `.view-card`, `.badge`, …); don't add a UI library without approval.
+  - Follow [DESIGN.md](DESIGN.md): use the tokens in `dashboard/tokens.css` (never raw colors or sizes), reuse the existing classes (`.button`, `.view-card`, `.badge`, `.kv`, `.menu`, …), nothing under 12px, and keep text at AA contrast. Don't add a UI library without approval.
+  - The extension's `sidepanel.css` copies the tokens; change both together.
 - **Schema changes:**
   - Additive only, with a new `PRAGMA user_version` step in `database.init_db` (the backup runs automatically).
   - Ask before any schema change.
@@ -51,7 +52,7 @@ Run `py -3 scripts/check.py` before finishing.
 
 ## Docs to keep current
 
-When a feature's behavior changes, update its file in `docs/features/`, plus `docs/FEATURES.md` (status) and `docs/ARCHITECTURE.md` (if modules or flows change). Deferred work goes in `docs/TECH_DEBT.md`. UI structure notes go in `docs/DESIGN_HANDOFF.md`.
+When a feature's behavior changes, update its file in `docs/features/`, plus `docs/FEATURES.md` (status) and `docs/ARCHITECTURE.md` (if modules or flows change). Deferred work goes in `docs/TECH_DEBT.md`. Design rules live in `DESIGN.md`; redesign status and remaining UI issues go in `docs/DESIGN_HANDOFF.md`.
 
 ## Code graph
 

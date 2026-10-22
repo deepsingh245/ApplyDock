@@ -28,14 +28,18 @@ function renderSettings() {
   $("appearance-select").value = document.documentElement.dataset.theme || "light";
   $("default-resume-select").innerHTML = resumeOptions((state.resumes || []).find(resume => resume.is_default)?.id || "");
   $("notifications-toggle").checked = localStorage.getItem("applydock-notifications") !== "off";
-  $("system-notion-state").textContent = state.notion_sync_error ? "Attention" : state.notion_connected ? "Healthy" : "Setup needed";
-  $("system-gmail-state").textContent = state.gmail_connected ? "Active" : state.gmail_client_ready ? "Configured" : "Setup needed";
-  $("system-codex-state").textContent = codex.connected ? "Active" : codex.installed ? "Sign in" : "Unavailable";
+  // Status chips: green when working, amber when the user needs to act, neutral otherwise.
+  const tone = (id, value) => { $(id).classList.toggle("success", value === "success"); $(id).classList.toggle("warn", value === "warn"); };
+  tone("codex-state", codex.connected ? "success" : "warn");
+  tone("notion-state", state.notion_sync_error ? "warn" : state.notion_connected ? "success" : "warn");
+  tone("smtp-state", state.smtp_connected ? "success" : "");
+  tone("gmail-state", state.gmail_connected ? "success" : state.gmail_client_ready ? "warn" : "");
+  tone("profile-state", state.profile_saved ? "success" : "");
 }
 
-function setTheme(theme) {
+function setTheme(theme, persist = true) {
   document.documentElement.dataset.theme = theme;
-  localStorage.setItem("applydock-theme", theme);
+  if (persist) localStorage.setItem("applydock-theme", theme);
   if ($("appearance-select")) $("appearance-select").value = theme;
   $("theme-button").setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
   $("theme-button").title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";

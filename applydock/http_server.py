@@ -24,7 +24,7 @@ from . import (ai_draft, applications, ats, config, database, delivery, events, 
 from .resume_store import ConflictError
 
 ROUTES = []   # (method, compiled pattern, handler)
-STATIC_TYPES = {".html": "text/html", ".js": "text/javascript", ".css": "text/css"}
+STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".woff2": "font/woff2"}
 
 
 class NotFound(Exception):
@@ -142,9 +142,10 @@ def serve_public_get(request, path):
     if static_file:
         content = static_file.read_bytes()
         request.send_response(200)
-        request.send_header("Content-Type", STATIC_TYPES[static_file.suffix] + "; charset=utf-8")
+        request.send_header("Content-Type", STATIC_TYPES[static_file.suffix])
         request.send_header("Content-Length", str(len(content)))
-        request.send_header("Cache-Control", "no-store")
+        # Fonts never change between releases; scripts and styles must always be fresh.
+        request.send_header("Cache-Control", "max-age=31536000, immutable" if static_file.suffix == ".woff2" else "no-store")
         request.send_header("X-Content-Type-Options", "nosniff")
         request.end_headers()
         request.wfile.write(content)
@@ -156,7 +157,7 @@ def dashboard_file(url_path):
     """Map "/" and dashboard asset paths to files inside dashboard/, refusing anything outside it."""
     if url_path == "/":
         return config.DASHBOARD_DIR / "index.html"
-    if url_path.startswith("/api/") or Path(url_path).suffix not in (".js", ".css"):
+    if url_path.startswith("/api/") or Path(url_path).suffix not in (".js", ".css", ".woff2"):
         return None
     root = config.DASHBOARD_DIR.resolve()
     candidate = (root / url_path.lstrip("/")).resolve()

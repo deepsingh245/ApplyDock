@@ -97,26 +97,24 @@ function renderList() {
   $("entry-list").innerHTML = shown.length ? shown.map(entry => {
     const selected = entry.id === selectedId;
     const category = entry.delivery_mode === "local" ? entry.status : entry.delivery_mode;
-    const initial = (entry.company || entry.title || "A").trim().charAt(0).toUpperCase();
-    return '<button class="queue-item' + (selected ? ' selected' : '') + '" type="button" data-id="' + esc(entry.id) +
-      '" aria-pressed="' + selected + '"><span class="queue-avatar" aria-hidden="true">' + esc(initial) + '</span><span class="queue-item-copy"><span class="queue-item-top"><strong>' + esc(entry.title) +
-      '</strong><span class="mini-badge ' + esc(category) + '">' + esc(labelFor(entry)) + '</span></span><span class="queue-item-company">' +
-      esc(entry.company || (entry.kind === "post" ? "Hiring post" : "Company not set")) + '</span><span class="queue-item-bottom">' +
-      esc(entry.platform || "Other") + ' · ' + esc(entry.kind === "post" ? "Hiring post" : "Job") + (entry.application_stage ? ' · ' + esc(entry.application_stage) : '') +
-      (entry.needs_review && !stageIsAfterApply(entry.application_stage) ? ' <span class="review-flag">Needs review</span>' : '') +
-      '<span class="analysis-chip ' + esc(entry.analysis?.status || "not_analyzed") + '">' +
-      (entry.analysis?.overall_score != null ? esc(entry.analysis.overall_score) + '% match' : esc(entry.analysis?.label || "Not Analyzed")) +
-      (entry.analysis?.missing_mandatory ? ' · ' + esc(entry.analysis.missing_mandatory) + ' required missing' : '') + '</span>' +
-      '<span class="analysis-meta">' + esc(entry.resume?.name || "No resume") + (entry.resume?.current_version_number ? ' · v' + esc(entry.resume.current_version_number) : '') +
-      (entry.analysis?.analyzed_at ? ' · ' + esc(new Date(entry.analysis.analyzed_at).toLocaleDateString()) : '') + '</span></span></span></button>';
+    const analysis = entry.analysis || {};
+    const score = analysis.overall_score != null ? Number(analysis.overall_score).toFixed(1) : "—";
+    const review = entry.needs_review && !stageIsAfterApply(entry.application_stage);
+    return '<button class="queue-item' + (selected ? ' selected' : '') + '" type="button" data-id="' + esc(entry.id) + '" aria-pressed="' + selected + '">' +
+      '<span class="queue-item-top"><strong>' + esc(entry.title) + '</strong><span class="queue-score' + (analysis.stale ? ' stale' : '') + '" title="' + esc(analysis.label || "Not analyzed") + '">' + esc(score) + '</span></span>' +
+      '<span class="queue-item-company">' + esc(entry.company || (entry.kind === "post" ? "Hiring post" : "Company not set")) + ' · ' + esc(entry.platform || "Other") + '</span>' +
+      '<span class="queue-item-bottom"><span class="mini-badge ' + esc(category) + '">' + esc(labelFor(entry)) + '</span>' +
+      (entry.application_stage ? '<span class="mini-badge stage">' + esc(entry.application_stage) + '</span>' : '') +
+      (review ? '<span class="mini-badge review">Needs review</span>' : '') + '</span></button>';
   }).join("") : '<div class="queue-empty"><strong>' + (entries.length ? "Nothing matches this view." : "Your queue is clear.") +
     '</strong><p>' + (entries.length ? "Try another filter or search." : "Add a selected job or hiring post. Sent emails stay in Notion.") + '</p></div>';
   for (const button of $("entry-list").querySelectorAll("[data-id]")) {
     button.addEventListener("click", () => {
-      if (button.dataset.id === selectedId) return;
+      if (button.dataset.id === selectedId) { document.body.classList.add("detail-open"); return; }
       if (dirty && !window.confirm("Discard unsaved changes in this application?")) return;
       selectedId = button.dataset.id;
       dirty = false;
+      document.body.classList.add("detail-open");
       renderList();
       renderEditor();
       renderInspector();
@@ -141,7 +139,9 @@ function renderEditor() {
   const editable = !["sent", "sending"].includes(entry.status) && entry.delivery_mode !== "gmail_scheduled";
   $("editor-title").textContent = entry.title || "Untitled opportunity";
   $("editor-subtitle").textContent = (entry.company || "Company not set") + " · " + (entry.platform || "Other");
-  $("editor-meta").textContent = entry.kind === "post" ? "HIRING POST" : "JOB";
+  $("editor-meta").textContent = entry.kind === "post" ? "Hiring post" : "Job";
+  $("editor-progress").innerHTML = progressSteps(entry).map(step =>
+    '<li class="step ' + step.state + '"' + (step.state === "current" ? ' aria-current="step"' : '') + '><b>' + esc(step.label) + '</b><span>' + esc(step.detail) + '</span></li>').join("");
   $("editor-badge").textContent = labelFor(entry);
   $("editor-badge").className = "badge " + (entry.delivery_mode === "local" ? entry.status : entry.delivery_mode);
   $("editor-stage-badge").textContent = entry.application_stage || "Stage not set";
@@ -244,44 +244,73 @@ async function openResumeEditorForEntry(entry, mode) {
   } catch (error) { notify(error.message, true); }
 }
 
+// The five stages of an application, derived from data the entry already has.
+function progressSteps(entry) {
+  const analysis = entry.analysis || {};
+  const version = entry.resume_version;
+  const emailDone = ["gmail_draft", "gmail_schedule_pending", "gmail_scheduled"].includes(entry.delivery_mode) || ["approved", "sending", "sent"].includes(entry.status);
+  const sent = entry.status === "sent" || stageIsAfterApply(entry.application_stage);
+  const steps = [
+    {label: "Captured", detail: entry.created_at ? new Date(entry.created_at).toLocaleDateString([], {month: "short", day: "numeric"}) : "", done: true},
+    {label: "Analyzed", detail: analysis.status === "complete" ? (analysis.stale ? "Needs rerun" : Number(analysis.overall_score).toFixed(1) + " / 100") : (analysis.label || "Not analyzed"),
+      done: analysis.status === "complete" && !analysis.stale, warn: analysis.stale || ["failed", "plan_limit", "extraction_limited"].includes(analysis.status)},
+    {label: "Resume", detail: version ? "v" + version.version_number + (version.pinned ? " · pinned" : "") : "Missing", done: Boolean(version), warn: !version},
+    {label: "Email", detail: entry.apply_method === "email" ? labelFor(entry) : entry.apply_method === "external_form" ? "External form" : "Route not set", done: emailDone || entry.apply_method === "external_form"},
+    {label: "Applied", detail: entry.application_stage || (entry.status === "sent" ? "Sent" : "Not yet"), done: sent},
+  ];
+  let current = false;
+  return steps.map(step => {
+    let state = step.done ? "done" : "todo";
+    if (!step.done && !current) { state = "current"; current = true; }
+    if (step.warn && !step.done) state += " warn";
+    return {...step, state};
+  });
+}
+
 function renderInspector() {
   const entry = selectedEntry();
   if (!entry) {
-    $("inspector-content").innerHTML = '<div class="inspector-empty"><span class="eyebrow">NEXT STEP</span><h3>Your application, in focus.</h3><p>Select a job to see delivery options and a live preview of your email.</p></div>';
+    $("inspector-content").innerHTML = '<div class="inspector-empty"><span class="eyebrow">Next step</span><p>Select an application to see its status, match score, and delivery actions.</p></div>';
     return;
   }
   const editable = !["sent", "sending"].includes(entry.status) && entry.delivery_mode !== "gmail_scheduled";
   const category = entry.delivery_mode === "local" ? entry.status : entry.delivery_mode;
-  let actions = "";
-  if (editable && entry.apply_method === "email") {
-    actions += '<button class="button secondary" data-action="gmail-draft" type="button">' + (entry.gmail_draft_id ? "Update Gmail draft" : "Save to Gmail Drafts") + '</button>';
-    actions += '<button class="button secondary" data-action="gmail-prepare" type="button">Prepare Gmail schedule</button>';
-    if (entry.delivery_mode === "local")
-      actions += '<button class="button primary" data-action="' + (entry.status === "approved" ? "unapprove" : "approve") + '" type="button">' + (entry.status === "approved" ? "Remove local approval" : "Approve local 9 AM") + '</button>';
+  const analysis = entry.analysis || {status: "not_analyzed", label: "Not analyzed"};
+  const email = editable && entry.apply_method === "email";
+  // One recommended action, chosen from where the application is in the workflow.
+  const actions = [];
+  const add = (action, label, kind = "secondary") => actions.push({action, label, kind});
+  if (!analysis.id || analysis.stale) add("ats-run", analysis.id ? "Run analysis again" : "Run analysis");
+  if (analysis.status === "complete" && entry.resume?.available) add("optimize-resume", "Optimize resume");
+  if (email) {
+    if (!entry.gmail_draft_id || entry.gmail_dirty) add("gmail-draft", entry.gmail_draft_id ? "Update Gmail draft" : "Save to Gmail Drafts");
+    if (entry.delivery_mode === "gmail_schedule_pending" && !entry.gmail_dirty) add("gmail-scheduled", "I scheduled it in Gmail");
+    add("gmail-prepare", "Prepare Gmail schedule");
+    if (entry.delivery_mode === "local") add(entry.status === "approved" ? "unapprove" : "approve", entry.status === "approved" ? "Remove local approval" : "Approve local 9 AM");
   }
-  if (editable && entry.delivery_mode === "gmail_schedule_pending" && !entry.gmail_dirty)
-    actions += '<button class="button quiet-button" data-action="gmail-scheduled" type="button">I scheduled it in Gmail</button>';
-  if (editable && entry.apply_method === "email")
-    actions += '<button class="button quiet-button" data-action="ai-draft" type="button">Draft with Codex</button><button class="button quiet-button" data-action="ai-copy" type="button">Copy prompt for this chat</button>';
-  if (entry.status !== "sending")
-    actions += '<button class="button quiet-button" data-action="local-delete" type="button">Remove from ApplyDock</button>';
-  const analysis = entry.analysis || {status: "not_analyzed", label: "Not Analyzed"};
-  actions = '<button class="button secondary analysis-action" data-action="ats-run" type="button">' + (analysis.id ? "Run analysis again" : "Run analysis") + '</button>' +
-    (analysis.id ? '<button class="button quiet-button" data-action="ats-view" type="button">View detailed analysis</button>' : '') + actions;
+  if (analysis.id && !analysis.stale) add("ats-run", "Run analysis again");
+  if (email) { add("ai-draft", "Draft email with Codex", "quiet"); add("ai-copy", "Copy prompt", "quiet"); }
+  const primaryIndex = actions.findIndex(item => item.kind === "secondary");
+  const buttons = actions.map((item, index) => '<button class="button ' + (index === primaryIndex ? "primary" : item.kind === "quiet" ? "quiet-button" : "secondary") + '" data-action="' + item.action + '" type="button">' + esc(item.label) + '</button>').join("");
   const notionId = /^[a-f0-9-]{32,36}$/i.test(entry.notion_id || "") ? entry.notion_id.replace(/-/g, "") : "";
+  const score = analysis.overall_score;
+  const tone = score == null ? "neutral" : score >= 75 ? "strong" : score >= 50 ? "medium" : "weak";
   $("inspector-content").innerHTML =
-    '<div class="inspector-block"><span class="eyebrow">STATUS</span><span class="badge large ' + esc(category) + '">' + esc(labelFor(entry)) + '</span><p class="inspector-detail">' +
-    (entry.notion_id ? "Synced to Notion" : "Waiting for Notion sync") + '</p>' +
-    '<p class="inspector-detail"><strong>Application stage:</strong> ' + esc(entry.application_stage || "Not set") + '</p>' +
-    (notionId ? '<a class="small-link" href="https://www.notion.so/' + notionId + '" target="_blank" rel="noopener noreferrer">Open Notion page ↗</a>' : '') +
-    (entry.gmail_draft_id ? '<p class="inspector-detail">Gmail draft: ' + esc(entry.gmail_account || "connected account") + '</p>' : '') +
-    (entry.apply_method === "email" ? '<p class="inspector-detail resume-state ' + (entry.resume_status === "Resume Selected" ? "ready" : "missing") + '">' + esc(entry.readiness_status) + '</p>' : '') +
-    (entry.delivery_mode === "local" && entry.apply_method === "email" ? '<p class="inspector-detail">Local send: ' + esc(dateLabel(entry.send_at)) + '</p>' : '') +
-    '</div><div class="inspector-block analysis-summary"><span class="eyebrow">ATS ANALYSIS</span><div class="analysis-score-line">' +
-    (analysis.overall_score != null ? '<strong>' + esc(analysis.overall_score) + '%</strong>' : '<strong>—</strong>') + '<div><span>' + esc(analysis.label) + '</span>' +
-    (analysis.missing_mandatory ? '<small>' + esc(analysis.missing_mandatory) + ' mandatory requirement(s) missing</small>' : '<small>Uses ChatGPT Plus through Codex</small>') + '</div></div></div>' +
-    '<div class="inspector-block"><span class="eyebrow">ACTIONS</span><div class="action-stack">' + (actions || '<p class="subtle">Choose an application route in the editor to see the relevant actions.</p>') + '</div><p id="ai-notes" class="ai-notes" hidden></p></div>' +
-    (entry.apply_method === "email" ? '<div class="inspector-block preview-block"><span class="eyebrow">EMAIL PREVIEW</span><div class="email-preview"><strong id="preview-subject"></strong><span id="preview-to"></span><span id="preview-resume"></span><p id="preview-body"></p></div></div>' : '<div class="inspector-block route-block"><span class="eyebrow">APPLICATION ROUTE</span><p class="inspector-detail">This item is not currently set up as an email application.</p>' + (entry.apply_url ? '<a class="button quiet-button route-link" href="' + esc(entry.apply_url) + '" target="_blank" rel="noopener noreferrer">Open application form</a>' : '') + '</div>');
+    '<div class="inspector-block analysis-summary"><span class="eyebrow">Estimated match</span>' +
+    '<div class="score-figure ' + tone + '"><strong>' + (score != null ? esc(Number(score).toFixed(1)) : "—") + '</strong><span>/ 100</span></div>' +
+    '<div class="score-meter ' + tone + '"><i style="width:' + Math.max(0, Math.min(100, Number(score || 0))) + '%"></i></div>' +
+    '<p class="inspector-detail">' + esc(analysis.label) + (analysis.missing_mandatory ? ' · ' + esc(analysis.missing_mandatory) + ' required gap' + (analysis.missing_mandatory === 1 ? '' : 's') : '') + '</p>' +
+    (analysis.id ? '<button class="text-button" data-action="ats-view" type="button">View analysis</button>' : '') + '</div>' +
+    '<div class="inspector-block"><span class="eyebrow">Next step</span><div class="action-stack">' + (buttons || '<p class="subtle">Choose an application route in the editor to see delivery actions.</p>') + '</div><p id="ai-notes" class="ai-notes" hidden></p></div>' +
+    '<div class="inspector-block"><span class="eyebrow">Status</span><dl class="kv">' +
+    '<dt>Delivery</dt><dd><span class="badge ' + esc(category) + '">' + esc(labelFor(entry)) + '</span></dd>' +
+    '<dt>Stage</dt><dd>' + esc(entry.application_stage || "Not set") + '</dd>' +
+    (entry.apply_method === "email" ? '<dt>Readiness</dt><dd class="resume-state ' + (entry.resume_status === "Resume Selected" ? "ready" : "missing") + '">' + esc(entry.readiness_status) + '</dd>' : '') +
+    (entry.delivery_mode === "local" && entry.apply_method === "email" ? '<dt>Local send</dt><dd class="mono">' + esc(dateLabel(entry.send_at)) + '</dd>' : '') +
+    (entry.gmail_draft_id ? '<dt>Gmail</dt><dd>' + esc(entry.gmail_account || "Connected account") + '</dd>' : '') +
+    '<dt>Notion</dt><dd>' + (notionId ? '<a href="https://www.notion.so/' + notionId + '" target="_blank" rel="noopener noreferrer">Open page ↗</a>' : entry.notion_id ? "Synced" : "Not synced") + '</dd></dl></div>' +
+    (entry.apply_method === "email" ? '<div class="inspector-block preview-block"><span class="eyebrow">Email preview</span><div class="email-preview"><strong id="preview-subject"></strong><span id="preview-to"></span><span id="preview-resume"></span><p id="preview-body"></p></div></div>'
+      : '<div class="inspector-block route-block"><span class="eyebrow">Application route</span><p class="inspector-detail">Not set up as an email application.</p>' + (entry.apply_url ? '<a class="button secondary route-link" href="' + esc(entry.apply_url) + '" target="_blank" rel="noopener noreferrer">Open application form</a>' : '') + '</div>');
   for (const button of $("inspector").querySelectorAll("[data-action]"))
     button.addEventListener("click", () => performAction(button.dataset.action, button));
   updatePreview();
@@ -315,6 +344,7 @@ async function performAction(action, button) {
   if (!entry) return;
   const id = entry.id;
   if (action === "ats-view") { await openAnalysis(entry.analysis.id); return; }
+  if (action === "optimize-resume") { await openResumeEditorForEntry(entry, "optimize"); return; }
   if (action === "ats-run") {
     button.disabled = true;
     try { await runAnalysis(entry); }

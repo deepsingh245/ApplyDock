@@ -157,17 +157,35 @@ for (const button of document.querySelectorAll("[data-back]")) button.addEventLi
 
 $("search-input").addEventListener("input", renderList);
 
-$("global-search").addEventListener("input", event => {
-  $("search-input").value = event.target.value;
-  if (currentView !== "queue") showView("queue", false);
-  renderList();
-});
-
 document.addEventListener("keydown", event => {
   if (event.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
     event.preventDefault();
-    $("global-search").focus();
+    if (currentView !== "queue") showView("queue", false);
+    document.body.classList.remove("detail-open");
+    $("search-input").focus();
   }
+});
+
+// Arrow keys move between tabs in any tablist (WAI-ARIA tabs pattern); activation follows focus.
+document.addEventListener("keydown", event => {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  const tab = event.target.closest?.('[role="tab"]');
+  const list = tab?.closest('[role="tablist"]');
+  if (!list) return;
+  const tabs = [...list.querySelectorAll('[role="tab"]')].filter(item => !item.hidden && !item.disabled);
+  const index = tabs.indexOf(tab);
+  const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  event.preventDefault();
+  tabs[next].focus();
+  tabs[next].click();
+});
+
+$("notice").addEventListener("click", () => { $("notice").hidden = true; });
+
+// Small screens show the list or one application at a time.
+for (const button of document.querySelectorAll("[data-mobile-back]")) button.addEventListener("click", () => {
+  document.body.classList.remove("detail-open");
+  window.scrollTo(0, 0);
 });
 
 for (const button of $("filters").querySelectorAll("[data-filter]")) button.addEventListener("click", () => { filter = button.dataset.filter; renderList(); });
@@ -328,7 +346,8 @@ window.ApplyDock = {
 
 initializeSettingsDisclosures();
 
-setTheme(localStorage.getItem("applydock-theme") === "dark" ? "dark" : "light");
+// Follow the operating system until the user picks a theme explicitly.
+setTheme(localStorage.getItem("applydock-theme") || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"), Boolean(localStorage.getItem("applydock-theme")));
 
 if (key()) load().catch(error => { showPair(); notify(error.message, true); });
 
