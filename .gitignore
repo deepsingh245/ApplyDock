@@ -32,3 +32,5 @@ credentials*.json
 .vscode/
 Thumbs.db
 .DS_Store
+
+graphify-out/

@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "properties": {
+    "suggestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "requirement_id": {"type": "string"},
+          "target_id": {"type": "string"},
+          "field": {"type": "string"},
+          "operation": {"type": "string", "enum": ["replace", "insert_after", "add_keyword"]},
+          "original_text": {"type": "string"},
+          "proposed_text": {"type": "string"},
+          "reason": {"type": "string"},
+          "claim_type": {"type": "string", "enum": ["rephrase", "emphasis", "new_claim"]}
+        },
+        "required": ["requirement_id", "target_id", "field", "operation", "original_text", "proposed_text", "reason", "claim_type"],
+        "additionalProperties": false
+      }
+    },
+    "notes": {"type": "string"}
+  },
+  "required": ["suggestions", "notes"],
+  "additionalProperties": false
+}

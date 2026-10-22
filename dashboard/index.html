@@ -5,8 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>ApplyDock · Workspace</title>
-  <link rel="stylesheet" href="/style.css?v=0.9.0">
-  <script src="/app.js?v=0.9.0" defer></script>
+  <link rel="stylesheet" href="/style.css?v=0.11.0">
+  <script src="/app.js?v=0.11.0" defer></script>
+  <script src="/resume-editor.js?v=0.11.0" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -58,22 +59,26 @@
           <div id="editor-view" hidden>
             <div class="editor-topline"><span class="eyebrow">APPLICATION EDITOR</span><span id="editor-meta"></span></div>
             <div class="editor-heading"><div><h2 id="editor-title"></h2><p id="editor-subtitle"></p></div><div class="editor-heading-actions"><span id="editor-stage-badge" class="badge stage-badge"></span><span id="editor-badge" class="badge"></span><button id="editor-delete" class="button danger-button" type="button">Delete</button></div></div>
-            <nav class="editor-tabs" aria-label="Application sections"><button class="active" data-editor-tab="overview" type="button">Overview</button><button data-editor-tab="analysis" type="button">ATS Analysis</button><button data-editor-tab="email" type="button">Email</button><button data-editor-tab="activity" type="button">Activity</button></nav>
+            <nav class="editor-tabs" role="tablist" aria-label="Application sections"><button class="active" data-editor-tab="overview" type="button" role="tab">Overview</button><button data-editor-tab="details" type="button" role="tab">Job details</button><button data-editor-tab="resume" type="button" role="tab">Resume</button><button data-editor-tab="email" type="button" role="tab">Email</button><button data-editor-tab="analysis" type="button" role="tab">ATS Analysis</button></nav>
             <div id="editor-alerts"></div>
             <form id="editor-form">
-              <section class="form-section"><div class="section-title"><span class="section-index">01</span><div><h3>Opportunity</h3><p>Keep the job details accurate before drafting.</p></div></div>
+              <section class="form-section tab-pane" data-pane="overview"><div class="section-title"><span class="section-index">01</span><div><h3>Opportunity</h3><p>Keep the job details accurate before drafting.</p></div></div>
                 <div class="field-grid"><label>Role or post title<input name="title" required maxlength="300"></label><label>Company<input name="company" maxlength="300"></label></div>
                 <div class="field-grid"><label>Application stage<span class="field-help">Your current progress; synchronized with Notion</span><select name="application_stage"></select></label><label>Application route<select name="apply_method"><option value="unknown">Not decided</option><option value="email">Email application</option><option value="external_form">External application form</option></select></label></div><label>Apply link<span class="field-help">The employer's application page</span><span class="input-action-wrap"><input name="apply_url" type="url" placeholder="https://"><a id="apply-link-open" class="field-icon-button" href="#" target="_blank" rel="noopener noreferrer" aria-label="Open application link" title="Open application link"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5"/><path d="m19 5-9 9"/><path d="M19 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg></a></span></label>
                 <div class="source-field"><span>Source link</span><span class="field-help">Captured from the original posting</span><a id="source-link" class="source-link" href="#" target="_blank" rel="noopener noreferrer"></a></div>
-                <label>Job or post text<textarea name="excerpt" rows="7" placeholder="The details you selected from the posting"></textarea></label>
+                <label class="check-line"><input name="needs_review" type="checkbox"> Needs more review</label>
+              </section>
+              <section class="form-section tab-pane" data-pane="details" hidden><div class="section-title"><span class="section-index">02</span><div><h3>Job details</h3><p>The posting text used for ATS analysis, plus contacts and instructions.</p></div></div>
+                <label>Job or post text<textarea name="excerpt" rows="14" placeholder="The details you selected from the posting"></textarea></label>
                 <label><span id="contact-emails-label">Contact emails</span><span id="contact-emails-help" class="field-help">Saved as reference. One address per line.</span><textarea name="contact_emails" rows="3" placeholder="hiring@company.com"></textarea></label>
                 <label><span id="post-details-label">Application notes or instructions</span><textarea name="post_details" rows="4" placeholder="Application instructions, deadline, location, or contact person"></textarea></label>
-                <label class="check-line"><input name="needs_review" type="checkbox"> Needs more review</label>
-                <div class="assigned-resume-card"><div><strong>Assigned resume</strong><span id="resume-name" class="attachment-note"></span></div><label><span class="sr-only">Assigned resume</span><select name="resume_id"></select></label><button id="manage-resumes-inline" class="back-button" type="button">Manage resumes</button></div>
               </section>
-              <section class="form-section email-section"><button id="email-section-toggle" class="email-section-toggle" type="button" aria-expanded="false" aria-controls="email-section-fields"><span class="section-index">02</span><span class="email-toggle-copy"><strong id="email-section-title">Email application</strong><small id="email-section-description">Optional. Open this only when you want to contact the employer by email.</small></span><span id="email-toggle-label" class="email-toggle-label">Add email</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>
+              <section class="form-section tab-pane" data-pane="resume" hidden><div class="section-title"><span class="section-index">03</span><div><h3>Resume</h3><p>The exact resume file attached to this application.</p></div></div>
+                <div class="assigned-resume-card"><div><strong>Assigned resume</strong><span id="resume-name" class="attachment-note"></span><span id="resume-version-line" class="attachment-note"></span></div><label><span class="sr-only">Assigned resume</span><select name="resume_id"></select></label><button id="manage-resumes-inline" class="back-button" type="button">Manage resumes</button><div id="resume-entry-actions" class="resume-entry-actions"></div></div>
+              </section>
+              <section class="form-section email-section tab-pane" data-pane="email" hidden><div class="email-pane-head"><span class="section-index">04</span><span class="email-toggle-copy"><strong id="email-section-title">Email application</strong><small id="email-section-description">Optional. Use this only when you want to contact the employer by email.</small></span><button id="email-section-toggle" class="button secondary" type="button" aria-expanded="false" aria-controls="email-section-fields"><span id="email-toggle-label">Use email for this application</span></button></div>
                 <div id="email-section-fields" class="email-section-fields" hidden>
-                  <div class="workflow-note"><strong>Email content</strong><span id="email-workflow-note">Choose one recipient, then write the subject and message. Saved contact emails above are reference only.</span></div>
+                  <div class="workflow-note"><strong>Email content</strong><span id="email-workflow-note">Choose one recipient, then write the subject and message. Saved contact emails are reference only.</span></div>
                   <label>Recipient email <span class="field-help">The single address that will receive this application</span><input name="recipient" type="email" placeholder="hiring@company.com"></label>
                   <label>Subject<input name="subject" placeholder="Application for..."></label>
                   <label>Message<textarea name="body" class="body-editor" rows="16" placeholder="Write your application email here..."></textarea></label>
@@ -106,6 +111,10 @@
         </form>
         <datalist id="resume-categories"><option value="Frontend Developer"><option value="Full Stack Developer"><option value="Backend Developer"><option value="React Developer"><option value="Angular Developer"></datalist>
         <div id="resume-library" class="resume-library" aria-live="polite"></div>
+      </section>
+
+      <section id="resume-editor-view" class="secondary-view resume-editor-view" hidden aria-label="Resume editor">
+        <div id="resume-editor-root"></div>
       </section>
 
       <section id="analysis-view" class="secondary-view analysis-view" hidden>

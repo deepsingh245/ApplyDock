@@ -1,3 +1,4 @@
+import gc
 import io
 import json
 from pathlib import Path
@@ -24,6 +25,7 @@ class ATSAnalyzerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(gc.collect)  # release test-held sqlite handles before Windows deletes the folder
         self.data = Path(self.tmp.name)
         self.db_path = self.data / "capture.sqlite3"
         with sqlite3.connect(self.db_path) as db:
@@ -188,9 +190,50 @@ class ATSAnalyzerTests(unittest.TestCase):
 
     def test_no_openai_api_key_or_billing_setting_exists(self):
         root = Path(__file__).resolve().parents[1]
-        source = (root / "server.py").read_text(encoding="utf-8") + (root / "ats.py").read_text(encoding="utf-8")
+        modules = ("server.py", "ats.py", "resume_model.py", "resume_import.py", "resume_render.py", "resume_store.py")
+        source = "".join((root / name).read_text(encoding="utf-8") for name in modules)
         self.assertNotIn("OPENAI_API_KEY", source)
         self.assertNotIn("api.openai.com", source)
+
+    def test_same_file_under_another_version_id_is_not_stale(self):
+        _, document, _, raw = self.add_version()
+        run, _ = ats.queue_analysis(self.db_path, self.entry())
+        with sqlite3.connect(self.db_path) as db:
+            db.execute("UPDATE analysis_runs SET status='complete',overall_score=70,completed_at='now' WHERE id=?", (run["id"],))
+            db.execute("INSERT INTO resumes(id,name,access_token,created_at,updated_at) VALUES('resume-2','Copy','token-2','now','now')")
+            db.execute("""INSERT INTO resume_versions(id,resume_id,document_id,version_number,original_filename,access_token,created_at)
+                          VALUES('copy-v1','resume-2',?,1,'copy.docx','copy-token','now')""", (document["id"],))
+            db.execute("UPDATE resumes SET current_version_id='copy-v1' WHERE id='resume-2'")
+        moved = {**self.entry(), "resume_id": "resume-2"}
+        summary = ats.analysis_summary(self.db_path, moved)
+        self.assertEqual(summary["status"], "complete")
+        self.assertFalse(summary["stale"])
+        again, cached = ats.queue_analysis(self.db_path, moved)
+        self.assertTrue(cached)
+        self.assertEqual(again["id"], run["id"])
+
+    def test_pinned_version_is_the_one_analyzed(self):
+        first, _, _, _ = self.add_version()
+        self.add_version("Different backend resume with Java Spring SQL distributed systems.\n" * 14)
+        pinned = {**self.entry(), "resume_version_id": first["id"]}
+        run, _ = ats.queue_analysis(self.db_path, pinned)
+        self.assertEqual(run["resume_version_id"], first["id"])
+        with sqlite3.connect(self.db_path) as db:
+            db.execute("UPDATE analysis_runs SET status='complete',completed_at='now' WHERE id=?", (run["id"],))
+        self.assertEqual(ats.analysis_summary(self.db_path, pinned)["status"], "complete")
+        self.assertEqual(ats.analysis_summary(self.db_path, self.entry())["status"], "resume_updated")
+        foreign = {**self.entry(), "resume_version_id": "not-a-version"}
+        with ats._connect(self.db_path) as db:
+            self.assertNotEqual(ats.effective_version(db, foreign)["id"], "not-a-version")
+
+    def test_resume_job_purposes_never_write_analysis_events(self):
+        self.add_version()
+        run, _ = ats.queue_analysis(self.db_path, self.entry())
+        before = len(ats.get_analysis(self.db_path, run["id"])["events"])
+        completed = type("Result", (), {"returncode": 0, "stdout": "{}", "stderr": ""})()
+        with patch.object(ats.shutil, "which", return_value="codex"), patch.object(ats.subprocess, "run", return_value=completed):
+            ats._run_codex(Path(__file__).resolve().parents[1], "prompt", "resume-suggestions-schema.json", "resume_suggestions", run["id"], self.db_path)
+        self.assertEqual(len(ats.get_analysis(self.db_path, run["id"])["events"]), before)
 
     def test_analysis_queue_does_not_change_email_delivery_fields(self):
         self.add_version()

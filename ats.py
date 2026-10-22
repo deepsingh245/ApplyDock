@@ -1,6 +1,7 @@
 """Local ATS analysis storage, extraction, scoring, and Codex worker."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 import datetime as dt
 import hashlib
 import json
@@ -41,17 +42,28 @@ SCORE_WEIGHTS = {
     "education": 5.0,
 }
 MATCH_CREDIT = {"demonstrated": 1.0, "partial": 0.5, "listed": 0.25, "missing": 0.0, "uncertain": 0.0}
+# Codex purposes that belong to an analysis run report progress into analysis_events; other
+# purposes (resume import, tailoring suggestions) report into their own resume_ai_jobs row.
+ANALYSIS_PURPOSES = {"resume_parse": ("resume profile", 22, 44), "jd_match": ("job comparison", 55, 82)}
+JOB_PURPOSES = {"resume_structure": ("resume import", 20, 85), "resume_suggestions": ("tailoring suggestions", 20, 85)}
 WORKER_WAKE = threading.Event()
 WORKER_STOP = threading.Event()
 PLAN_LIMIT_PAUSED = False
 CODEX_STATUS_CACHE = {"checked_at": 0.0, "value": None}
 
 
+@contextmanager
 def _connect(db_path: Path):
+    # Close explicitly: sqlite3's statement cache keeps unclosed connections alive
+    # until garbage collection, which holds Windows file locks on the database.
     db = sqlite3.connect(db_path, timeout=20)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA journal_mode=WAL")
-    return db
+    try:
+        with db:
+            yield db
+    finally:
+        db.close()
 
 
 def now_iso():
@@ -66,6 +78,19 @@ def _event_db(db, analysis_id, percent, stage, message, level="info"):
 def record_event(db_path: Path, analysis_id: str, percent: int, stage: str, message: str, level="info"):
     with _connect(db_path) as db:
         _event_db(db, analysis_id, percent, stage, message, level)
+
+
+def record_job_progress(db_path: Path, job_id: str, percent: int, stage: str, message: str, level="info"):
+    try:
+        with _connect(db_path) as db:
+            db.execute("UPDATE resume_ai_jobs SET percent=?,message=? WHERE id=?",
+                       (max(0, min(100, int(percent))), str(message)[:300], job_id))
+    except sqlite3.OperationalError:
+        pass
+
+
+def _progress_sink(purpose: str):
+    return record_event if purpose in ANALYSIS_PURPOSES else record_job_progress
 
 
 def last_progress(db_path: Path, analysis_id: str):
@@ -94,6 +119,26 @@ def init_schema(db):
     columns = {row["name"] for row in db.execute("PRAGMA table_info(resumes)")}
     if "current_version_id" not in columns:
         db.execute("ALTER TABLE resumes ADD COLUMN current_version_id TEXT NOT NULL DEFAULT ''")
+    # Structured (editable) resume content: versions created in the editor carry the exact
+    # content and template they were rendered from; documents cache their structured import.
+    additions = {
+        "resume_versions": {
+            "content_json": "TEXT NOT NULL DEFAULT ''", "template_id": "TEXT NOT NULL DEFAULT ''",
+            "parent_version_id": "TEXT NOT NULL DEFAULT ''", "source": "TEXT NOT NULL DEFAULT 'upload'",
+            "validation_json": "TEXT NOT NULL DEFAULT ''", "label": "TEXT NOT NULL DEFAULT ''",
+            "renderer_version": "TEXT NOT NULL DEFAULT ''",
+        },
+        "resume_documents": {
+            "structured_json": "TEXT NOT NULL DEFAULT ''", "structured_status": "TEXT NOT NULL DEFAULT 'not_parsed'",
+            "structured_version": "TEXT NOT NULL DEFAULT ''", "structured_model": "TEXT NOT NULL DEFAULT ''",
+            "structured_error": "TEXT NOT NULL DEFAULT ''",
+        },
+    }
+    for table, fields in additions.items():
+        existing = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
+        for name, declaration in fields.items():
+            if name not in existing:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
     db.execute("""CREATE TABLE IF NOT EXISTS job_description_versions (
       id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, content_hash TEXT NOT NULL,
       source_text TEXT NOT NULL, parsed_json TEXT NOT NULL DEFAULT '',
@@ -277,15 +322,38 @@ def refresh_failed_extractions(db, data_dir: Path):
             continue
         text, blocks, status, error = extract_document(path, document["mime_type"])
         db.execute("""UPDATE resume_documents SET extracted_text=?,evidence_json=?,extraction_status=?,extraction_error=?,
-                      parsed_json='',parse_status='not_parsed',parse_error='',parser_version='',parsed_model='',updated_at=? WHERE id=?""",
+                      parsed_json='',parse_status='not_parsed',parse_error='',parser_version='',parsed_model='',
+                      structured_json='',structured_status='not_parsed',structured_version='',structured_model='',structured_error='',
+                      updated_at=? WHERE id=?""",
                    (text, json.dumps(blocks), status, error, now_iso(), document["id"]))
 
 
+VERSION_COLUMNS = """rv.*,rd.sha256,rd.stored_path,rd.mime_type,rd.size_bytes,rd.extraction_status,
+                     rd.extraction_error,rd.parse_status,rd.parse_error"""
+
+
 def current_version(db, resume_id: str):
-    return db.execute("""SELECT rv.*,rd.sha256,rd.stored_path,rd.mime_type,rd.size_bytes,rd.extraction_status,
-                         rd.extraction_error,rd.parse_status,rd.parse_error
+    return db.execute(f"""SELECT {VERSION_COLUMNS}
                          FROM resumes r JOIN resume_versions rv ON rv.id=r.current_version_id
                          JOIN resume_documents rd ON rd.id=rv.document_id WHERE r.id=?""", (resume_id,)).fetchone()
+
+
+def version_by_id(db, version_id: str):
+    return db.execute(f"""SELECT {VERSION_COLUMNS} FROM resume_versions rv
+                         JOIN resume_documents rd ON rd.id=rv.document_id WHERE rv.id=?""", (version_id,)).fetchone()
+
+
+def effective_version(db, entry: dict):
+    """The exact resume version an application uses: its pinned version, else the resume's current one."""
+    resume_id = entry.get("resume_id", "")
+    if not resume_id:
+        return None
+    pinned = entry.get("resume_version_id", "")
+    if pinned:
+        version = version_by_id(db, pinned)
+        if version and version["resume_id"] == resume_id:
+            return version
+    return current_version(db, resume_id)
 
 
 def list_versions(db_path: Path, data_dir: Path, resume_id: str):
@@ -302,6 +370,9 @@ def list_versions(db_path: Path, data_dir: Path, resume_id: str):
         item["is_current"] = item["id"] == item["current_version_id"]
         item["available"] = (data_dir / item["stored_path"]).is_file()
         item.pop("access_token", None)
+        item["has_content"] = bool(item.pop("content_json", ""))
+        validation = json.loads(item.pop("validation_json", "") or "null")
+        item["validation"] = {"ok": validation["ok"], "page_count": validation["page_count"], "warnings": validation["warnings"]} if validation else None
         result.append(item)
     return result
 
@@ -316,17 +387,22 @@ def canonical_jd(entry):
 def analysis_summary(db_path: Path, entry: dict):
     digest, _ = canonical_jd(entry)
     with _connect(db_path) as db:
-        latest = db.execute("""SELECT ar.*,jd.content_hash FROM analysis_runs ar
-                               JOIN job_description_versions jd ON jd.id=ar.jd_version_id
-                               WHERE ar.entry_id=? ORDER BY ar.created_at DESC LIMIT 1""", (entry["id"],)).fetchone()
-        version = current_version(db, entry.get("resume_id", "")) if entry.get("resume_id") else None
-    if not latest:
+        runs = list(db.execute("""SELECT ar.*,jd.content_hash,rd.sha256 AS resume_sha256 FROM analysis_runs ar
+                                  JOIN job_description_versions jd ON jd.id=ar.jd_version_id
+                                  LEFT JOIN resume_versions rv ON rv.id=ar.resume_version_id
+                                  LEFT JOIN resume_documents rd ON rd.id=rv.document_id
+                                  WHERE ar.entry_id=? ORDER BY ar.created_at DESC""", (entry["id"],)))
+        version = effective_version(db, entry)
+    if not runs:
         return {"status": "not_analyzed", "label": "Not Analyzed", "stale": False}
-    item = dict(latest)
+    # Prefer the newest run of the exact file this application uses (runs are cached by file
+    # content, so an identical file under another version id is still the same analysis).
+    matching = [row for row in runs if version and row["resume_sha256"] == version["sha256"]]
+    item = dict(matching[0] if matching else runs[0])
     status = item["status"]
     label = ANALYSIS_STATUSES.get(status, status.replace("_", " ").title())
     stale = False
-    if status == "complete" and version and item["resume_version_id"] != version["id"]:
+    if status == "complete" and version and item["resume_sha256"] != version["sha256"]:
         status, label, stale = "resume_updated", "Resume Updated — Reanalysis Needed", True
     elif status == "complete" and item["content_hash"] != digest:
         status, label, stale = "jd_updated", "JD Updated — Reanalysis Needed", True
@@ -349,10 +425,15 @@ def _ensure_jd_version(db, entry):
     return db.execute("SELECT * FROM job_description_versions WHERE id=?", (version_id,)).fetchone()
 
 
-def queue_analysis(db_path: Path, entry: dict, retry=False, require_codex=False):
+def queue_analysis(db_path: Path, entry: dict, retry=False, require_codex=False, resume_version_id=""):
+    """Queue (or reuse) an analysis of the application's effective resume version.
+
+    resume_version_id scores a specific candidate version instead (for example a tailored resume
+    not yet selected for the application); callers must check that it belongs to this application.
+    """
     global PLAN_LIMIT_PAUSED
     with _connect(db_path) as db:
-        version = current_version(db, entry.get("resume_id", "")) if entry.get("resume_id") else None
+        version = version_by_id(db, resume_version_id) if resume_version_id else effective_version(db, entry)
         if not version:
             raise ValueError("Resume Missing. Select an available resume before analysis.")
         if version["extraction_status"] == "limited":
@@ -434,9 +515,10 @@ def _safe_cli_diagnostics(value):
     return lines
 
 
-def _record_cli_diagnostics(db_path, analysis_id, percent, stderr):
+def _record_cli_diagnostics(db_path, analysis_id, percent, stderr, purpose="jd_match"):
+    report = _progress_sink(purpose)
     for line in _safe_cli_diagnostics(stderr):
-        record_event(db_path, analysis_id, percent, "codex_log", "Codex CLI: " + line, "error")
+        report(db_path, analysis_id, percent, "codex_log", "Codex CLI: " + line, "error")
         print("[ApplyDock ATS] Codex CLI: " + line, file=sys.stderr, flush=True)
 
 
@@ -450,9 +532,8 @@ def _run_codex(root: Path, prompt: str, schema_name: str, purpose: str, analysis
                "--config", "model_reasoning_effort=low", "-C", "", "--output-schema", "", "--output-last-message", "", "--color", "never", "-"]
     started = time.monotonic()
     exit_status = -1; failure = ""
-    label = "resume profile" if purpose == "resume_parse" else "job comparison"
-    start_percent = 22 if purpose == "resume_parse" else 55
-    success_percent = 44 if purpose == "resume_parse" else 82
+    label, start_percent, success_percent = ANALYSIS_PURPOSES.get(purpose) or JOB_PURPOSES.get(purpose) or (purpose, 20, 85)
+    report = _progress_sink(purpose)
     try:
         with tempfile.TemporaryDirectory(prefix="applydock-ats-") as sandbox, tempfile.TemporaryDirectory(prefix="applydock-schema-") as schema_dir:
             schema = Path(schema_dir) / "output-schema.json"
@@ -463,34 +544,34 @@ def _run_codex(root: Path, prompt: str, schema_name: str, purpose: str, analysis
             command[command.index("--output-last-message") + 1] = str(final_message)
             result = None
             for attempt in range(2):
-                record_event(db_path, analysis_id, start_percent, purpose, f"Starting {label} with Codex" + (" (retry)." if attempt else "."))
+                report(db_path, analysis_id, start_percent, purpose, f"Starting {label} with Codex" + (" (retry)." if attempt else "."))
                 try:
                     result = subprocess.run(command, input=prompt, text=True, encoding="utf-8", errors="strict",
                                             capture_output=True, timeout=180)
                 except subprocess.TimeoutExpired:
                     if attempt == 0:
-                        record_event(db_path, analysis_id, start_percent, purpose, f"The {label} timed out. Retrying once.", "warning")
+                        report(db_path, analysis_id, start_percent, purpose, f"The {label} timed out. Retrying once.", "warning")
                         continue
                     failure = "timeout"
                     raise RuntimeError("timeout|Codex analysis timed out after one retry.") from None
                 exit_status = result.returncode
                 diagnostic = (result.stderr + "\n" + result.stdout).lower()
                 if not result.returncode:
-                    record_event(db_path, analysis_id, success_percent, purpose, f"Codex completed the {label} response.", "success")
+                    report(db_path, analysis_id, success_percent, purpose, f"Codex completed the {label} response.", "success")
                     break
                 if any(term in diagnostic for term in ("usage limit", "limit reached", "credits", "quota")):
-                    _record_cli_diagnostics(db_path, analysis_id, start_percent, result.stderr)
+                    _record_cli_diagnostics(db_path, analysis_id, start_percent, result.stderr, purpose)
                     failure = "plan_limit"
                     raise RuntimeError("plan_limit|ChatGPT Plus plan limit reached. Wait for the included usage to reset.")
                 if any(term in diagnostic for term in ("sign in", "not logged", "authentication", "unauthorized")):
-                    _record_cli_diagnostics(db_path, analysis_id, start_percent, result.stderr)
+                    _record_cli_diagnostics(db_path, analysis_id, start_percent, result.stderr, purpose)
                     failure = "auth"
                     raise RuntimeError("auth|Codex is not signed in. Sign in with your ChatGPT Plus account.")
                 if attempt == 1:
-                    _record_cli_diagnostics(db_path, analysis_id, start_percent, result.stderr)
+                    _record_cli_diagnostics(db_path, analysis_id, start_percent, result.stderr, purpose)
                     failure, detail = _codex_failure(diagnostic, result.returncode)
                     raise RuntimeError(f"{failure}|{detail}")
-                record_event(db_path, analysis_id, start_percent, purpose, f"Codex exited with status {result.returncode}. Retrying once.", "warning")
+                report(db_path, analysis_id, start_percent, purpose, f"Codex exited with status {result.returncode}. Retrying once.", "warning")
             if result is None:
                 raise RuntimeError("codex_failed|Codex did not return a result.")
             response_text = final_message.read_text(encoding="utf-8") if final_message.is_file() else result.stdout

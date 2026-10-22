@@ -33,6 +33,11 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 import ats
+import resume_import
+import resume_model
+import resume_render
+import resume_store
+from resume_store import ConflictError
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
@@ -44,6 +49,7 @@ NOTION_VERSION = "2026-03-11"
 LOCK = threading.RLock()
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.compose"
 GMAIL_REDIRECT = f"http://{HOST}:{PORT}/oauth/google/callback"
+GMAIL_ATTACHMENT_LIMIT = 18_000_000  # Gmail rejects messages above ~25 MB once base64-encoded
 OAUTH_PENDING = {}
 NOTION_CHECK_INTERVAL = 120
 NOTION_CHECK_LOCK = threading.Lock()
@@ -142,7 +148,12 @@ def init_db():
             "post_details": "TEXT NOT NULL DEFAULT ''",
             "resume_id": "TEXT NOT NULL DEFAULT ''",
             "application_stage": "TEXT NOT NULL DEFAULT ''",
-            "notion_edited_at": "TEXT NOT NULL DEFAULT ''"
+            "notion_edited_at": "TEXT NOT NULL DEFAULT ''",
+            # The exact resume version this application uses and the file last attached to it.
+            "resume_version_id": "TEXT NOT NULL DEFAULT ''",
+            "attachment_sha256": "TEXT NOT NULL DEFAULT ''",
+            "attachment_filename": "TEXT NOT NULL DEFAULT ''",
+            "attached_at": "TEXT NOT NULL DEFAULT ''"
         }
         for name, declaration in additions.items():
             if name not in columns:
@@ -155,6 +166,7 @@ def init_db():
           deleted_at TEXT NOT NULL DEFAULT ''
         )""")
         ats.init_schema(db)
+        resume_store.init_schema(db)
         version = db.execute("PRAGMA user_version").fetchone()[0]
         if version < 1:
             for row in list(db.execute("SELECT id,excerpt,recipient,contact_emails FROM entries")):
@@ -191,9 +203,14 @@ def init_db():
         if version < 3:
             ats.migrate_legacy_resumes(db, DATA)
             db.execute("PRAGMA user_version=3")
+        if version < 4:
+            # v4 adds structured resume editing. All new columns are additive with defaults
+            # (existing resumes become masters, existing versions are uploads); the version
+            # bump exists so backup_before_migration() keeps a copy of the pre-v4 database.
+            db.execute("PRAGMA user_version=4")
         ats.refresh_failed_extractions(db, DATA)
         if not db.execute("SELECT 1 FROM resumes WHERE deleted_at='' AND is_default=1 LIMIT 1").fetchone():
-            first_resume = db.execute("SELECT id FROM resumes WHERE deleted_at='' ORDER BY created_at LIMIT 1").fetchone()
+            first_resume = db.execute("SELECT id FROM resumes WHERE deleted_at='' AND kind='master' ORDER BY created_at LIMIT 1").fetchone()
             if first_resume:
                 db.execute("UPDATE resumes SET is_default=1 WHERE id=?", (first_resume["id"],))
         if "apply_method" not in columns:
@@ -209,19 +226,30 @@ def init_db():
                         AND (needs_review<>0 OR status='approved')""", (stamp,))
 
 
-def backup_before_ats_migration():
+SCHEMA_VERSION = 4
+
+
+def backup_before_migration():
+    """Copy the database once before any schema migration (pre-ats for v<3, pre-v4 for the editor)."""
     if not DB.exists():
         return
-    with sqlite3.connect(DB) as source:
-        if source.execute("PRAGMA user_version").fetchone()[0] >= 3:
+    source = sqlite3.connect(DB)
+    try:
+        version = source.execute("PRAGMA user_version").fetchone()[0]
+        if version >= SCHEMA_VERSION:
             return
         stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-        destination = DATA / f"capture.pre-ats-{stamp}.sqlite3"
-        with sqlite3.connect(destination) as backup:
+        destination = DATA / (f"capture.pre-ats-{stamp}.sqlite3" if version < 3 else f"capture.pre-v{SCHEMA_VERSION}-{stamp}.sqlite3")
+        backup = sqlite3.connect(destination)
+        try:
             source.backup(backup)
+        finally:
+            backup.close()
+    finally:
+        source.close()
 
 
-backup_before_ats_migration()
+backup_before_migration()
 init_db()
 
 
@@ -241,6 +269,13 @@ def resume_file_url(resume):
     return f"http://{HOST}:{PORT}/api/resumes/{resume['id']}/file?access={urllib.parse.quote(resume['access_token'])}"
 
 
+def version_file_url(resume_id, version):
+    """Stable link to one exact version (its token never rotates, unlike the 'current file' link)."""
+    if not version or not version["access_token"]:
+        return ""
+    return f"http://{HOST}:{PORT}/api/resumes/{resume_id}/versions/{version['id']}/file?access={urllib.parse.quote(version['access_token'])}"
+
+
 def public_resume(row, include_token=False):
     if not row:
         return None
@@ -252,6 +287,7 @@ def public_resume(row, include_token=False):
         version_count = db.execute("SELECT COUNT(*) FROM resume_versions WHERE resume_id=?", (resume["id"],)).fetchone()[0]
         analysis_count = db.execute("""SELECT COUNT(*) FROM analysis_runs ar JOIN resume_versions rv ON rv.id=ar.resume_version_id
                                        WHERE rv.resume_id=?""", (resume["id"],)).fetchone()[0]
+        has_draft = bool(db.execute("SELECT 1 FROM resume_drafts WHERE resume_id=?", (resume["id"],)).fetchone())
     result = {
         "id": resume["id"], "name": resume["name"], "category": resume["category"],
         "original_filename": resume["original_filename"], "mime_type": resume["mime_type"],
@@ -263,9 +299,14 @@ def public_resume(row, include_token=False):
         "analysis_count": analysis_count,
         "current_version_id": resume.get("current_version_id", ""),
         "current_version_number": version["version_number"] if version else 0,
+        "current_version_source": version["source"] if version else "",
         "extraction_status": version["extraction_status"] if version else "missing",
         "extraction_error": version["extraction_error"] if version else "Resume version is unavailable.",
-        "parse_status": version["parse_status"] if version else "not_parsed"
+        "parse_status": version["parse_status"] if version else "not_parsed",
+        "kind": resume.get("kind") or "master",
+        "parent_resume_id": resume.get("parent_resume_id", ""),
+        "entry_id": resume.get("entry_id", ""),
+        "has_draft": has_draft,
     }
     if include_token:
         result["access_token"] = resume["access_token"]
@@ -290,7 +331,7 @@ def resumes():
 
 def default_resume_id():
     with connect() as db:
-        row = db.execute("SELECT id FROM resumes WHERE deleted_at='' AND is_default=1 LIMIT 1").fetchone()
+        row = db.execute("SELECT id FROM resumes WHERE deleted_at='' AND is_default=1 AND kind='master' LIMIT 1").fetchone()
     if not row:
         return ""
     resume = get_resume(row["id"])
@@ -408,12 +449,11 @@ def update_resume(resume_id, data):
         fields["category"] = str(data["category"]).strip()[:80] or "Uncategorized"
     replacement = None
     if data.get("content") is not None:
-        with connect() as db:
-            sending = db.execute("SELECT COUNT(*) FROM entries WHERE resume_id=? AND status='sending'", (resume_id,)).fetchone()[0]
-        if sending:
-            raise ValueError("This resume is attached to an email currently sending. Replace it after the send finishes.")
+        ensure_not_sending(resume_id, "Replace it")
         replacement = validate_resume_file(data.get("filename"), data.get("content", ""))
     make_default = data.get("is_default")
+    if make_default is True and existing["kind"] != "master":
+        raise ValueError("A tailored resume belongs to one application and cannot be the default.")
     with LOCK, connect() as db:
         if make_default is True:
             db.execute("UPDATE resumes SET is_default=0")
@@ -421,25 +461,94 @@ def update_resume(resume_id, data):
         elif make_default is False:
             fields["is_default"] = 0
         file_replaced = False
-        if replacement:
-            filename, extension, mime, raw = replacement
-            version, document, _ = ats.add_resume_version(db, DATA, resume_id, filename, extension, mime, raw)
-            fields.update({"current_version_id": version["id"], "stored_path": document["stored_path"],
-                           "original_filename": filename, "mime_type": mime, "size_bytes": len(raw),
-                           "access_token": secrets.token_urlsafe(32)})
-            file_replaced = version["id"] != existing.get("current_version_id", "")
         if fields:
             fields["updated_at"] = now_iso()
             assignments = ",".join(f"{key}=?" for key in fields)
             db.execute(f"UPDATE resumes SET {assignments} WHERE id=? AND deleted_at=''", (*fields.values(), resume_id))
-    for entry in entries():
-        if entry.get("resume_id") == resume_id:
-            if file_replaced:
-                with connect() as db:
-                    db.execute("UPDATE entries SET resume_path=?,status=CASE WHEN status='approved' THEN 'draft' ELSE status END,gmail_dirty=CASE WHEN gmail_draft_id<>'' THEN 1 ELSE gmail_dirty END,updated_at=? WHERE id=?",
-                               (fields["stored_path"], now_iso(), entry["id"]))
-            sync_entry(entry["id"])
+        if replacement:
+            filename, extension, mime, raw = replacement
+            version, document, _ = ats.add_resume_version(db, DATA, resume_id, filename, extension, mime, raw)
+            file_replaced = activate_version(db, resume_id, version, document)
+    after_current_changed(resume_id, file_replaced)
     return get_resume(resume_id)
+
+
+def activate_version(db, resume_id, version, document):
+    """Make a version the resume's current file. Returns True when the current file changed.
+
+    The 'current file' access token rotates so old current-file links stop working; links to
+    an exact version keep their own token.
+    """
+    current = db.execute("SELECT current_version_id FROM resumes WHERE id=?", (resume_id,)).fetchone()
+    changed = not current or current["current_version_id"] != version["id"]
+    if changed:
+        db.execute("""UPDATE resumes SET current_version_id=?,stored_path=?,original_filename=?,mime_type=?,size_bytes=?,
+                      access_token=?,updated_at=? WHERE id=?""",
+                   (version["id"], document["stored_path"], version["original_filename"], document["mime_type"],
+                    document["size_bytes"], secrets.token_urlsafe(32), now_iso(), resume_id))
+    return changed
+
+
+def after_current_changed(resume_id, file_changed):
+    """Applications that follow the resume's current file go back to draft; pinned ones keep their exact file."""
+    for entry in entries():
+        if entry.get("resume_id") != resume_id:
+            continue
+        if file_changed and not entry.get("resume_version_id"):
+            with connect() as db:
+                db.execute("""UPDATE entries SET resume_path=(SELECT stored_path FROM resumes WHERE id=?),
+                              status=CASE WHEN status='approved' THEN 'draft' ELSE status END,
+                              gmail_dirty=CASE WHEN gmail_draft_id<>'' THEN 1 ELSE gmail_dirty END,updated_at=? WHERE id=?""",
+                           (resume_id, now_iso(), entry["id"]))
+        sync_entry(entry["id"])
+
+
+def ensure_not_sending(resume_id, action):
+    with connect() as db:
+        sending = db.execute("SELECT COUNT(*) FROM entries WHERE resume_id=? AND status='sending'", (resume_id,)).fetchone()[0]
+    if sending:
+        raise ValueError(f"This resume is attached to an email currently sending. {action} after the send finishes.")
+
+
+def restore_version(resume_id, version_id):
+    """Make an earlier version current again. No version is copied or deleted."""
+    if not get_resume(resume_id):
+        raise ValueError("Resume not found.")
+    ensure_not_sending(resume_id, "Restore it")
+    with LOCK, connect() as db:
+        version = db.execute("SELECT * FROM resume_versions WHERE id=? AND resume_id=?", (version_id, resume_id)).fetchone()
+        if not version:
+            raise ValueError("Version not found.")
+        document = db.execute("SELECT * FROM resume_documents WHERE id=?", (version["document_id"],)).fetchone()
+        if not document or not (DATA / document["stored_path"]).is_file():
+            raise ValueError("That version's file is unavailable.")
+        changed = activate_version(db, resume_id, dict(version), dict(document))
+    after_current_changed(resume_id, changed)
+    return get_resume(resume_id)
+
+
+def save_editor_version(resume_id, expected_revision, label=""):
+    """Render the draft, validate it, and store it as a new current version of this resume."""
+    resume = get_resume(resume_id)
+    if not resume:
+        raise ValueError("Resume not found.")
+    ensure_not_sending(resume_id, "Save the new version")
+    with connect() as db:
+        draft = resume_store._check_revision(db, resume_id, expected_revision)
+    if draft["needs_review"]:
+        raise ValueError("Review the imported content and confirm it before saving a version.")
+    content = resume_model.normalize(draft["content"])
+    pdf, report = resume_store.render_content(content)
+    with LOCK, connect() as db:
+        resume_store._check_revision(db, resume_id, expected_revision)
+        version, document, created = resume_store.store_rendered_version(
+            db, DATA, resume_id, content, pdf, report, "editor", draft["base_version_id"], str(label or "")[:120])
+        changed = activate_version(db, resume_id, version, document)
+        db.execute("UPDATE resume_drafts SET base_version_id=? WHERE resume_id=?", (version["id"], resume_id))
+    after_current_changed(resume_id, changed)
+    return {"resume": get_resume(resume_id), "version_id": version["id"], "version_number": version["version_number"],
+            "created": created, "unchanged": not created and not changed, "validation": report,
+            "sha256": document["sha256"]}
 
 
 def delete_resume(resume_id):
@@ -453,26 +562,191 @@ def delete_resume(resume_id):
     with LOCK, connect() as db:
         db.execute("UPDATE resumes SET deleted_at=?,is_default=0,updated_at=? WHERE id=? AND deleted_at=''", (now_iso(), now_iso(), resume_id))
         if existing["is_default"]:
-            replacement = db.execute("SELECT id FROM resumes WHERE deleted_at='' ORDER BY created_at LIMIT 1").fetchone()
+            replacement = db.execute("SELECT id FROM resumes WHERE deleted_at='' AND kind='master' ORDER BY created_at LIMIT 1").fetchone()
             if replacement:
                 db.execute("UPDATE resumes SET is_default=1,updated_at=? WHERE id=?", (now_iso(), replacement["id"]))
+        resume_store.purge(db, resume_id)
         ats.purge_resume(db, DATA, resume_id)
     affected = [entry["id"] for entry in entries() if entry.get("resume_id") == resume_id]
     for entry_id in affected:
         with connect() as db:
-            db.execute("UPDATE entries SET status=CASE WHEN status='approved' THEN 'draft' ELSE status END,gmail_dirty=CASE WHEN gmail_draft_id<>'' THEN 1 ELSE gmail_dirty END,updated_at=? WHERE id=?", (now_iso(), entry_id))
+            db.execute("UPDATE entries SET resume_version_id='',status=CASE WHEN status='approved' THEN 'draft' ELSE status END,gmail_dirty=CASE WHEN gmail_draft_id<>'' THEN 1 ELSE gmail_dirty END,updated_at=? WHERE id=?", (now_iso(), entry_id))
         sync_entry(entry_id)
     return len(affected)
 
 
+def editor_state(resume_id):
+    """Everything the resume editor needs on open; creates the working draft on first open."""
+    resume = get_resume(resume_id)
+    if not resume:
+        raise ValueError("Resume not found.")
+    with LOCK, connect() as db:
+        draft = resume_store.open_draft(db, resume_id)
+        version = ats.current_version(db, resume_id)
+        document = db.execute("SELECT structured_status,extraction_status,extraction_error FROM resume_documents WHERE id=?",
+                              (version["document_id"],)).fetchone() if version else None
+        job = db.execute("""SELECT * FROM resume_ai_jobs WHERE purpose='resume_structure' AND document_id=? ORDER BY created_at DESC LIMIT 1""",
+                         (version["document_id"],)).fetchone() if version else None
+        base = resume_store.version_content(db, draft["base_version_id"]) if draft["base_version_id"] else None
+    parent = get_resume(resume["parent_resume_id"], include_deleted=True, include_token=True) if resume["parent_resume_id"] else None
+    return {
+        "draft": draft, "resume": resume, "versions": ats.list_versions(DB, DATA, resume_id),
+        # Hash of the saved version the draft started from; equal to the draft hash when there are no unsaved edits.
+        "base_content_hash": resume_model.content_hash(resume_model.normalize(base["content"])) if base and base["content"] else "",
+        "templates": [{"id": key, **{k: v for k, v in value.items() if k != "file"}} for key, value in resume_render.TEMPLATES.items()],
+        "renderer": resume_render.status(),
+        "design": {"presets": resume_model.LAYOUT_PRESETS, "ranges": resume_model.LAYOUT_RANGES,
+                   "choices": resume_model.LAYOUT_CHOICES, "accents": resume_model.ACCENTS},
+        "import": {"structured_status": document["structured_status"] if document else "not_parsed",
+                   "extraction_status": document["extraction_status"] if document else "missing",
+                   "extraction_error": document["extraction_error"] if document else "",
+                   "job": resume_store.public_job(job)},
+        "parent": {"id": parent["id"], "name": parent["name"], "deleted": bool(parent.get("deleted_at")),
+                   "current_version_id": parent["current_version_id"]} if parent else None,
+        "entry": {"id": resume["entry_id"], "title": (get_entry(resume["entry_id"]) or {}).get("title", ""),
+                  "company": (get_entry(resume["entry_id"]) or {}).get("company", "")} if resume["entry_id"] else None,
+    }
+
+
+def require_codex():
+    connection = ats.codex_status()
+    if not connection.get("checked"):
+        connection = ats.codex_status(force=True)
+    if not connection.get("connected"):
+        raise ValueError(connection.get("message") or "Codex CLI is not connected to ChatGPT Plus.")
+
+
+def import_draft(resume_id, mode, expected_revision):
+    """Re-import the current file into the draft. Codex structuring runs in the background and is cached per file."""
+    if not get_resume(resume_id):
+        raise ValueError("Resume not found.")
+    with LOCK, connect() as db:
+        resume_store._check_revision(db, resume_id, expected_revision)
+        version = ats.current_version(db, resume_id)
+        if not version:
+            raise ValueError("This resume has no available file.")
+        document = db.execute("SELECT * FROM resume_documents WHERE id=?", (version["document_id"],)).fetchone()
+        if mode == "heuristic":
+            content, warnings = resume_import.heuristic_parse(document["extracted_text"])
+            return {"draft": resume_store.replace_draft_content(db, resume_id, content, expected_revision, "heuristic", warnings, version["id"])}
+        if mode != "codex":
+            raise ValueError("Choose a local or Codex import.")
+        if document["structured_status"] == "complete" and document["structured_version"] == resume_import.STRUCTURE_VERSION:
+            cached = json.loads(document["structured_json"])
+            return {"draft": resume_store.replace_draft_content(db, resume_id, cached["content"], expected_revision, "codex",
+                                                                cached.get("warnings", []), version["id"])}
+        if document["extraction_status"] != "ready":
+            raise ValueError(document["extraction_error"] or "Not enough text was extracted for an AI import. Enter the content manually.")
+    require_codex()
+    with LOCK, connect() as db:
+        job, _ = resume_store.queue_job(db, "resume_structure", resume_store.structure_job_hash(document["sha256"]), {},
+                                        resume_id=resume_id, document_id=document["id"])
+    return {"job": job}
+
+
+def reset_draft(resume_id, expected_revision, version_id=""):
+    """Discard draft edits and reload a saved version's content (or a fresh import of an uploaded file)."""
+    with LOCK, connect() as db:
+        resume_store._check_revision(db, resume_id, expected_revision)
+        version_id = version_id or (db.execute("SELECT current_version_id FROM resumes WHERE id=?", (resume_id,)).fetchone() or {"current_version_id": ""})["current_version_id"]
+        row = db.execute("SELECT * FROM resume_versions WHERE id=? AND resume_id=?", (version_id, resume_id)).fetchone()
+        if not row:
+            raise ValueError("Version not found.")
+        if row["content_json"]:
+            return resume_store.replace_draft_content(db, resume_id, json.loads(row["content_json"]), expected_revision, "version", [], row["id"])
+        document = db.execute("SELECT * FROM resume_documents WHERE id=?", (row["document_id"],)).fetchone()
+        content, warnings = resume_import.heuristic_parse(document["extracted_text"])
+        return resume_store.replace_draft_content(db, resume_id, content, expected_revision, "heuristic", warnings, row["id"])
+
+
+def tailor_resume(entry_id, base_resume_id):
+    """Create (or reuse) this application's tailored copy of a master resume. The master is not modified."""
+    entry = get_entry(entry_id)
+    if not entry:
+        raise ValueError("Application not found.")
+    base = get_resume(base_resume_id or entry["resume_id"])
+    if not base or not base["available"]:
+        raise ValueError("Choose an available master resume to tailor.")
+    if base["kind"] != "master":
+        if base["entry_id"] == entry_id:
+            return base, False
+        raise ValueError("Choose a master resume to tailor.")
+    with connect() as db:
+        existing = resume_store.tailored_for(db, entry_id, base["id"])
+        if existing:
+            return get_resume(existing["id"]), False
+        content, base_version_id = resume_store.base_content(db, base["id"])
+    pdf, report = resume_store.render_content(content)
+    with LOCK, connect() as db:
+        resume_id, created = resume_store.create_tailored(db, DATA, entry, base, pdf, report, content, base_version_id)
+    return get_resume(resume_id), created
+
+
+def resume_allowed_for_entry(entry, resume_id):
+    resume = get_resume(resume_id)
+    return bool(resume) and (resume_id == entry["resume_id"] or (resume["kind"] == "tailored" and resume["entry_id"] == entry["id"]))
+
+
+def queue_suggestions(analysis_id, resume_id):
+    """Ask Codex for targeted edits to this resume's draft, based on a completed analysis. Cached per draft content."""
+    analysis = ats.get_analysis(DB, analysis_id)
+    if not analysis or analysis["status"] != "complete":
+        raise ValueError("Run the analysis to completion before asking for suggestions.")
+    entry = get_entry(analysis["entry_id"])
+    if not entry:
+        raise ValueError("Application not found.")
+    if not resume_allowed_for_entry(entry, resume_id):
+        raise ValueError("Suggestions can only target this application's resume or its tailored copy.")
+    with LOCK, connect() as db:
+        draft = resume_store.open_draft(db, resume_id)
+        if draft["needs_review"]:
+            raise ValueError("Review the imported content and confirm it before asking for suggestions.")
+        content = draft["content"]
+        input_hash = resume_store.suggestions_job_hash(analysis_id, content)
+        reusable = db.execute("SELECT status FROM resume_ai_jobs WHERE purpose='resume_suggestions' AND input_hash=?", (input_hash,)).fetchone()
+    if not reusable or reusable["status"] not in ("complete", "pending", "running"):
+        require_codex()
+    payload = {"content": content, "requirements": (analysis.get("result") or {}).get("requirements", []),
+               "jd_text": ats.canonical_jd(entry)[1], "profile": CONFIG_DATA.get("candidate_profile", "")}
+    with LOCK, connect() as db:
+        job, reused = resume_store.queue_job(db, "resume_suggestions", input_hash, payload, resume_id=resume_id, analysis_id=analysis_id)
+        suggestions = resume_store.list_suggestions(db, resume_id, analysis_id)
+    return {"job": job, "reused": reused, "suggestions": suggestions}
+
+
+def candidate_version_allowed(entry, version_id):
+    with connect() as db:
+        row = db.execute("SELECT resume_id FROM resume_versions WHERE id=?", (version_id,)).fetchone()
+    return bool(row) and resume_allowed_for_entry(entry, row["resume_id"])
+
+
 def resume_file_for_entry(entry):
+    """The exact file an application attaches: (resume, path, version). Honors a pinned version."""
     resume = get_resume(entry.get("resume_id", ""), include_deleted=False, include_token=True)
     if not resume or not resume["available"]:
         raise ValueError("Resume missing. Select an available resume before continuing.")
-    path = (DATA / resume["stored_path"]).resolve()
+    with connect() as db:
+        version = ats.effective_version(db, entry)
+        if entry.get("resume_version_id") and (not version or version["id"] != entry["resume_version_id"]):
+            raise ValueError("The resume version selected for this application is unavailable. Select the resume again.")
+    if not version:
+        raise ValueError("Resume missing. Select an available resume before continuing.")
+    path = (DATA / version["stored_path"]).resolve()
     if not path.is_relative_to((DATA / "resumes").resolve()) or not path.is_file():
         raise ValueError("Resume missing. Select an available resume before continuing.")
-    return resume, path
+    return resume, path, dict(version)
+
+
+def attachment_bytes(path, version):
+    """Read the attachment and confirm it is byte-for-byte the stored version."""
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != version["sha256"]:
+        raise ValueError("The resume file on disk does not match its saved version. Select or regenerate the resume.")
+    return raw
+
+
+def attachment_record(version):
+    return {"attachment_sha256": version["sha256"], "attachment_filename": version["original_filename"], "attached_at": now_iso()}
 
 
 def public_https_url(value):
@@ -552,6 +826,16 @@ def public_entry(row):
         entry.get("apply_method") == "email" and resume and resume["available"] and
         all(entry.get(key) for key in ("recipient", "subject", "body"))
     ) else entry["resume_status"]
+    entry["resume_version"] = None
+    if resume and resume["available"]:
+        with connect() as db:
+            version = ats.effective_version(db, entry)
+        if version:
+            entry["resume_version"] = {
+                "id": version["id"], "version_number": version["version_number"], "pinned": bool(entry.get("resume_version_id")),
+                "is_current": version["id"] == resume.get("current_version_id"), "filename": version["original_filename"],
+                "sha256": version["sha256"], "source": version["source"], "file_url": version_file_url(resume["id"], version),
+            }
     entry["analysis"] = ats.analysis_summary(DB, entry)
     if entry["analysis"]["status"] == "not_analyzed" and resume and resume.get("extraction_status") == "limited":
         entry["analysis"] = {"status": "extraction_limited", "label": "Resume Extraction Limited", "stale": False,
@@ -631,6 +915,8 @@ def capture(data):
     selected_resume = get_resume(resume_id) if resume_id else None
     if resume_id and (not selected_resume or not selected_resume["available"]):
         raise ValueError("Selected resume is unavailable. Choose another resume.")
+    if selected_resume and selected_resume["kind"] != "master":
+        raise ValueError("A tailored resume belongs to another application. Choose a master resume.")
     needs_review = int(data.get("needs_review", True) is not False)
     with LOCK, connect() as db:
         existing = db.execute("SELECT id FROM entries WHERE url=?", (url,)).fetchone()
@@ -803,7 +1089,8 @@ def notion_properties(entry):
     resume = entry.get("resume") or {}
     props[mapping["resume_name"]] = rich(resume.get("name", ""))
     props[mapping["resume_category"]] = rich(resume.get("category", ""))
-    props[mapping["resume_link"]] = {"url": resume.get("file_url") or None}
+    pinned = entry.get("resume_version") or {}
+    props[mapping["resume_link"]] = {"url": (pinned.get("file_url") if pinned.get("pinned") else resume.get("file_url")) or None}
     props[mapping["resume_status"]] = rich(entry.get("resume_status", "Resume Missing"))
     analysis = entry.get("analysis") or {}
     props[mapping["ats_match"]] = {"number": analysis.get("overall_score")}
@@ -1047,7 +1334,7 @@ def update_entry(entry_id, data):
         raise ValueError("Entry not found.")
     requested = set(data).intersection({
         "title", "company", "excerpt", "post_details", "recipient", "subject", "body",
-        "send_at", "resume_path", "resume_id", "apply_method", "apply_url", "application_stage",
+        "send_at", "resume_path", "resume_id", "resume_version_id", "apply_method", "apply_url", "application_stage",
         "contact_emails", "needs_review", "approved"
     })
     stage_only = "application_stage" in requested and requested <= {"application_stage"}
@@ -1055,7 +1342,7 @@ def update_entry(entry_id, data):
         raise ValueError("A sending or sent entry cannot be edited.")
     if entry["delivery_mode"] == "gmail_scheduled" and not stage_only:
         raise ValueError("This item was marked scheduled in Gmail. Only its application stage can be changed here.")
-    fields = {k: str(data[k]).strip() for k in ("title", "company", "excerpt", "post_details", "recipient", "subject", "body", "send_at", "resume_path", "resume_id", "apply_method", "apply_url", "application_stage") if k in data}
+    fields = {k: str(data[k]).strip() for k in ("title", "company", "excerpt", "post_details", "recipient", "subject", "body", "send_at", "resume_path", "resume_id", "resume_version_id", "apply_method", "apply_url", "application_stage") if k in data}
     if "excerpt" in fields:
         fields["excerpt"] = fields["excerpt"][:8000]
     if "post_details" in fields:
@@ -1087,15 +1374,28 @@ def update_entry(entry_id, data):
         selected = get_resume(fields["resume_id"], include_token=True) if fields["resume_id"] else None
         if fields["resume_id"] and (not selected or not selected["available"]):
             raise ValueError("Selected resume is unavailable. Choose another resume.")
+        if selected and selected["kind"] == "tailored" and selected["entry_id"] != entry_id:
+            raise ValueError("That tailored resume belongs to another application. Choose a master resume or tailor one for this job.")
         fields["resume_path"] = selected["stored_path"] if selected else ""
+        if fields["resume_id"] != entry["resume_id"] and "resume_version_id" not in fields:
+            fields["resume_version_id"] = ""  # a different resume never keeps another resume's pinned version
     elif "resume_path" in fields and fields["resume_path"]:
         with connect() as db:
             legacy = db.execute("SELECT id FROM resumes WHERE stored_path=? AND deleted_at=''", (fields["resume_path"],)).fetchone()
         fields["resume_id"] = legacy["id"] if legacy else register_legacy_resume(fields["resume_path"])
+        fields["resume_version_id"] = ""
+    if fields.get("resume_version_id"):
+        with connect() as db:
+            pinned = db.execute("SELECT * FROM resume_versions WHERE id=?", (fields["resume_version_id"],)).fetchone()
+        if not pinned or pinned["resume_id"] != fields.get("resume_id", entry["resume_id"]):
+            raise ValueError("That resume version does not belong to the selected resume.")
+        with connect() as db:
+            document = db.execute("SELECT stored_path FROM resume_documents WHERE id=?", (pinned["document_id"],)).fetchone()
+        fields["resume_path"] = document["stored_path"] if document else fields.get("resume_path", entry["resume_path"])
     merged = {**entry, **fields}
     approval_sensitive = {
         "title", "company", "excerpt", "post_details", "recipient", "subject", "body",
-        "send_at", "resume_path", "resume_id", "apply_method", "apply_url", "contact_emails", "needs_review"
+        "send_at", "resume_path", "resume_id", "resume_version_id", "apply_method", "apply_url", "contact_emails", "needs_review"
     }
     if entry["status"] == "approved" and any(
         key in approval_sensitive and
@@ -1103,7 +1403,7 @@ def update_entry(entry_id, data):
         for key, value in fields.items()
     ):
         fields["status"] = "draft"
-    if entry["gmail_draft_id"] and any(key in fields and str(entry[key]) != str(fields[key]) for key in ("recipient", "subject", "body", "resume_path", "resume_id", "apply_method")):
+    if entry["gmail_draft_id"] and any(key in fields and str(entry[key]) != str(fields[key]) for key in ("recipient", "subject", "body", "resume_path", "resume_id", "resume_version_id", "apply_method")):
         fields["gmail_dirty"] = 1
     if data.get("approved") is True:
         if entry["gmail_draft_id"]:
@@ -1112,7 +1412,8 @@ def update_entry(entry_id, data):
             raise ValueError("Only email applications can be scheduled. Choose Email as the application method.")
         if not all(merged[k] for k in ("recipient", "subject", "body", "send_at", "resume_id")):
             raise ValueError("Recipient, subject, body, send time, and resume are required before approval.")
-        resume_file_for_entry(merged)
+        _, _, approved_version = resume_file_for_entry(merged)
+        fields["resume_version_id"] = approved_version["id"]  # approval locks the exact file that will be sent
         if not CONFIG_DATA.get("smtp_verified"):
             raise ValueError("Verify an email account before approval.")
         send_time = dt.datetime.fromisoformat(merged["send_at"])
@@ -1145,7 +1446,7 @@ def send_mail(entry):
     password = unprotect(settings.get("password", ""))
     if not password:
         raise RuntimeError("Email account is not connected.")
-    resume_record, resume = resume_file_for_entry(entry)
+    _, resume, version = resume_file_for_entry(entry)
     msg = email.message.EmailMessage()
     msg["From"] = settings["from"]
     msg["To"] = entry["recipient"]
@@ -1153,7 +1454,7 @@ def send_mail(entry):
     msg.set_content(entry["body"])
     mime = "application/pdf" if resume.suffix.lower() == ".pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     maintype, subtype = mime.split("/", 1)
-    msg.add_attachment(resume.read_bytes(), maintype=maintype, subtype=subtype, filename=resume_record["original_filename"])
+    msg.add_attachment(attachment_bytes(resume, version), maintype=maintype, subtype=subtype, filename=version["original_filename"])
     context = ssl.create_default_context()
     host, port = settings["host"], int(settings["port"])
     if port == 465:
@@ -1167,6 +1468,7 @@ def send_mail(entry):
             smtp.ehlo()
             smtp.login(settings["username"], password)
             smtp.send_message(msg)
+    return version
 
 
 def test_smtp_login(settings, password):
@@ -1326,7 +1628,16 @@ def gmail_mime(entry):
         raise ValueError("Choose Email as the application method.")
     if not all(entry[k] for k in ("recipient", "subject", "body", "resume_id")):
         raise ValueError("Recipient, subject, body, and resume are required for a Gmail draft.")
-    resume_record, resume = resume_file_for_entry(entry)
+    raw, _ = gmail_message(entry)
+    return raw
+
+
+def gmail_message(entry):
+    """Build the Gmail draft MIME and return (raw, version) for the exact attached resume version."""
+    _, resume, version = resume_file_for_entry(entry)
+    content = attachment_bytes(resume, version)
+    if len(content) > GMAIL_ATTACHMENT_LIMIT:
+        raise ValueError("The resume is too large for a Gmail draft attachment. Use a smaller PDF.")
     msg = email.message.EmailMessage()
     msg["From"] = CONFIG_DATA["gmail_address"]
     msg["To"] = entry["recipient"]
@@ -1334,8 +1645,8 @@ def gmail_mime(entry):
     msg.set_content(entry["body"])
     mime = "application/pdf" if resume.suffix.lower() == ".pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     maintype, subtype = mime.split("/", 1)
-    msg.add_attachment(resume.read_bytes(), maintype=maintype, subtype=subtype, filename=resume_record["original_filename"])
-    return base64.urlsafe_b64encode(msg.as_bytes()).decode().rstrip("=")
+    msg.add_attachment(content, maintype=maintype, subtype=subtype, filename=version["original_filename"])
+    return base64.urlsafe_b64encode(msg.as_bytes()).decode().rstrip("="), version
 
 
 def save_gmail_draft(entry_id, prepare_schedule=False):
@@ -1352,7 +1663,11 @@ def save_gmail_draft(entry_id, prepare_schedule=False):
             raise ValueError("Connect Gmail in Settings first.")
         if entry["gmail_draft_id"] and entry["gmail_account"] and entry["gmail_account"].lower() != CONFIG_DATA.get("gmail_address", "").lower():
             raise ValueError("This draft belongs to a different Gmail account. Reconnect that account before updating it.")
-        raw = gmail_mime(entry)
+        if entry["apply_method"] != "email":
+            raise ValueError("Choose Email as the application method.")
+        if not all(entry[k] for k in ("recipient", "subject", "body", "resume_id")):
+            raise ValueError("Recipient, subject, body, and resume are required for a Gmail draft.")
+        raw, attached_version = gmail_message(entry)
         stamp = now_iso()
         db.execute("UPDATE entries SET status='draft',updated_at=? WHERE id=? AND status NOT IN ('sending','sent')",
                    (stamp, entry_id))
@@ -1374,6 +1689,11 @@ def save_gmail_draft(entry_id, prepare_schedule=False):
         changed_during_export = db.execute("SELECT updated_at FROM entries WHERE id=?", (entry_id,)).fetchone()["updated_at"] != stamp
         db.execute("UPDATE entries SET delivery_mode=?,gmail_draft_id=?,gmail_account=?,gmail_dirty=?,status='draft',updated_at=? WHERE id=?",
                    (mode, draft_id, CONFIG_DATA["gmail_address"], int(changed_during_export), now_iso(), entry_id))
+        if draft_id and (entry["gmail_dirty"] or not entry["gmail_draft_id"]):
+            # Record (and pin) exactly what the Gmail draft now contains.
+            record = attachment_record(attached_version)
+            db.execute("UPDATE entries SET resume_version_id=?,attachment_sha256=?,attachment_filename=?,attached_at=? WHERE id=?",
+                       (attached_version["id"], record["attachment_sha256"], record["attachment_filename"], record["attached_at"], entry_id))
     sync_entry(entry_id)
     if changed_during_export:
         raise ValueError("The local application changed during Gmail export. Update the Gmail draft before scheduling it.")
@@ -1452,9 +1772,11 @@ def process_due(current=None):
         attempted += 1
         # 'sending' is deliberately never retried automatically after a crash: delivery may be uncertain.
         try:
-            send_mail(entry)
+            sent_version = send_mail(entry)
+            record = attachment_record(sent_version) if isinstance(sent_version, dict) else {"attachment_sha256": "", "attachment_filename": "", "attached_at": ""}
             with connect() as db:
-                db.execute("UPDATE entries SET status='sent',sent_at=?,updated_at=? WHERE id=?", (now_iso(), now_iso(), entry["id"]))
+                db.execute("UPDATE entries SET status='sent',sent_at=?,updated_at=?,attachment_sha256=?,attachment_filename=?,attached_at=? WHERE id=?",
+                           (now_iso(), now_iso(), record["attachment_sha256"], record["attachment_filename"], record["attached_at"], entry["id"]))
         except Exception as error:
             with connect() as db:
                 db.execute("UPDATE entries SET status='failed',send_error=?,updated_at=? WHERE id=?", (str(error)[:1000], now_iso(), entry["id"]))
@@ -1483,6 +1805,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Local-Key")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+            self.send_header("Access-Control-Expose-Headers", "X-Page-Count")
 
     def respond(self, code, data):
         payload = json.dumps(data).encode()
@@ -1491,6 +1814,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def respond_bytes(self, code, content_type, payload, headers=None):
+        self.send_response(code)
+        self.cors()
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "private, no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(payload)
 
@@ -1582,8 +1917,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers(); self.wfile.write(content); return
-        if path.path in ("/", "/app.js", "/style.css"):
-            filename = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css"}[path.path]
+        version_file_match = re.fullmatch(r"/api/resumes/([a-f0-9-]+)/versions/([a-f0-9-]+)/file", path.path)
+        if version_file_match:
+            # One exact, immutable version. Its token never rotates; the resume's current-file token is not accepted here.
+            if self.headers.get("Host") not in (f"{HOST}:{PORT}", f"localhost:{PORT}"):
+                self.respond(403, {"error": "Invalid host."}); return
+            resume_id, version_id = version_file_match.groups()
+            with connect() as db:
+                version = ats.version_by_id(db, version_id)
+            resume = get_resume(resume_id, include_deleted=False)
+            query = urllib.parse.parse_qs(path.query)
+            supplied_token = query.get("access", [""])[0]
+            key_ok = hmac.compare_digest(self.headers.get("X-Local-Key", ""), CONFIG_DATA["pairing_key"])
+            if not resume or not version or version["resume_id"] != resume_id:
+                self.respond(404, {"error": "Resume version is unavailable."}); return
+            if not (key_ok or (supplied_token and hmac.compare_digest(supplied_token, version["access_token"]))):
+                self.respond(401, {"error": "Resume access is required."}); return
+            file_path = (DATA / version["stored_path"]).resolve()
+            if not file_path.is_relative_to((DATA / "resumes").resolve()) or not file_path.is_file():
+                self.respond(404, {"error": "Resume version is unavailable."}); return
+            disposition = "attachment" if query.get("download", [""])[0] == "1" else "inline"
+            self.respond_bytes(200, version["mime_type"], file_path.read_bytes(), {
+                "Content-Disposition": f"{disposition}; filename*=UTF-8''{urllib.parse.quote(version['original_filename'])}",
+                "Referrer-Policy": "no-referrer"}); return
+        if path.path in ("/", "/app.js", "/style.css", "/resume-editor.js"):
+            filename = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/resume-editor.js": "resume-editor.js"}[path.path]
             content = (ROOT / "dashboard" / filename).read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", {"html": "text/html", "js": "text/javascript", "css": "text/css"}[filename.rsplit(".", 1)[-1]] + "; charset=utf-8")
@@ -1595,6 +1953,36 @@ class Handler(http.server.BaseHTTPRequestHandler):
         versions_match = re.fullmatch(r"/api/resumes/([a-f0-9-]+)/versions", path.path)
         entry_analyses_match = re.fullmatch(r"/api/entries/([a-f0-9-]+)/analyses", path.path)
         analysis_match = re.fullmatch(r"/api/analyses/([a-f0-9-]+)", path.path)
+        draft_match = re.fullmatch(r"/api/resumes/([a-f0-9-]+)/draft", path.path)
+        version_content_match = re.fullmatch(r"/api/resumes/([a-f0-9-]+)/versions/([a-f0-9-]+)/content", path.path)
+        job_match = re.fullmatch(r"/api/resume-jobs/([a-f0-9-]+)", path.path)
+        suggestions_match = re.fullmatch(r"/api/resumes/([a-f0-9-]+)/suggestions", path.path)
+        try:
+            if draft_match:
+                self.respond(200, editor_state(draft_match.group(1))); return
+            if version_content_match:
+                resume_id, version_id = version_content_match.groups()
+                compare_with = urllib.parse.parse_qs(path.query).get("draft_of", [resume_id])[0]
+                with connect() as db:
+                    content = resume_store.version_content(db, version_id)
+                    draft = resume_store.get_draft(db, compare_with)
+                if not content or content["resume_id"] != resume_id:
+                    self.respond(404, {"error": "Version not found."}); return
+                changes = resume_model.diff(resume_model.normalize(content["content"]), draft["content"]) if content["content"] and draft else None
+                self.respond(200, {"version": content, "changes_to_draft": changes}); return
+            if job_match:
+                with connect() as db:
+                    job = resume_store.get_job(db, job_match.group(1))
+                if not job:
+                    self.respond(404, {"error": "Job not found."}); return
+                self.respond(200, {"job": job}); return
+            if suggestions_match:
+                analysis_id = urllib.parse.parse_qs(path.query).get("analysis_id", [""])[0]
+                with connect() as db:
+                    items = resume_store.list_suggestions(db, suggestions_match.group(1), analysis_id)
+                self.respond(200, {"suggestions": items}); return
+        except (ValueError, KeyError) as error:
+            self.respond(400, {"error": str(error)}); return
         if path.path == "/api/settings/codex":
             self.respond(200, {"codex": ats.codex_status(), "usage": ats.usage_summary(DB)})
         elif path.path == "/api/analyses/queue":
@@ -1702,6 +2090,67 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 payload = {"filename": data.get("filename"), "content": data.get("content")}
                 resume = update_resume(resume_versions_match.group(1), payload)
                 self.respond(200, {"resume": resume, "versions": ats.list_versions(DB, DATA, resume["id"])}); return
+            draft_match = re.fullmatch(r"/api/resumes/([a-f0-9-]+)/draft", self.path)
+            draft_action = re.fullmatch(r"/api/resumes/([a-f0-9-]+)/draft/(import|reset|preview|validate|fit)", self.path)
+            from_draft_match = re.fullmatch(r"/api/resumes/([a-f0-9-]+)/versions/from-draft", self.path)
+            restore_match = re.fullmatch(r"/api/resumes/([a-f0-9-]+)/versions/([a-f0-9-]+)/restore", self.path)
+            entry_resume_match = re.fullmatch(r"/api/entries/([a-f0-9-]+)/(tailor|pin-resume)", self.path)
+            suggest_match = re.fullmatch(r"/api/analyses/([a-f0-9-]+)/suggestions", self.path)
+            suggestion_match = re.fullmatch(r"/api/resume-suggestions/([a-f0-9-]+)(?:/(accept|revert))?", self.path)
+            if draft_match and method == "PATCH":
+                with LOCK, connect() as db:
+                    draft = resume_store.save_draft(db, draft_match.group(1), data.get("content"), data.get("expected_revision"),
+                                                    reviewed=data.get("reviewed") is True)
+                self.respond(200, {"draft": draft}); return
+            if draft_action and method == "POST":
+                resume_id, action = draft_action.groups()
+                if action == "import":
+                    self.respond(200, import_draft(resume_id, str(data.get("mode", "")), data.get("expected_revision"))); return
+                if action == "reset":
+                    self.respond(200, {"draft": reset_draft(resume_id, data.get("expected_revision"), str(data.get("version_id", "")))}); return
+                if not get_resume(resume_id):
+                    raise ValueError("Resume not found.")
+                content = resume_model.normalize(data.get("content") or {})
+                if action == "fit":
+                    self.respond(200, resume_render.fit_to_pages(content, int(data.get("page_limit") or content["meta"]["page_limit"] or 1))); return
+                pdf = resume_render.render(content)
+                if action == "preview":
+                    self.respond_bytes(200, "application/pdf", pdf, {"X-Page-Count": str(resume_render.page_count(pdf))}); return
+                self.respond(200, {"validation": resume_render.validate(pdf, content)}); return
+            if from_draft_match and method == "POST":
+                self.respond(200, save_editor_version(from_draft_match.group(1), data.get("expected_revision"), data.get("label", ""))); return
+            if restore_match and method == "POST":
+                resume = restore_version(*restore_match.groups())
+                self.respond(200, {"resume": resume, "versions": ats.list_versions(DB, DATA, resume["id"])}); return
+            if entry_resume_match and method == "POST":
+                entry_id, action = entry_resume_match.groups()
+                if action == "tailor":
+                    resume, created = tailor_resume(entry_id, str(data.get("base_resume_id", "")))
+                    self.respond(200, {"resume": resume, "created": created}); return
+                fields = {"resume_id": str(data.get("resume_id", ""))}
+                if "resume_version_id" in data:
+                    fields["resume_version_id"] = str(data.get("resume_version_id") or "")
+                else:
+                    current = get_resume(fields["resume_id"])
+                    fields["resume_version_id"] = current["current_version_id"] if current else ""
+                entry = update_entry(entry_id, fields)
+                sync_entry(entry_id)
+                self.respond(200, {"entry": get_entry(entry_id)}); return
+            if suggest_match and method == "POST":
+                self.respond(200, queue_suggestions(suggest_match.group(1), str(data.get("resume_id", "")))); return
+            if suggestion_match:
+                suggestion_id, action = suggestion_match.groups()
+                with LOCK, connect() as db:
+                    if action == "accept" and method == "POST":
+                        draft, suggestion = resume_store.accept_suggestion(db, suggestion_id, data.get("expected_revision"),
+                                                                           data.get("text"), data.get("confirm_verified") is True)
+                    elif action == "revert" and method == "POST":
+                        draft, suggestion = resume_store.revert_suggestion(db, suggestion_id, data.get("expected_revision"))
+                    elif action is None and method == "PATCH":
+                        draft, suggestion = None, resume_store.set_suggestion_status(db, suggestion_id, str(data.get("status", "")))
+                    else:
+                        self.respond(404, {"error": "Not found."}); return
+                self.respond(200, {"draft": draft, "suggestion": suggestion}); return
             if self.path == "/api/sync" and method == "POST":
                 reconciliation = reconcile_notion_deletions(force=True)
                 for entry in entries(): sync_entry(entry["id"])
@@ -1719,7 +2168,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if analysis_create_match and method == "POST":
                 entry = get_entry(analysis_create_match.group(1))
                 if not entry: raise ValueError("Application not found.")
-                run, cached = ats.queue_analysis(DB, entry, retry=bool(data.get("retry")), require_codex=True)
+                candidate = str(data.get("resume_version_id") or "")
+                if candidate and not candidate_version_allowed(entry, candidate):
+                    raise ValueError("That resume version does not belong to this application.")
+                run, cached = ats.queue_analysis(DB, entry, retry=bool(data.get("retry")), require_codex=True, resume_version_id=candidate)
                 sync_entry(entry["id"])
                 self.respond(200, {"analysis": ats.get_analysis(DB, run["id"]), "cached": cached}); return
             if checklist_match and method == "PATCH":
@@ -1737,6 +2189,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 sync_entry(entry["id"])
                 self.respond(200, {"entry": get_entry(entry["id"])}); return
             self.respond(404, {"error": "Not found."})
+        except ConflictError as error: self.respond(409, {"error": str(error), "draft": error.draft})
         except (ValueError, KeyError) as error: self.respond(400, {"error": str(error)})
         except Exception as error: self.respond(500, {"error": str(error)})
 
@@ -1752,6 +2205,7 @@ def main():
         raise
     threading.Thread(target=scheduler, daemon=True).start()
     threading.Thread(target=ats.worker, args=(DB, DATA, ROOT, sync_entry), daemon=True).start()
+    threading.Thread(target=resume_store.job_worker, args=(DB, DATA, ROOT), daemon=True).start()
     print(f"Local dashboard: http://{HOST}:{PORT}/", flush=True)
     print(f"Pairing key: {CONFIG_DATA['pairing_key']}", flush=True)
     print("Keep this window open for the 9 AM sender. The computer must be awake and connected.", flush=True)

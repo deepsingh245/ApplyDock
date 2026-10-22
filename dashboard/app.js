@@ -23,6 +23,16 @@ let analysisQueue = [];
 let previousAnalysisDetail = null;
 let analysisPollTimer;
 let selectedResumeId = "";
+let editorTab = "overview";
+
+function setEditorTab(tab) {
+  editorTab = tab;
+  for (const button of document.querySelectorAll("[data-editor-tab]")) {
+    button.classList.toggle("active", button.dataset.editorTab === tab);
+    button.setAttribute("aria-selected", String(button.dataset.editorTab === tab));
+  }
+  for (const pane of document.querySelectorAll("#editor-form [data-pane]")) pane.hidden = pane.dataset.pane !== tab;
+}
 const FALLBACK_APPLICATION_STAGES = ["Initiated", "To apply", "No Answer", "Applied", "Offer", "Rejected"];
 const STAGES_AFTER_APPLY = new Set(["applied", "no answer", "offer", "rejected"]);
 
@@ -75,7 +85,7 @@ function setEmailPanel(open, entry = selectedEntry()) {
   emailPanelOpen = !!open;
   $("email-section-fields").hidden = !emailPanelOpen;
   $("email-section-toggle").setAttribute("aria-expanded", String(emailPanelOpen));
-  $("email-toggle-label").textContent = emailPanelOpen ? "Hide email" : "Add email";
+  $("email-toggle-label").textContent = emailPanelOpen ? "Hide email fields" : "Use email for this application";
   $("email-section-toggle").classList.toggle("open", emailPanelOpen);
   if (!entry) return;
   const isPost = entry.kind === "post";
@@ -112,10 +122,12 @@ function updateCreateKind() {
   $("create-email-toggle").querySelector("small").textContent = isPost ? "Use only when the post asks candidates to apply by email." : "Optional. Open only if you plan to email the employer.";
 }
 
-function resumeOptions(selectedId = "") {
+function resumeOptions(selectedId = "", entryId = "") {
   const options = ['<option value="">Choose a resume</option>'];
   for (const resume of state?.resumes || []) {
-    const label = resume.name + " · " + resume.category + (resume.is_default ? " · Default" : "") + (!resume.available ? " · Missing file" : "");
+    // A tailored resume belongs to exactly one application; other pickers only offer masters.
+    if (resume.kind === "tailored" && resume.entry_id !== entryId && resume.id !== selectedId) continue;
+    const label = resume.name + (resume.kind === "tailored" ? " · Tailored for this job" : " · " + resume.category) + (resume.is_default ? " · Default" : "") + (!resume.available ? " · Missing file" : "");
     options.push('<option value="' + esc(resume.id) + '"' + (resume.id === selectedId ? " selected" : "") + (resume.available ? "" : " disabled") + '>' + esc(label) + '</option>');
   }
   return options.join("");
@@ -187,8 +199,10 @@ function showView(name, scrollToTop = true) {
   $("resumes-view").hidden = name !== "resumes";
   $("analysis-view").hidden = name !== "analysis";
   $("settings-view").hidden = name !== "settings";
-  const navView = name === "create" ? "queue" : name;
-  const labels = {queue: "Applications", create: "Applications", resumes: "Resume Library", analysis: "ATS Analysis", settings: "Settings"};
+  $("resume-editor-view").hidden = name !== "resume-editor";
+  if (name !== "resume-editor") window.ResumeEditor?.beforeLeave();
+  const navView = name === "create" ? "queue" : name === "resume-editor" ? "resumes" : name;
+  const labels = {queue: "Applications", create: "Applications", resumes: "Resume Library", analysis: "ATS Analysis", settings: "Settings", "resume-editor": "Resume Editor"};
   $("breadcrumb-current").textContent = labels[name] || "Applications";
   for (const [id, view] of [["applications-button", "queue"], ["resumes-button", "resumes"], ["analysis-nav-button", "analysis"], ["settings-button", "settings"]])
     $(id).classList.toggle("active", view === navView);
@@ -284,7 +298,7 @@ function renderEditor() {
     form.elements[name].value = entry[name] || "";
   form.elements.contact_emails.value = (entry.contact_emails || []).join("\n");
   form.elements.application_stage.innerHTML = stageOptions(entry.application_stage || "");
-  form.elements.resume_id.innerHTML = resumeOptions(entry.resume_id);
+  form.elements.resume_id.innerHTML = resumeOptions(entry.resume_id, entry.id);
   if (entry.resume_id && !(state.resumes || []).some(resume => resume.id === entry.resume_id)) {
     const unavailable = document.createElement("option");
     unavailable.value = entry.resume_id;
@@ -316,7 +330,56 @@ function renderEditor() {
   setEmailPanel(emailPanelOpen, entry);
   $("resume-name").textContent = entry.resume_status === "Resume Selected" ? "Resume Selected · " + entry.resume.name + " · " + entry.resume.category : "Resume Missing · choose one before sending";
   $("resume-name").className = "attachment-note " + (entry.resume_status === "Resume Selected" ? "resume-ok" : "resume-missing");
+  $("resume-version-line").innerHTML = resumeVersionLine(entry);
+  $("resume-entry-actions").innerHTML = entry.resume_id && entry.resume?.available && editable
+    ? '<button class="button secondary" type="button" data-entry-resume="optimize">' + (tailoredFor(entry) ? "Edit tailored resume" : "Optimize resume for this job") + '</button>' +
+      (entry.resume.kind === "master" ? '<button class="button quiet-button" type="button" data-entry-resume="edit">Edit master</button>' : '')
+    : "";
+  const resumeTab = document.querySelector('[data-editor-tab="resume"]');
+  resumeTab.classList.toggle("needs-attention", entry.resume_status !== "Resume Selected");
+  setEditorTab(editorTab);
   dirty = false;
+}
+
+function tailoredFor(entry) {
+  if (entry.resume?.kind === "tailored") return entry.resume;
+  return (state?.resumes || []).find(resume => resume.kind === "tailored" && resume.entry_id === entry.id && resume.parent_resume_id === entry.resume_id) || null;
+}
+
+function resumeVersionLine(entry) {
+  const version = entry.resume_version;
+  if (!version) return "";
+  const attached = entry.attachment_sha256 ? (entry.attachment_sha256 === version.sha256 ? " · matches the last attached file" : " · differs from the last attached file") : "";
+  return '<span class="version-line' + (version.pinned ? " pinned" : "") + '">Attaches version ' + esc(version.version_number) + " · " + esc(version.filename) + " · " +
+    (version.pinned ? "pinned to this exact file" + (version.is_current ? "" : " (a newer version exists)") : "follows the resume's current version") + esc(attached) + '</span>' +
+    (version.pinned ? ' <button class="text-button" type="button" data-entry-resume="unpin">Follow current version</button>' : '');
+}
+
+async function openResumeEditorForEntry(entry, mode) {
+  try {
+    if (dirty) await saveForm();
+    let resumeId = entry.resume_id;
+    if (mode === "optimize") {
+      const existing = tailoredFor(entry);
+      if (existing) resumeId = existing.id;
+      else {
+        const master = entry.resume?.kind === "master" ? entry.resume : null;
+        if (!master) throw new Error("Choose a master resume for this application first.");
+        if (!window.confirm("Create a tailored copy of ‘" + master.name + "’ for this application? The master resume will not change.")) return;
+        try {
+          const result = await api("/api/entries/" + entry.id + "/tailor", "POST", {base_resume_id: master.id});
+          resumeId = result.resume.id;
+          await load(true);
+          notify("Tailored copy created. The master resume is unchanged.");
+        } catch (error) {
+          if (!/review the imported content/i.test(error.message)) throw error;
+          notify("First review the imported content of ‘" + master.name + "’. Opening it now.", true);
+          resumeId = master.id;
+        }
+      }
+    }
+    await window.ResumeEditor.open(resumeId, {entryId: entry.id, analysisId: entry.analysis?.id || ""});
+  } catch (error) { notify(error.message, true); }
 }
 
 function renderInspector() {
@@ -368,7 +431,9 @@ function updatePreview() {
   $("preview-subject").textContent = form.elements.subject.value || "Your subject";
   $("preview-to").textContent = "To: " + (form.elements.recipient.value || "Recipient not set");
   const selectedResume = (state.resumes || []).find(resume => resume.id === form.elements.resume_id.value);
-  $("preview-resume").textContent = "Resume: " + (selectedResume ? selectedResume.name + " · " + selectedResume.category : "Resume Missing");
+  const entry = selectedEntry();
+  const exact = entry?.resume_version && entry.resume_id === form.elements.resume_id.value ? " · v" + entry.resume_version.version_number + " · " + entry.resume_version.filename : "";
+  $("preview-resume").textContent = "Resume: " + (selectedResume ? selectedResume.name + exact : "Resume Missing");
   $("preview-body").textContent = form.elements.body.value || "Your email will appear here as you write.";
 }
 
@@ -415,13 +480,17 @@ function renderResumeLibrary() {
   if (!library.some(resume => resume.id === selectedResumeId)) selectedResumeId = library[0]?.id || "";
   const selected = library.find(resume => resume.id === selectedResumeId);
   const totals = '<div class="resume-stats"><strong>' + library.length + '</strong> resumes <strong>' + library.filter(resume => resume.is_default).length + '</strong> default <strong>' + (state.entries || []).filter(entry => entry.resume_id).length + '</strong> applications linked</div>';
-  const rows = library.map(resume => {
+  const ordered = library.filter(resume => resume.kind !== "tailored").flatMap(master => [master, ...library.filter(resume => resume.kind === "tailored" && resume.parent_resume_id === master.id)])
+    .concat(library.filter(resume => resume.kind === "tailored" && !library.some(master => master.id === resume.parent_resume_id)));
+  const rows = ordered.map(resume => {
     const assigned = (state.entries || []).filter(entry => entry.resume_id === resume.id).length;
     const extension = String(resume.original_filename || "").split(".").pop().toUpperCase() || "FILE";
     const updated = resume.updated_at || resume.created_at;
     const date = updated ? new Date(updated).toLocaleDateString([], {year: "numeric", month: "short", day: "numeric"}) : "—";
-    return '<button class="resume-table-row' + (resume.id === selectedResumeId ? ' selected' : '') + '" type="button" data-resume-select="' + esc(resume.id) + '">' +
-      '<span class="resume-name-cell"><b class="file-type ' + esc(extension.toLowerCase()) + '">' + esc(extension === "DOCX" ? "DOC" : extension) + '</b><span><strong>' + esc(resume.name) + '</strong><small>' + esc(resume.original_filename) + '</small></span></span>' +
+    const tailoredEntry = resume.kind === "tailored" ? (state.entries || []).find(entry => entry.id === resume.entry_id) : null;
+    const subtitle = resume.kind === "tailored" ? "Tailored · " + (tailoredEntry ? (tailoredEntry.company || tailoredEntry.title) : "application removed") : resume.original_filename;
+    return '<button class="resume-table-row' + (resume.id === selectedResumeId ? ' selected' : '') + (resume.kind === "tailored" ? ' tailored-row' : '') + '" type="button" data-resume-select="' + esc(resume.id) + '">' +
+      '<span class="resume-name-cell"><b class="file-type ' + esc(extension.toLowerCase()) + '">' + esc(extension === "DOCX" ? "DOC" : extension) + '</b><span><strong>' + esc(resume.name) + '</strong><small>' + esc(subtitle) + '</small></span></span>' +
       '<span>' + esc(resume.category) + '</span><span>v' + esc(resume.current_version_number || 1) + '</span><span>' + esc(date) + '</span><span>' + assigned + ' application' + (assigned === 1 ? '' : 's') + '</span><span>' + (resume.is_default ? '<i class="default-pill">Default</i>' : '—') + '</span><span aria-hidden="true">•••</span></button>';
   }).join("");
   let details = "";
@@ -430,7 +499,7 @@ function renderResumeLibrary() {
     const fileUrl = esc(selected.file_url);
     const previewUrl = esc(selected.preview_url || selected.file_url);
     const isPdf = String(selected.original_filename || "").toLowerCase().endsWith(".pdf");
-    details = '<div class="resume-detail-grid"><article class="resume-preview-card"><div class="resume-preview-heading"><div><h2>' + esc(selected.name) + ' ' + (selected.is_default ? '<i class="default-pill">Default</i>' : '') + '</h2><small>Document preview · ' + esc(bytesLabel(selected.size_bytes)) + ' · ' + esc(isPdf ? "PDF" : "DOCX") + '</small></div><div><a class="button secondary" href="' + previewUrl + '" target="_blank" rel="noreferrer">Preview</a><a class="button secondary" href="' + fileUrl + '&download=1" download>Download</a></div></div>' +
+    details = '<div class="resume-detail-grid"><article class="resume-preview-card"><div class="resume-preview-heading"><div><h2>' + esc(selected.name) + ' ' + (selected.is_default ? '<i class="default-pill">Default</i>' : '') + '</h2><small>Document preview · ' + esc(bytesLabel(selected.size_bytes)) + ' · ' + esc(isPdf ? "PDF" : "DOCX") + '</small></div><div><button class="button primary" type="button" data-open-resume-editor="' + esc(selected.id) + '">' + (selected.has_draft ? "Edit in ApplyDock" : "Import &amp; edit") + '</button><a class="button secondary" href="' + previewUrl + '" target="_blank" rel="noreferrer">Preview</a><a class="button secondary" href="' + fileUrl + '&download=1" download>Download</a></div></div>' +
       (isPdf ? '<iframe class="resume-preview-frame" src="' + previewUrl + '#toolbar=0&navpanes=0" title="Preview of ' + esc(selected.name) + '"></iframe>' : '<div class="resume-docx-preview"><b>DOC</b><strong>' + esc(selected.original_filename) + '</strong><span>Open Preview to inspect this DOCX file.</span></div>') + '</article>' +
       '<aside class="resume-detail-card"><form class="resume-edit-form" data-resume-id="' + esc(selected.id) + '"><h2>Document details</h2>' +
       '<dl><div><dt>Category</dt><dd>' + esc(selected.category) + '</dd></div><div><dt>Current version</dt><dd>Version ' + esc(selected.current_version_number || 1) + '</dd></div><div><dt>Linked applications</dt><dd>' + assigned + '</dd></div><div><dt>Storage</dt><dd>Local helper</dd></div><div><dt>File type</dt><dd>' + esc(isPdf ? "PDF" : "DOCX") + '</dd></div></dl>' +
@@ -441,6 +510,10 @@ function renderResumeLibrary() {
   }
   $("resume-library").innerHTML = library.length ? totals + '<div class="resume-table"><div class="resume-table-head"><span>Resume</span><span>Category</span><span>Version</span><span>Last updated</span><span>Usage</span><span>Default</span><span></span></div>' + rows + '</div>' + details : '<div class="queue-empty resume-empty"><strong>No resumes saved yet.</strong><p>Use Upload resume to add a reusable PDF or DOCX.</p></div>';
   for (const button of $("resume-library").querySelectorAll("[data-resume-select]")) button.addEventListener("click", () => { selectedResumeId = button.dataset.resumeSelect; renderResumeLibrary(); });
+  for (const button of $("resume-library").querySelectorAll("[data-open-resume-editor]")) button.addEventListener("click", () => {
+    const resume = (state.resumes || []).find(item => item.id === button.dataset.openResumeEditor);
+    window.ResumeEditor.open(button.dataset.openResumeEditor, {entryId: resume?.entry_id || ""}).catch(error => notify(error.message, true));
+  });
   for (const form of $("resume-library").querySelectorAll(".resume-edit-form")) {
     form.addEventListener("submit", saveResumeChanges);
     for (const button of form.querySelectorAll("[data-resume-action]"))
@@ -549,7 +622,7 @@ function renderAnalysis() {
     comparisonHtml = '<section class="view-card comparison-card"><div class="card-heading"><h2>Changes from previous run</h2><span class="sub-status">' + (delta > 0 ? '+' : '') + esc(delta ?? 0) + ' points</span></div><div class="comparison-grid"><div><strong>Newly matched</strong>' + comparisonList(newlyMatched, "No newly matched requirements.") + '</div><div><strong>Remaining gaps</strong>' + comparisonList(remainingGaps, "No remaining gaps were classified.") + '</div><div><strong>Resolved recommendations</strong>' + comparisonList(resolved, "No recommendations resolved yet.") + '</div><div><strong>New warnings</strong>' + comparisonList(newWarnings, "No new warnings.") + '</div></div></section>';
   }
   $("analysis-content").innerHTML =
-    '<div class="analysis-hero"><div class="score-orb ' + scoreTone(detail.overall_score) + '"><strong>' + (detail.overall_score == null ? '—' : esc(detail.overall_score) + '%') + '</strong><span>Estimated match</span></div><div><span class="sub-status">' + esc(detail.label) + '</span><h2>' + esc(result.summary || "Analysis result") + '</h2><div class="analysis-totals"><span><strong>' + matchCounts.matched + '</strong>Matched</span><span><strong>' + matchCounts.partial + '</strong>Partial</span><span><strong>' + matchCounts.missing + '</strong>Missing evidence</span></div><p>Job relevance: ' + (detail.relevance_score == null ? '—' : esc(detail.relevance_score) + '%') + ' · ATS readability: ' + (detail.readability_score == null ? '—' : esc(detail.readability_score) + '%') + ' · Missing mandatory: ' + esc(detail.missing_mandatory || 0) + '</p>' + (delta == null ? '' : '<p class="score-change">Change from previous run: ' + (delta > 0 ? '+' : '') + esc(delta) + ' points</p>') + '</div><button class="button secondary" data-analysis-rerun type="button">Run analysis again</button></div>' +
+    '<div class="analysis-hero"><div class="score-orb ' + scoreTone(detail.overall_score) + '"><strong>' + (detail.overall_score == null ? '—' : esc(detail.overall_score) + '%') + '</strong><span>Estimated match</span></div><div><span class="sub-status">' + esc(detail.label) + '</span><h2>' + esc(result.summary || "Analysis result") + '</h2><div class="analysis-totals"><span><strong>' + matchCounts.matched + '</strong>Matched</span><span><strong>' + matchCounts.partial + '</strong>Partial</span><span><strong>' + matchCounts.missing + '</strong>Missing evidence</span></div><p>Job relevance: ' + (detail.relevance_score == null ? '—' : esc(detail.relevance_score) + '%') + ' · ATS readability: ' + (detail.readability_score == null ? '—' : esc(detail.readability_score) + '%') + ' · Missing mandatory: ' + esc(detail.missing_mandatory || 0) + '</p>' + (delta == null ? '' : '<p class="score-change">Change from previous run: ' + (delta > 0 ? '+' : '') + esc(delta) + ' points</p>') + '</div><div class="analysis-hero-actions"><button class="button primary" data-analysis-optimize type="button">Optimize resume for this job</button><button class="button secondary" data-analysis-rerun type="button">Run analysis again</button></div></div>' +
     (warnings.length ? '<div class="analysis-warnings">' + warnings.map(value => '<p>' + esc(value) + '</p>').join("") + '</div>' : '') +
     '<div class="analysis-layout"><main><section class="view-card"><div class="card-heading"><h2>Score breakdown</h2><span class="sub-status">Python calculated</span></div><div class="category-list">' + categoryHtml + '<div class="category-row readability-row"><div><strong>ATS readability and structure</strong><span>5% of estimated match</span></div><b>' + (detail.readability_score == null ? '—' : esc(detail.readability_score) + '%') + '</b></div></div></section>' + comparisonHtml + '<section class="analysis-section"><div class="card-heading"><div><h2>Requirements explorer</h2><p>Inspect matched evidence and gaps in your resume.</p></div><span class="sub-status">' + requirements.length + ' requirements</span></div><div class="requirements-toolbar"><div class="requirement-filters"><button class="active" type="button" data-requirement-filter="all">All</button><button type="button" data-requirement-filter="missing">Missing</button><button type="button" data-requirement-filter="partial">Partial</button><button type="button" data-requirement-filter="matched">Matched</button></div><label><span class="sr-only">Search requirements</span><input id="requirements-search" type="search" placeholder="Search requirements"></label></div><div class="requirements-list">' + requirementHtml + '</div></section></main><aside class="analysis-history">' + priorityHtml + analysisConsoleHtml(detail, false) + '<div class="view-card"><div class="card-heading"><h2>Analysis history</h2><span class="sub-status">' + analysisHistory.length + '</span></div><div class="history-list">' + historyHtml + '</div></div><div class="view-card"><div class="card-heading"><h2>Resume versions</h2><span class="sub-status">' + analysisVersions.length + '</span></div><p>This run stays linked to version ' + esc(result.resume_version || "—") + '. Replacing a resume keeps earlier results for comparison.</p><div class="version-list">' + analysisVersions.map(version => '<div><strong>Version ' + esc(version.version_number) + (version.is_current ? ' · Current' : '') + '</strong><span>' + esc(version.original_filename) + '</span><small>' + esc(version.extraction_status) + ' · ' + esc(dateLabel(version.created_at)) + '</small></div>').join("") + '</div></div></aside></div>';
   let requirementFilter = "all";
@@ -572,6 +645,10 @@ function renderAnalysis() {
   });
   for (const button of $("analysis-content").querySelectorAll("[data-analysis-history]")) button.addEventListener("click", () => openAnalysis(button.dataset.analysisHistory));
   $("analysis-content").querySelector("[data-analysis-rerun]")?.addEventListener("click", () => runAnalysis(entry));
+  $("analysis-content").querySelector("[data-analysis-optimize]")?.addEventListener("click", () => {
+    if (!entry) return notify("This analysis's application is no longer available.", true);
+    openResumeEditorForEntry({...entry, analysis: {...entry.analysis, id: detail.id}}, "optimize");
+  });
   scrollAnalysisConsole();
   if (analysisQueue.length) analysisPollTimer = setTimeout(() => openAnalysis(detail.id, true), 1200);
 }
@@ -810,24 +887,31 @@ $("analysis-nav-button").addEventListener("click", async () => {
 for (const button of document.querySelectorAll("[data-editor-tab]")) button.addEventListener("click", async () => {
   const entry = selectedEntry();
   if (!entry) return;
-  for (const tab of document.querySelectorAll("[data-editor-tab]")) tab.classList.toggle("active", tab === button);
   if (button.dataset.editorTab === "analysis") {
     if (entry.analysis?.id) await openAnalysis(entry.analysis.id);
     else await runAnalysis(entry);
     return;
   }
-  if (button.dataset.editorTab === "email") {
-    setEmailPanel(true, entry);
-    $("email-section-toggle").scrollIntoView({behavior: "smooth", block: "start"});
-    return;
-  }
-  if (button.dataset.editorTab === "activity") {
-    $("inspector").scrollIntoView({behavior: "smooth", block: "start"});
-    return;
-  }
-  $("editor-form").scrollIntoView({behavior: "smooth", block: "start"});
+  setEditorTab(button.dataset.editorTab);
 });
+// A required field on a hidden tab would block saving silently; show its tab instead.
+$("editor-form").addEventListener("invalid", event => {
+  const pane = event.target.closest("[data-pane]");
+  if (pane && pane.hidden) setEditorTab(pane.dataset.pane);
+}, true);
 $("manage-resumes-inline").addEventListener("click", () => showView("resumes"));
+$("editor-form").addEventListener("click", async event => {
+  const button = event.target.closest("[data-entry-resume]");
+  const entry = selectedEntry();
+  if (!button || !entry) return;
+  event.preventDefault();
+  if (button.dataset.entryResume === "unpin") {
+    try { await api("/api/entries/" + entry.id, "PATCH", {resume_version_id: ""}); await load(true); notify("This application now follows the resume's current version."); }
+    catch (error) { notify(error.message, true); }
+    return;
+  }
+  await openResumeEditorForEntry(entry, button.dataset.entryResume);
+});
 $("email-section-toggle").addEventListener("click", () => {
   const form = $("editor-form");
   const opening = !emailPanelOpen;
@@ -997,6 +1081,12 @@ document.addEventListener("keydown", event => {
 });
 window.addEventListener("beforeunload", event => { if (dirty) { event.preventDefault(); event.returnValue = ""; } });
 window.addEventListener("applydock-paired", () => load().catch(error => { showPair(); notify(error.message, true); }));
+window.ApplyDock = {
+  api, notify, load, esc, showView, dateLabel, openAnalysis,
+  state: () => state,
+  currentView: () => currentView,
+  selectEntry: id => { selectedId = id; render(true); },
+};
 initializeSettingsDisclosures();
 setTheme(localStorage.getItem("applydock-theme") === "dark" ? "dark" : "light");
 if (key()) load().catch(error => { showPair(); notify(error.message, true); });

@@ -1,0 +1,28 @@
+{
+  "basics": {
+    "name": "Jordan Rivera",
+    "label": "Frontend Engineer",
+    "email": "jordan.rivera@example.com",
+    "phone": "+1 555 010 2030",
+    "location": "Austin, TX",
+    "url": "https://jordanrivera.dev",
+    "summary": "Frontend engineer with six years of experience building accessible React and TypeScript applications for internal operations teams.",
+    "profiles": [{"network": "GitHub", "url": "https://github.com/jordan-rivera"}, {"network": "LinkedIn", "url": "https://www.linkedin.com/in/jordan-rivera"}]
+  },
+  "work": [
+    {"name": "Northwind Logistics", "position": "Senior Frontend Engineer", "location": "Remote", "startDate": "Mar 2022", "endDate": "Present",
+     "highlights": ["Developed reusable React components for internal applications.", "Led migration of a legacy dashboard to TypeScript with strict type checks.", "Partnered with designers to ship an accessible component library used by four teams."]},
+    {"name": "Contoso Health", "position": "Frontend Engineer", "location": "Austin, TX", "startDate": "Jun 2019", "endDate": "Feb 2022",
+     "highlights": ["Built patient scheduling screens integrating REST APIs.", "Wrote unit tests with Jest and React Testing Library."]}
+  ],
+  "projects": [
+    {"name": "Open Timesheets", "url": "https://github.com/jordan-rivera/open-timesheets", "description": "A self-hosted timesheet tracker.", "highlights": ["Implemented offline-first sync with IndexedDB."], "keywords": ["React", "IndexedDB"]}
+  ],
+  "skills": [
+    {"name": "Languages", "keywords": ["TypeScript", "JavaScript", "HTML", "CSS"]},
+    {"name": "Frameworks", "keywords": ["React", "Redux", "Jest"]}
+  ],
+  "education": [{"institution": "University of Texas at Austin", "studyType": "B.S.", "area": "Computer Science", "startDate": "2015", "endDate": "2019"}],
+  "certificates": [{"name": "Web Accessibility Specialist", "issuer": "IAAP", "date": "2023"}],
+  "meta": {"page_limit": 1}
+}
