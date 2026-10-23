@@ -119,6 +119,9 @@ def init_db():
             # v5 adds the Master Profile, link checks, and submission history (new tables only), plus a
             # profile snapshot column on analysis runs; the bump keeps a backup of the pre-v5 database.
             db.execute("PRAGMA user_version=5")
+        if version < 6:
+            # v6 lets an analysis score an unsaved editor draft (analysis_runs.document_id / draft_resume_id).
+            db.execute("PRAGMA user_version=6")
         ats.refresh_failed_extractions(db, config.DATA)
         if not db.execute("SELECT 1 FROM resumes WHERE deleted_at='' AND is_default=1 LIMIT 1").fetchone():
             first_resume = db.execute("SELECT id FROM resumes WHERE deleted_at='' AND kind='master' ORDER BY created_at LIMIT 1").fetchone()
@@ -137,7 +140,7 @@ def init_db():
                         AND (needs_review<>0 OR status='approved')""", (stamp,))
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def backup_before_migration():

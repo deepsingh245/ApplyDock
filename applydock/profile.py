@@ -447,13 +447,16 @@ def _item_text(item: dict, names: dict) -> str:
         parts += [data["summary"], data["description"], "Role: " + data["role"] if data["role"] else "",
                   "Technologies: " + ", ".join(data["technologies"]) if data["technologies"] else "",
                   "Architecture: " + data["architecture"] if data["architecture"] else "", "Features: " + "; ".join(data["features"]) if data["features"] else "",
-                  "Challenges: " + data["challenges"] if data["challenges"] else "", "Deployment: " + data["deployment"] if data["deployment"] else ""]
+                  "Challenges: " + data["challenges"] if data["challenges"] else "", "Deployment: " + data["deployment"] if data["deployment"] else "",
+                  "Evidence: " + data["evidence"] if data["evidence"] else ""]
         parts += [claim["text"] + ("" if claim["verified"] else " [unconfirmed]") for claim in data["achievements"]]
     elif kind == "skill":
         shown = [names[value] for value in data["evidence_ids"] if value in names]
         parts.append(f"Skill {data['name']} ({data['category'].replace('_', ' ')})" + (" — shown in " + ", ".join(shown) if shown else ""))
     elif kind == "achievement":
-        parts.append(data["text"])
+        parts += [data["text"], "Evidence: " + data["evidence"] if data["evidence"] else ""]
+    elif kind == "personal":
+        parts += ["Headline: " + data["headline"] if data["headline"] else "", "Summary: " + data["summary"] if data["summary"] else ""]
     elif kind == "education":
         parts.append(" ".join(filter(None, [data["degree"], data["field"], "at", data["institution"], data["end"]])))
     elif kind == "certification":
@@ -470,7 +473,10 @@ def evidence_blocks(db) -> list:
     usable = [item for item in items(db, include_archived=False) if item["verification"] != "needs_review"]
     names = {item["id"]: item["label"] for item in usable}
     blocks, total = [], 0
-    order = {"experience": 0, "project": 1, "achievement": 2, "certification": 3, "education": 4, "skill": 5}
+    order = {"personal": -1, "experience": 0, "project": 1, "achievement": 2, "certification": 3, "education": 4, "skill": 5}
+    own = personal(db)
+    if own["id"]:
+        usable.append(own)  # the headline and summary are evidence too (sorted first)
     for item in sorted(usable, key=lambda value: (order.get(value["kind"], 9), value["created_at"], value["id"])):
         text = _item_text(item, names)
         if not text or total + len(text) > MAX_EVIDENCE_CHARS:

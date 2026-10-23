@@ -168,6 +168,13 @@ class CareerWorkflowTests(unittest.TestCase):
                 profile.create_item(db, "skill", {"name": "Node.js"}, "verified")
             second = call("POST", f"/api/entries/{self.entry['id']}/analyses", {})
         self.assertNotEqual(first["payload"]["analysis"]["id"], second["payload"]["analysis"]["id"])
+        # The dashboard compares these two values to say "your profile changed since this analysis".
+        state = call("GET", "/api/state")["payload"]
+        self.assertEqual(second["payload"]["analysis"]["profile_hash"], state["profile_hash"])
+        self.assertEqual(applications.get_entry(self.entry["id"])["analysis"]["profile_hash"], state["profile_hash"])
+        with database.connect() as db:  # editing only the personal summary is a change too
+            profile.save_personal(db, {"summary": "Backend engineer focused on authentication."})
+        self.assertNotEqual(call("GET", "/api/state")["payload"]["profile_hash"], state["profile_hash"])
 
     def test_profile_project_suggestion_adds_a_real_project_and_reverts(self):
         with database.connect() as db:
@@ -217,6 +224,50 @@ class CareerWorkflowTests(unittest.TestCase):
         reverted = call("POST", f"/api/resume-suggestions/{suggestion['id']}/revert", {"expected_revision": revision + 1})
         self.assertEqual(reverted["code"], 200, reverted)
         self.assertFalse(any(p["name"] == "Auth service" for p in reverted["payload"]["draft"]["content"]["projects"]))
+
+    def test_draft_check_scores_unsaved_edits_and_becomes_the_saved_versions_result(self):
+        state = resume_workflows.editor_state(self.master["id"])
+        content = state["draft"]["content"]
+        content["basics"]["label"] = "Backend Engineer"
+        with database.connect() as db:
+            draft = resume_store.save_draft(db, self.master["id"], content, state["draft"]["revision"], reviewed=True)
+            versions_before = db.execute("SELECT COUNT(*) FROM resume_versions WHERE resume_id=?", (self.master["id"],)).fetchone()[0]
+        with patch.object(ats, "codex_status", return_value={"connected": True, "checked": True}):
+            result = call("POST", f"/api/resumes/{self.master['id']}/draft/analyze", {"entry_id": self.entry["id"], "expected_revision": draft["revision"]})
+        self.assertEqual(result["code"], 200, result)
+        run = result["payload"]["analysis"]
+        with database.connect() as db:
+            row = db.execute("SELECT * FROM analysis_runs WHERE id=?", (run["id"],)).fetchone()
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM resume_versions WHERE resume_id=?", (self.master["id"],)).fetchone()[0], versions_before)
+            draft_path = config.DATA / db.execute("SELECT stored_path FROM resume_documents WHERE id=?", (row["document_id"],)).fetchone()[0]
+        self.assertEqual((row["resume_version_id"], row["draft_resume_id"]), ("", self.master["id"]))
+        self.assertTrue(draft_path.is_file())
+        stale = call("POST", f"/api/resumes/{self.master['id']}/draft/analyze", {"entry_id": self.entry["id"], "expected_revision": 0})
+        self.assertEqual(stale["code"], 409)
+        checklist = {"warnings": [], "requirements": [
+            {"id": "J1", "category": "required_skills", "requirement": "Node.js", "mandatory": True, "priority": "high", "terms": []},
+            {"id": "J2", "category": "required_skills", "requirement": "OAuth", "mandatory": True, "priority": "high", "terms": []}]}
+        output = {"summary": "", "warnings": [], "assessments": []}
+        parse = {"summary": "", "skills": [], "experience": [], "projects": [], "education": [], "certifications": [], "keywords": []}
+        with patch.object(ats, "_run_codex", side_effect=lambda r, p, s, purpose, *rest: {"resume_parse": parse, "jd_requirements": checklist}.get(purpose, output)):
+            ats.process_one(config.DB, config.DATA, config.ROOT)
+        self.assertTrue(ats.get_analysis(config.DB, run["id"])["result"]["draft"])
+        # Saving the identical content later reuses this result, now attached to the saved version.
+        saved = resume_workflows.save_editor_version(self.master["id"], draft["revision"])
+        reused, cached = ats.queue_analysis(config.DB, self.entry, resume_version_id=saved["version_id"])
+        self.assertEqual((reused["id"], reused["resume_version_id"], cached), (run["id"], saved["version_id"], True))
+        # A draft check of another (unsaved) text is removed with its resume.
+        content["basics"]["label"] = "Platform Engineer"
+        with database.connect() as db:
+            draft = resume_store.save_draft(db, self.master["id"], content, draft["revision"])
+        with patch.object(ats, "codex_status", return_value={"connected": True, "checked": True}):
+            other = resume_workflows.analyze_draft(self.master["id"], self.entry["id"], draft["revision"])["analysis"]
+        with database.connect() as db:
+            other_path = config.DATA / db.execute("SELECT rd.stored_path FROM analysis_runs ar JOIN resume_documents rd ON rd.id=ar.document_id WHERE ar.id=?",
+                                                  (other["id"],)).fetchone()[0]
+        resumes.delete_resume(self.master["id"])
+        self.assertIsNone(ats.get_analysis(config.DB, other["id"]))
+        self.assertFalse(other_path.is_file())
 
     def test_recorded_submission_keeps_the_exact_file_after_edits_and_deletion(self):
         result = call("POST", f"/api/entries/{self.entry['id']}/submissions", {"channel": "external", "submitted_at": "2026-10-01"})

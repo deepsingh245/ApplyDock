@@ -96,6 +96,11 @@ function stageOptions(selected = "") {
 // How a job requirement is covered by the resume and the Master Profile (see ats.COVERAGE_LABELS).
 const COVERAGE_LABELS = {represented: "Already represented", weak: "Weakly described", profile_only: "In your profile, not the resume", unsupported: "Missing from both"};
 
+// True when the Master Profile changed after this analysis ran, so re-running would use newer evidence.
+function profileChangedSince(analysis) {
+  return Boolean(analysis && analysis.status === "complete" && state?.profile_hash !== undefined && (analysis.profile_hash || "") !== (state.profile_hash || ""));
+}
+
 function coverageLabel(value) {
   return COVERAGE_LABELS[value] || "";
 }

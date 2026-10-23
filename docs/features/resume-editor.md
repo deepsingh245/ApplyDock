@@ -78,6 +78,7 @@ The migration to `PRAGMA user_version=4` is additive. `backup_before_migration()
   - `POST …/draft/reset` with `{expected_revision, version_id?}`.
   - `POST …/draft/preview` with `{content}` returns `application/pdf` plus an `X-Page-Count` header.
   - `POST …/draft/validate` with `{content}`.
+  - `POST …/draft/analyze` with `{entry_id, expected_revision}` scores the current draft against an application **without saving a version** ("Re-analyze draft" in Job match). The draft is rendered exactly as Save version would; the run stores the rendered document (`analysis_runs.document_id`, `draft_resume_id`) and, if the same content is saved later, that version reuses the result. Deleting the resume deletes its draft checks and their files.
 - **Versions:**
   - `POST /api/resumes/{id}/versions/from-draft` with `{expected_revision, label?}`.
   - `POST …/versions/{vid}/restore`.
@@ -94,6 +95,10 @@ The migration to `PRAGMA user_version=4` is additive. `backup_before_migration()
   - `POST …/{sid}/revert` with `{expected_revision}`.
   - `PATCH /api/resume-suggestions/{sid}` with `{status}`.
 - **Jobs:** `GET /api/resume-jobs/{id}`.
+
+## Design tab
+
+Cards are grouped into two independent columns (layout: template, page, margins, spacing, header · type: text, color, sections and entries) so short cards never leave gaps; Section order spans both. Sections are reordered by dragging a row (pointer events, so it also works on touch) or by focusing a row's handle and pressing ↑/↓; each move is one undo step.
 
 ## Not done yet (candidates for later)
 

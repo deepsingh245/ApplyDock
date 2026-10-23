@@ -71,6 +71,11 @@ def profile_evidence():
         return profile.evidence_blocks(db)
 
 
+def profile_hash():
+    """Changes whenever the profile evidence an analysis would use changes (compare with analysis.profile_hash)."""
+    return profile.evidence_hash(profile_evidence())
+
+
 # ---------------------------------------------------------------- submission history
 
 def entry_submissions(entry_id):

@@ -166,9 +166,17 @@ def init_schema(db):
       error_message TEXT NOT NULL DEFAULT '', cache_hit INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL, started_at TEXT NOT NULL DEFAULT '', completed_at TEXT NOT NULL DEFAULT ''
     )""")
-    if "profile_json" not in {row["name"] for row in db.execute("PRAGMA table_info(analysis_runs)")}:
+    run_columns = {row["name"] for row in db.execute("PRAGMA table_info(analysis_runs)")}
+    for name, declaration in {
         # Snapshot of the Master Profile evidence a run compared against (sent to Codex as data).
-        db.execute("ALTER TABLE analysis_runs ADD COLUMN profile_json TEXT NOT NULL DEFAULT ''")
+        "profile_json": "TEXT NOT NULL DEFAULT ''",
+        # The analyzed file. A "draft check" scores an unsaved editor draft: it has a document but no
+        # resume version, and draft_resume_id says whose draft it was (so deleting that resume removes it).
+        "document_id": "TEXT NOT NULL DEFAULT ''",
+        "draft_resume_id": "TEXT NOT NULL DEFAULT ''",
+    }.items():
+        if name not in run_columns:
+            db.execute(f"ALTER TABLE analysis_runs ADD COLUMN {name} {declaration}")
     db.execute("""CREATE TABLE IF NOT EXISTS analysis_checklist (
       analysis_id TEXT NOT NULL, recommendation_id TEXT NOT NULL,
       state TEXT NOT NULL DEFAULT 'pending', updated_at TEXT NOT NULL,
@@ -402,7 +410,7 @@ def analysis_summary(db_path: Path, entry: dict):
         runs = list(db.execute("""SELECT ar.*,jd.content_hash,rd.sha256 AS resume_sha256 FROM analysis_runs ar
                                   JOIN job_description_versions jd ON jd.id=ar.jd_version_id
                                   LEFT JOIN resume_versions rv ON rv.id=ar.resume_version_id
-                                  LEFT JOIN resume_documents rd ON rd.id=rv.document_id
+                                  LEFT JOIN resume_documents rd ON rd.id=COALESCE(NULLIF(ar.document_id,''),rv.document_id)
                                   WHERE ar.entry_id=? ORDER BY ar.created_at DESC""", (entry["id"],)))
         version = effective_version(db, entry)
     if not runs:
@@ -410,7 +418,9 @@ def analysis_summary(db_path: Path, entry: dict):
     # Prefer the newest run of the exact file this application uses (runs are cached by file
     # content, so an identical file under another version id is still the same analysis).
     matching = [row for row in runs if version and row["resume_sha256"] == version["sha256"]]
-    item = dict(matching[0] if matching else runs[0])
+    # A draft check of some other text is not this application's result; prefer runs of saved files.
+    saved = [row for row in runs if row["resume_version_id"]]
+    item = dict(matching[0] if matching else (saved or runs)[0])
     status = item["status"]
     label = ANALYSIS_STATUSES.get(status, status.replace("_", " ").title())
     stale = False
@@ -423,6 +433,7 @@ def analysis_summary(db_path: Path, entry: dict):
         "overall_score": item["overall_score"], "relevance_score": item["relevance_score"],
         "readability_score": item["readability_score"], "missing_mandatory": item["missing_mandatory"],
         "analyzed_at": item["completed_at"] or item["created_at"], "error": item["error_message"],
+        "profile_hash": profile_hash(item.get("profile_json", "")), "scoring_version": item["scoring_version"],
     }
 
 
@@ -437,18 +448,23 @@ def _ensure_jd_version(db, entry):
     return db.execute("SELECT * FROM job_description_versions WHERE id=?", (version_id,)).fetchone()
 
 
-def queue_analysis(db_path: Path, entry: dict, retry=False, require_codex=False, resume_version_id="", profile_blocks=None):
+def queue_analysis(db_path: Path, entry: dict, retry=False, require_codex=False, resume_version_id="", profile_blocks=None,
+                   document=None, draft_resume_id=""):
     """Queue (or reuse) an analysis of the application's effective resume version.
 
     resume_version_id scores a specific candidate version instead (for example a tailored resume
     not yet selected for the application); callers must check that it belongs to this application.
     profile_blocks is the Master Profile evidence ([{id, text, ...}]) the run also compares against;
     it is part of the cache key, so editing the profile allows a fresh run.
+    document (a resume_documents row) scores a rendered, unsaved draft of draft_resume_id instead of a version.
     """
     profile_json = json.dumps(list(profile_blocks), ensure_ascii=False, sort_keys=True) if profile_blocks else ""
     global PLAN_LIMIT_PAUSED
     with _connect(db_path) as db:
-        version = version_by_id(db, resume_version_id) if resume_version_id else effective_version(db, entry)
+        if document is not None:
+            version = {**dict(document), "id": "", "document_id": document["id"]}
+        else:
+            version = version_by_id(db, resume_version_id) if resume_version_id else effective_version(db, entry)
         if not version:
             raise ValueError("Resume Missing. Select an available resume before analysis.")
         if version["extraction_status"] == "limited":
@@ -461,6 +477,10 @@ def queue_analysis(db_path: Path, entry: dict, retry=False, require_codex=False,
                                       JD_PARSER_VERSION, OUTPUT_SCHEMA_VERSION, SCORING_VERSION, MODEL,
                                       hashlib.sha256(profile_json.encode()).hexdigest() if profile_json else ""]).encode()).hexdigest()
         existing = db.execute("SELECT * FROM analysis_runs WHERE cache_key=?", (key,)).fetchone()
+        if existing and not existing["resume_version_id"] and version["id"]:
+            # The same file was checked as a draft and has now been saved: the run belongs to that version.
+            db.execute("UPDATE analysis_runs SET resume_version_id=?,draft_resume_id='' WHERE id=?", (version["id"], existing["id"]))
+            existing = db.execute("SELECT * FROM analysis_runs WHERE id=?", (existing["id"],)).fetchone()
         if existing and existing["status"] == "complete":
             db.execute("UPDATE analysis_runs SET cache_hit=cache_hit+1 WHERE id=?", (existing["id"],))
             return dict(existing), True
@@ -485,8 +505,10 @@ def queue_analysis(db_path: Path, entry: dict, retry=False, require_codex=False,
             analysis_id = existing["id"]
             db.execute("DELETE FROM analysis_events WHERE analysis_id=?", (analysis_id,))
         else:
-            db.execute("""INSERT INTO analysis_runs(id,entry_id,resume_version_id,jd_version_id,cache_key,model,scoring_version,status,created_at,profile_json)
-                          VALUES(?,?,?,?,?,?,?,?,?,?)""", (analysis_id, entry["id"], version["id"], jd["id"], key, MODEL, SCORING_VERSION, status, stamp, profile_json))
+            db.execute("""INSERT INTO analysis_runs(id,entry_id,resume_version_id,jd_version_id,cache_key,model,scoring_version,status,created_at,profile_json,
+                          document_id,draft_resume_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       (analysis_id, entry["id"], version["id"], jd["id"], key, MODEL, SCORING_VERSION, status, stamp, profile_json,
+                        version["document_id"], "" if version["id"] else draft_resume_id))
         if status == "insufficient_jd":
             db.execute("UPDATE analysis_runs SET error_code='insufficient_jd',error_message='Add a fuller job description before analysis.',completed_at=? WHERE id=?", (stamp, analysis_id))
             _event_db(db, analysis_id, 0, "validation", "The job description is too short for a reliable score.", "error")
@@ -849,7 +871,12 @@ def process_one(db_path: Path, data_dir: Path, root: Path, sync_callback=None):
                                  rd.evidence_json,rd.extraction_status,rd.extraction_error,rd.parsed_json,
                                  rd.parse_status,rd.parse_error,rd.parser_version,rd.parsed_model
                                  FROM resume_versions rv JOIN resume_documents rd ON rd.id=rv.document_id
-                                 WHERE rv.id=?""", (run["resume_version_id"],)).fetchone()
+                                 WHERE rv.id=?""", (run["resume_version_id"],)).fetchone() if run["resume_version_id"] else \
+            db.execute("""SELECT '' AS id,? AS resume_id,rd.id AS document_id,NULL AS version_number,'' AS original_filename,
+                          rd.sha256,rd.stored_path,rd.mime_type,rd.size_bytes,rd.extracted_text,
+                          rd.evidence_json,rd.extraction_status,rd.extraction_error,rd.parsed_json,
+                          rd.parse_status,rd.parse_error,rd.parser_version,rd.parsed_model
+                          FROM resume_documents rd WHERE rd.id=?""", (run["draft_resume_id"], run["document_id"])).fetchone()
         jd = db.execute("SELECT * FROM job_description_versions WHERE id=?", (run["jd_version_id"],)).fetchone()
     record_event(db_path, run["id"], 10, "preparing", "Worker started and loaded the saved resume and job description.")
     succeeded = False
@@ -892,7 +919,7 @@ def process_one(db_path: Path, data_dir: Path, root: Path, sync_callback=None):
         result = {
             "summary": normalize_text(output.get("summary", ""))[:1500], "requirements": matches,
             "category_scores": categories, "warnings": [normalize_text(value)[:500] for value in output.get("warnings", []) if value][:20],
-            "resume_version": version["version_number"], "model": MODEL, "scoring_version": SCORING_VERSION,
+            "resume_version": version["version_number"], "draft": not run["resume_version_id"], "model": MODEL, "scoring_version": SCORING_VERSION,
             "profile_used": bool(profile_blocks),
             "coverage_counts": {key: sum(1 for item in matches if item["coverage"] == key) for key in COVERAGE_LABELS},
             "potential_score": score_result(potential_matches(matches), readability)[2] if profile_blocks else None,
@@ -1040,8 +1067,14 @@ def get_analysis(db_path: Path, analysis_id: str):
     return result
 
 
+def profile_hash(profile_json: str) -> str:
+    """Identifies the Master Profile evidence a run compared against (same value as profile.evidence_hash)."""
+    return hashlib.sha256(profile_json.encode()).hexdigest() if profile_json else ""
+
+
 def _public_analysis(row, include_result):
     item = dict(row)
+    item["profile_hash"] = profile_hash(item.get("profile_json", ""))
     item["label"] = ANALYSIS_STATUSES.get(item["status"], item["status"].replace("_", " ").title())
     item["result"] = json.loads(item["result_json"] or "{}") if include_result else None
     if not include_result:
@@ -1063,10 +1096,13 @@ def update_checklist(db_path: Path, analysis_id: str, recommendation_id: str, st
 
 def purge_resume(db, data_dir: Path, resume_id: str, keep_document_ids=()):
     documents = list(db.execute("""SELECT DISTINCT rd.* FROM resume_documents rd JOIN resume_versions rv ON rv.document_id=rd.id WHERE rv.resume_id=?""", (resume_id,)))
+    documents += list(db.execute("""SELECT DISTINCT rd.* FROM resume_documents rd JOIN analysis_runs ar ON ar.document_id=rd.id
+                                    WHERE ar.draft_resume_id=? AND ar.resume_version_id=''""", (resume_id,)))
     version_ids = [row[0] for row in db.execute("SELECT id FROM resume_versions WHERE resume_id=?", (resume_id,))]
-    if version_ids:
-        placeholders = ",".join("?" for _ in version_ids)
-        analysis_ids = [row[0] for row in db.execute(f"SELECT id FROM analysis_runs WHERE resume_version_id IN ({placeholders})", version_ids)]
+    draft_runs = [row[0] for row in db.execute("SELECT id FROM analysis_runs WHERE draft_resume_id=? AND resume_version_id=''", (resume_id,))]
+    if version_ids or draft_runs:
+        placeholders = ",".join("?" for _ in version_ids) or "''"
+        analysis_ids = [row[0] for row in db.execute(f"SELECT id FROM analysis_runs WHERE resume_version_id IN ({placeholders})", version_ids)] + draft_runs
         if analysis_ids:
             marks = ",".join("?" for _ in analysis_ids)
             db.execute(f"DELETE FROM analysis_checklist WHERE analysis_id IN ({marks})", analysis_ids)
@@ -1074,8 +1110,9 @@ def purge_resume(db, data_dir: Path, resume_id: str, keep_document_ids=()):
             db.execute(f"DELETE FROM ai_runs WHERE analysis_id IN ({marks})", analysis_ids)
             db.execute(f"DELETE FROM analysis_runs WHERE id IN ({marks})", analysis_ids)
         db.execute(f"DELETE FROM resume_versions WHERE id IN ({placeholders})", version_ids)
-    for document in documents:
-        still_used = db.execute("SELECT 1 FROM resume_versions WHERE document_id=? LIMIT 1", (document["id"],)).fetchone()
+    for document in {row["id"]: row for row in documents}.values():
+        still_used = db.execute("SELECT 1 FROM resume_versions WHERE document_id=? LIMIT 1", (document["id"],)).fetchone() or \
+            db.execute("SELECT 1 FROM analysis_runs WHERE document_id=? LIMIT 1", (document["id"],)).fetchone()
         # Files an application was submitted with are history: they outlive the resume record.
         if not still_used and document["id"] not in keep_document_ids:
             path = (data_dir / document["stored_path"]).resolve()

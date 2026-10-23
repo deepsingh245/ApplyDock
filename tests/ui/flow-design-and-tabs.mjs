@@ -47,6 +47,27 @@ try {
   await b.waitFor(`document.getElementById("re-save-status").textContent === "All changes saved"`, 10000);
   await b.sleep(1500);
   await b.shot("t5-design-applied");
+  // Section order: drag the first section below the third with real mouse events, then move it back with the keyboard.
+  const orderOf = () => b.eval(`[...document.querySelectorAll("#re-design .re-order-row")].map(row => row.dataset.orderSection).join(",")`);
+  const before = await orderOf();
+  const rects = await b.eval(`(() => { const rows = [...document.querySelectorAll("#re-design .re-order-row")]; rows[0].scrollIntoView({block: "center"});
+    return rows.slice(0, 3).map(row => { const r = row.getBoundingClientRect(); return [Math.round(r.left + 40), Math.round(r.top + r.height / 2), Math.round(r.bottom)]; }); })()`);
+  const mouse = (type, x, y) => b.send("Input.dispatchMouseEvent", {type, x, y, button: "left", buttons: type === "mouseReleased" ? 0 : 1, clickCount: 1, pointerType: "mouse"});
+  await mouse("mousePressed", rects[0][0], rects[0][1]);
+  for (let y = rects[0][1]; y <= rects[2][2] + 4; y += 6) await mouse("mouseMoved", rects[0][0], y);
+  await mouse("mouseReleased", rects[0][0], rects[2][2] + 4);
+  await b.sleep(300);
+  const dragged = await orderOf();
+  log("drag order:", before, "->", dragged);
+  if (dragged.split(",")[2] !== before.split(",")[0]) throw new Error("Drag and drop did not move the section");
+  await b.eval(`document.querySelector('[data-drag-section="${before.split(",")[0]}"]').focus(); true`);
+  for (const _ of [1, 2]) {
+    await b.send("Input.dispatchKeyEvent", {type: "keyDown", key: "ArrowUp", code: "ArrowUp", windowsVirtualKeyCode: 38});
+    await b.send("Input.dispatchKeyEvent", {type: "keyUp", key: "ArrowUp", code: "ArrowUp", windowsVirtualKeyCode: 38});
+    await b.sleep(150);
+  }
+  log("keyboard order restored:", (await orderOf()) === before, "focus kept:", await b.eval(`document.activeElement.dataset.dragSection`));
+  if ((await orderOf()) !== before) throw new Error("Arrow keys did not reorder sections");
     log("margin output:", await b.eval(`document.querySelector('[data-layout-value="margin_x"]').textContent`));
   // fit: set page limit 1 after enlarging fonts to force 2 pages
   await setRange("font_size", "13");

@@ -57,7 +57,11 @@ resume_suggestions.source_item_id / payload_json: profile entry a suggestion cam
   - Resume deletion keeps every document a submission references (`submissions.kept_document_ids`).
   - Recording a submission cancels a pending local 9 AM send, so nothing is emailed twice.
   - Once submitted, the delivery actions are hidden.
-- **Schema v5 is additive.** It adds new tables and columns only, and `database.backup_before_migration` copies the database first (`capture.pre-v5-*.sqlite3`).
+- **Schema v5 and v6 are additive.** v6 adds `analysis_runs.document_id` and `draft_resume_id` for draft checks. It adds new tables and columns only, and `database.backup_before_migration` copies the database first (`capture.pre-v5-*.sqlite3`).
+
+## Using an updated profile on existing applications
+
+Each analysis stores the profile evidence it used (`analysis_runs.profile_json`); `/api/state.profile_hash` and each analysis's `profile_hash` let the dashboard show “Your Master Profile changed since this analysis” in the inspector, the analysis view, and the editor's Job match tab. Re-running (or **Re-analyze draft** in the editor) uses the current profile — no resume needs to be saved — and new suggestions come from that run. The evidence includes the personal headline and summary and the evidence notes on projects and achievements.
 
 ## Link verification
 

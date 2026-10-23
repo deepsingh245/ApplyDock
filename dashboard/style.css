@@ -587,7 +587,10 @@ details.requirement-card[open] > summary > b { transform: rotate(90deg); }
 .re-suggestion-original span, .re-suggestion-proposed span { display: block; color: var(--ink-3); font-size: var(--text-xs); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
 .re-suggestion-flags { color: var(--warn); font-size: var(--text-xs); }
 .re-suggestion-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+/* Two independent columns of related cards, so a short card never leaves a gap beside a tall one. */
 #re-design { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); align-items: start; }
+.re-design-col { display: grid; gap: var(--space-3); align-content: start; min-width: 0; }
+.re-design-wide { grid-column: 1 / -1; }
 #re-design[hidden] { display: none; }
 .re-design-card { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
 .re-design-card h3 { font-size: var(--text-sm); }
@@ -615,9 +618,16 @@ details.requirement-card[open] > summary > b { transform: rotate(90deg); }
 .re-toggles { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); }
 .re-toggle { margin: 0; }
 .re-order { display: grid; gap: var(--space-1); }
-.re-order-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-1) var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.re-order-row { display: flex; align-items: center; gap: var(--space-2); min-height: 40px; padding: 0 var(--space-3) 0 var(--space-1); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface); cursor: grab; touch-action: none; user-select: none; transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease); }
+.re-order-row:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.re-order-row.dragging { position: relative; z-index: 1; border-color: var(--accent); background: var(--accent-soft); box-shadow: var(--shadow-pop); cursor: grabbing; }
+.re-order.sorting .re-order-row:not(.dragging) { cursor: grabbing; }
+.re-order-label { flex: 1; min-width: 0; font-size: var(--text-sm); }
 .re-order-row small { color: var(--ink-3); font-size: var(--text-xs); }
-.re-order-row > span:last-child { display: flex; gap: var(--space-1); }
+.re-order-position { color: var(--ink-3); font: 500 var(--text-xs) var(--font-mono); }
+.re-drag-handle { display: grid; place-items: center; width: 32px; height: 32px; flex: none; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink-3); cursor: grab; }
+.re-drag-handle:hover, .re-drag-handle:focus-visible { color: var(--ink); }
 
 /* ============================================================== master profile (Settings) */
 .settings-tabs { margin-bottom: var(--space-5); }
@@ -689,6 +699,7 @@ details.requirement-card[open] > summary > b { transform: rotate(90deg); }
 .profile-evidence { display: grid; gap: var(--space-1); margin-top: var(--space-3); padding: var(--space-3); border-left: 2px solid var(--accent); background: var(--accent-soft); font-size: var(--text-xs); }
 .profile-evidence p { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); color: var(--ink); }
 .score-potential { color: var(--accent) !important; font-weight: 500; }
+.profile-changed { padding: var(--space-2) var(--space-3); border-left: 2px solid var(--accent); background: var(--accent-soft); color: var(--ink) !important; font-size: var(--text-xs); }
 .priority-improvements article .coverage-chip { margin-top: var(--space-1); }
 .re-gaps .coverage-chip { margin-left: var(--space-1); }
 .re-gaps .text-button { display: flex; margin-top: 2px; }

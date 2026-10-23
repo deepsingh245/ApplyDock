@@ -284,7 +284,9 @@ function renderInspector() {
   // One recommended action, chosen from where the application is in the workflow.
   const actions = [];
   const add = (action, label, kind = "secondary") => actions.push({action, label, kind});
+  const profileChanged = profileChangedSince(analysis);
   if (!analysis.id || analysis.stale) add("ats-run", analysis.id ? "Run analysis again" : "Run analysis");
+  else if (profileChanged) add("ats-run", "Re-run with updated profile");
   if (analysis.status === "complete" && entry.resume?.available) add("optimize-resume", "Optimize resume");
   if (email) {
     if (!entry.gmail_draft_id || entry.gmail_dirty) add("gmail-draft", entry.gmail_draft_id ? "Update Gmail draft" : "Save to Gmail Drafts");
@@ -292,7 +294,7 @@ function renderInspector() {
     add("gmail-prepare", "Prepare Gmail schedule");
     if (entry.delivery_mode === "local") add(entry.status === "approved" ? "unapprove" : "approve", entry.status === "approved" ? "Remove local approval" : "Approve local 9 AM");
   }
-  if (analysis.id && !analysis.stale) add("ats-run", "Run analysis again");
+  if (analysis.id && !analysis.stale && !profileChanged) add("ats-run", "Run analysis again");
   if (email) { add("ai-draft", "Draft email with Codex", "quiet"); add("ai-copy", "Copy prompt", "quiet"); }
   // A Gmail draft or schedule is not proof of sending; the user confirms the submission explicitly.
   if (!entry.submission && entry.status !== "sending") add("record-submission", entry.delivery_mode === "gmail_scheduled" ? "Confirm it was sent" : "Mark as submitted",
@@ -307,6 +309,7 @@ function renderInspector() {
     '<div class="score-figure ' + tone + '"><strong>' + (score != null ? esc(Number(score).toFixed(1)) : "—") + '</strong><span>/ 100</span></div>' +
     '<div class="score-meter ' + tone + '"><i style="width:' + Math.max(0, Math.min(100, Number(score || 0))) + '%"></i></div>' +
     '<p class="inspector-detail">' + esc(analysis.label) + (analysis.missing_mandatory ? ' · ' + esc(analysis.missing_mandatory) + ' required gap' + (analysis.missing_mandatory === 1 ? '' : 's') : '') + '</p>' +
+    (profileChanged && !analysis.stale ? '<p class="inspector-detail profile-changed">Your Master Profile changed since this analysis. Re-run it to use the new details — your saved resume is not changed.</p>' : '') +
     (analysis.id ? '<button class="text-button" data-action="ats-view" type="button">View analysis</button>' : '') + '</div>' +
     '<div class="inspector-block"><span class="eyebrow">Next step</span><div class="action-stack">' + (buttons || '') + (entry.submission ? '<p class="subtle">Submitted ' + esc(dateLabel(entry.submission.submitted_at)) + '. Delivery actions are hidden so this application is not sent twice.</p>' : buttons ? '' : '<p class="subtle">Choose an application route in the editor to see delivery actions.</p>') + '</div><p id="ai-notes" class="ai-notes" hidden></p></div>' +
     '<div class="inspector-block"><span class="eyebrow">Status</span><dl class="kv">' +
@@ -447,6 +450,9 @@ function submissionDetails(item) {
 function renderSubmission(entry) {
   const card = $("submission-card");
   if (!card) return;
+  // A background refresh must not wipe a submission form the user is filling in.
+  if (submissionFormFor === entry.id && card.dataset.entry === entry.id && card.querySelector("#submission-version")) return;
+  card.dataset.entry = entry.id;
   const item = entry.submission;
   const resumeExists = item && (state.resumes || []).some(resume => resume.id === item.resume_id);
   let html = '<div class="card-heading"><div><strong>' + (item ? "Submitted resume" : "Submission") + '</strong>' +

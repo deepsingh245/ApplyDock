@@ -328,7 +328,7 @@
     const customized = Object.keys(preset).some(key => String(preset[key]) !== String(L[key]));
     const fontLabels = {"Carlito": "Sans · Carlito", "Libertinus Serif": "Serif · Libertinus", "New Computer Modern": "Classic · Computer Modern"};
     const order = meta.section_order;
-    box.innerHTML =
+    box.innerHTML = '<div class="re-design-col">' +
       '<section class="re-design-card"><h3>Template</h3><div class="re-template-grid">' + s.data.templates.map(t =>
         '<button type="button" class="re-template' + (t.id === meta.template ? " active" : "") + '" data-preset="' + esc(t.id) + '"><strong>' + esc(t.label) + '</strong><span>' + esc(t.description) + '</span></button>').join("") + '</div>' +
         (customized ? '<button type="button" class="text-button" data-preset="' + esc(meta.template) + '">Reset design to ' + esc(s.data.templates.find(t => t.id === meta.template)?.label || "template") + ' defaults</button>' : '') + '</section>' +
@@ -336,22 +336,28 @@
         '<label class="re-field"><span>Page limit</span><select data-meta="page_limit"><option value="0">No limit</option><option value="1">1 page</option><option value="2">2 pages</option><option value="3">3 pages</option></select></label></div>' +
         '<button type="button" class="button secondary re-fit" data-re="fit"' + (meta.page_limit ? "" : " disabled") + '>' + (meta.page_limit ? "Fit to " + meta.page_limit + " page" + (meta.page_limit > 1 ? "s" : "") : "Fit to page limit") + '</button><p class="re-footnote">Fit tightens spacing first, then margins, then text size, and never goes below readable minimums.</p></section>' +
       '<section class="re-design-card"><h3>Margins</h3>' + slider("margin_x", "Left & right") + slider("margin_y", "Top & bottom") + '</section>' +
+      '<section class="re-design-card"><h3>Spacing</h3>' + slider("section_gap", "Between sections") + slider("entry_gap", "Between entries") + slider("bullet_gap", "Between bullet points") + '</section>' +
+      '<section class="re-design-card"><h3>Header</h3><span class="re-design-label">Alignment</span>' + segmented("header_align", [["left", "Left"], ["center", "Center"], ["right", "Right"]]) +
+        '<span class="re-design-label">Contact separator</span>' + segmented("contact_separator", design.choices.contact_separator.map(value => [value, value])) + '</section>' +
+      '</div><div class="re-design-col">' +
       '<section class="re-design-card"><h3>Text</h3><div class="re-font-grid">' + design.choices.font.map(font =>
         '<button type="button" class="re-font' + (L.font === font ? " active" : "") + '" data-layout-choice="font" data-value="' + esc(font) + '" style="font-family:' + (font === "Carlito" ? "Calibri, Carlito, sans-serif" : "Georgia, serif") + '">' + esc(fontLabels[font] || font) + '</button>').join("") + '</div>' +
         slider("font_size", "Font size") + slider("line_height", "Line height") + slider("name_size", "Name size") + slider("heading_size", "Section heading size") + '</section>' +
-      '<section class="re-design-card"><h3>Spacing</h3>' + slider("section_gap", "Between sections") + slider("entry_gap", "Between entries") + slider("bullet_gap", "Between bullet points") + '</section>' +
       '<section class="re-design-card"><h3>Color</h3><div class="re-swatches">' + design.accents.map(color =>
         '<button type="button" class="re-swatch' + (L.accent.toLowerCase() === color ? " active" : "") + '" data-layout-choice="accent" data-value="' + color + '" style="background:' + color + '" aria-label="Accent ' + color + '"></button>').join("") +
         '<label class="re-swatch-custom" title="Custom color"><input type="color" data-layout="accent" value="' + esc(L.accent) + '"></label></div>' +
         '<div class="re-toggles">' + toggle("accent_name", "Name") + toggle("accent_headings", "Section headings") + toggle("accent_links", "Links") + '</div></section>' +
-      '<section class="re-design-card"><h3>Header</h3><span class="re-design-label">Alignment</span>' + segmented("header_align", [["left", "Left"], ["center", "Center"], ["right", "Right"]]) +
-        '<span class="re-design-label">Contact separator</span>' + segmented("contact_separator", design.choices.contact_separator.map(value => [value, value])) + '</section>' +
       '<section class="re-design-card"><h3>Sections & entries</h3><div class="re-toggles">' + toggle("heading_upper", "Uppercase headings") + toggle("heading_rule", "Line under headings") + toggle("skills_inline", "Skills on one line") + '</div>' +
         '<span class="re-design-label">Dates</span>' + segmented("date_position", [["right", "Right-aligned"], ["below", "Below title"]]) +
         '<span class="re-design-label">Bullet style</span>' + segmented("bullet", design.choices.bullet.map(value => [value, value])) + '</section>' +
-      '<section class="re-design-card"><h3>Section order</h3><div class="re-order">' + order.map((section, index) =>
-        '<div class="re-order-row"><span>' + esc(section === "custom" ? SECTION_LABELS.custom : meta.section_titles[section] || SECTION_LABELS[section]) + (resumeSectionEmpty(section) ? ' <small>(empty — hidden)</small>' : '') + '</span>' +
-        '<span><button type="button" class="re-icon" data-move-section="' + section + '" data-dir="-1" aria-label="Move up"' + (index ? "" : " disabled") + '>↑</button><button type="button" class="re-icon" data-move-section="' + section + '" data-dir="1" aria-label="Move down"' + (index < order.length - 1 ? "" : " disabled") + '>↓</button></span></div>').join("") + '</div></section>';
+      '</div>' +
+      '<section class="re-design-card re-design-wide"><h3>Section order</h3><p class="re-footnote">Drag a section to move it. With the keyboard, focus its handle and use the up and down arrow keys.</p>' +
+        '<div class="re-order" role="list">' + order.map((section, index) => {
+          const label = section === "custom" ? SECTION_LABELS.custom : meta.section_titles[section] || SECTION_LABELS[section];
+          return '<div class="re-order-row" role="listitem" data-order-section="' + section + '"><button type="button" class="re-drag-handle" data-drag-section="' + section + '" aria-label="' +
+            esc(label) + ', position ' + (index + 1) + ' of ' + order.length + '. Use the arrow keys to move it.">' + '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></svg>' + '</button><span class="re-order-label">' + esc(label) +
+            (resumeSectionEmpty(section) ? ' <small>(empty — hidden)</small>' : '') + '</span><span class="re-order-position" aria-hidden="true">' + (index + 1) + '</span></div>';
+        }).join("") + '</div></section>';
     for (const select of box.querySelectorAll("[data-meta]")) select.value = String(meta[select.dataset.meta]);
   }
 
@@ -574,8 +580,9 @@
     if (a) {
       const reqs = a.result?.requirements || [];
       const gaps = reqs.filter(item => item.status !== "demonstrated");
-      html += '<div class="re-score"><strong>' + (a.overall_score == null ? "—" : esc(a.overall_score) + "%") + '</strong><div><span>' + esc(a.label) + '</span><small>Estimated match using ApplyDock\'s scoring — not a prediction of any employer\'s ATS.</small></div></div>';
+      html += '<div class="re-score"><strong>' + (a.overall_score == null ? "—" : esc(a.overall_score) + "%") + '</strong><div><span>' + esc(a.result?.draft ? "Draft check · not saved as a version" : a.label) + '</span><small>Estimated match using ApplyDock\'s scoring — not a prediction of any employer\'s ATS.</small></div></div>';
       if (["pending", "analyzing"].includes(a.status)) html += '<p class="re-progress">Analyzing… ' + esc(a.progress_percent || 0) + '%</p>';
+      if (AD().profileChangedSince(a)) html += '<p class="re-check warn">Your Master Profile changed since this result. Use <b>Re-analyze draft</b> to compare against it, then refresh suggestions — nothing needs to be saved first.</p>';
       if (gaps.length) html += '<div class="re-gaps"><strong>Gaps and weak areas</strong>' + gaps.slice(0, 10).map(item => '<p><span class="match-status ' + esc(item.status) + '">' + esc(item.status) + '</span> ' + esc(item.requirement) +
         (item.coverage ? ' <span class="coverage-chip ' + esc(item.coverage) + '">' + esc(AD().coverageLabel(item.coverage)) + '</span>' : '') +
         (item.recommendation ? '<small>' + esc(item.recommendation) + '</small>' : '') +
@@ -585,7 +592,8 @@
       if (resume.kind === "master" && entry.resume_id === resume.id)
         html += '<div class="re-banner"><span>You are editing the master resume. To tailor it for ' + esc(entry.company || "this job") + ' without changing the master, create a tailored copy.</span><div><button class="button secondary" type="button" data-re="tailor">Create tailored copy</button></div></div>';
       html += '<div class="re-suggest-actions">' + (a?.status === "complete" ? '<button class="button primary" type="button" data-re="suggest"' + (running || s.data.draft.needs_review ? " disabled" : "") + '>' + (s.suggestions.length ? "Refresh suggestions" : "Suggest improvements") + '</button>' : '') +
-        '<button class="button secondary" type="button" data-re="save-analyze">Save version &amp; re-analyze</button>' +
+        '<button class="button ' + (a?.status === "complete" ? "secondary" : "primary") + '" type="button" data-re="analyze-draft"' + (s.data.draft.needs_review ? " disabled" : "") + '>Re-analyze draft</button>' +
+        '<button class="button quiet-button" type="button" data-re="save-analyze">Save version &amp; re-analyze</button>' +
         (a?.id ? '<button class="button quiet-button" type="button" data-re="open-analysis">Open full analysis</button>' : '') + '</div>';
       if (s.data.draft.needs_review) html += '<p class="re-footnote">Confirm the imported content before asking for suggestions.</p>';
       if (running) html += '<p class="re-progress">Codex is preparing suggestions… ' + esc(job.percent || 0) + '%</p>';
@@ -799,6 +807,84 @@
     } finally { if (button) button.disabled = false; }
   }
 
+  // Scores the draft as it is now; no resume version is created. Saving identical content later reuses the result.
+  async function analyzeDraft(button) {
+    const entry = currentEntry();
+    if (!entry) return;
+    if (button) button.disabled = true;
+    try {
+      await flushSave();
+      const result = await request("/api/resumes/" + s.resumeId + "/draft/analyze", "POST", {entry_id: entry.id, expected_revision: s.revision});
+      s.analysisId = result.analysis.id;
+      s.panel = "analysis";
+      await loadAnalysis();
+      renderSide();
+      AD().notify(result.cached ? "This exact draft was already analyzed; showing that result." : "Checking the current draft against this job…");
+    } catch (error) {
+      if (error.status === 409) { s.conflict = error.payload?.draft; s.status = "conflict"; renderStatus(); }
+      AD().notify(error.message, true);
+    } finally { if (button?.isConnected) button.disabled = false; }
+  }
+
+  // ------------------------------------------------------------------ section order: drag and drop
+
+  function commitOrder(order, focusSection) {
+    if (order.join() === s.content.meta.section_order.join()) return;
+    structural(c => { c.meta.section_order = order; });
+    if (focusSection) root().querySelector('[data-drag-section="' + focusSection + '"]')?.focus();
+  }
+
+  // Pointer events (not the HTML drag API) so dragging also works on touch screens.
+  function onOrderPointerDown(event) {
+    const row = event.target.closest?.(".re-order-row");
+    if (!s || !row || event.button !== 0) return;
+    const list = row.parentElement;
+    const startY = event.clientY;
+    // Slot positions are measured once: rows move between slots, the slots themselves stay put.
+    const slots = [...list.children].map(item => { const rect = item.getBoundingClientRect(); return rect.top + rect.height / 2 + window.scrollY; });
+    let dragging = false;
+    event.preventDefault();
+    // Listen on the document: moving the row in the DOM would release a pointer capture on it.
+    const move = moveEvent => {
+      if (moveEvent.pointerId !== event.pointerId) return;
+      if (!dragging && Math.abs(moveEvent.clientY - startY) < 4) return;
+      dragging = true;
+      row.classList.add("dragging");
+      list.classList.add("sorting");
+      const y = moveEvent.clientY + window.scrollY;
+      const target = slots.reduce((best, mid, index) => Math.abs(y - mid) < Math.abs(y - slots[best]) ? index : best, 0);
+      if ([...list.children].indexOf(row) === target) return;
+      const others = [...list.children].filter(item => item !== row);
+      list.insertBefore(row, others[target] || null);
+    };
+    const end = endEvent => {
+      if (endEvent.pointerId !== event.pointerId) return;
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", end);
+      document.removeEventListener("pointercancel", end);
+      row.classList.remove("dragging");
+      list.classList.remove("sorting");
+      if (dragging) commitOrder([...list.children].map(item => item.dataset.orderSection), row.dataset.orderSection);
+      else row.querySelector(".re-drag-handle")?.focus();
+    };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", end);
+    document.addEventListener("pointercancel", end);
+  }
+
+  function onOrderKey(event) {
+    const handle = event.target.closest?.("[data-drag-section]");
+    if (!s || !handle || !["ArrowUp", "ArrowDown"].includes(event.key)) return false;
+    event.preventDefault();
+    const order = [...s.content.meta.section_order];
+    const index = order.indexOf(handle.dataset.dragSection);
+    const target = index + (event.key === "ArrowUp" ? -1 : 1);
+    if (target < 0 || target >= order.length) return true;
+    [order[index], order[target]] = [order[target], order[index]];
+    commitOrder(order, handle.dataset.dragSection);
+    return true;
+  }
+
   async function downloadVersion(versionId, name) {
     try {
       const result = await request("/api/resumes/" + s.resumeId + "/versions/" + versionId + "/file?download=1", "GET", undefined, {blob: true});
@@ -853,6 +939,7 @@
       }
       if (name === "save-version") return saveVersion();
       if (name === "save-analyze") return saveVersion({analyze: true});
+      if (name === "analyze-draft") return analyzeDraft(button);
       if (name === "validate") {
         s.validation = (await request("/api/resumes/" + s.resumeId + "/draft/validate", "POST", {content: s.content})).validation;
         return renderValidation();
@@ -1006,6 +1093,7 @@
 
   function onKey(event) {
     if (!s || AD().currentView() !== "resume-editor") return;
+    if (onOrderKey(event)) return;
     const mod = event.ctrlKey || event.metaKey;
     if (!mod) return;
     const keyName = event.key.toLowerCase();
@@ -1018,6 +1106,7 @@
   document.addEventListener("input", onInput);
   document.addEventListener("change", onChange);
   document.addEventListener("keydown", onKey);
+  document.addEventListener("pointerdown", event => { if (event.target.closest?.("#re-design .re-order-row")) onOrderPointerDown(event); });
   window.addEventListener("beforeunload", event => {
     if (s && ["unsaved", "saving"].includes(s.status)) { beforeLeave(); event.preventDefault(); event.returnValue = ""; }
   });

@@ -339,7 +339,7 @@ window.addEventListener("beforeunload", event => { if (dirty) { event.preventDef
 window.addEventListener("applydock-paired", () => load().catch(error => { showPair(); notify(error.message, true); }));
 
 window.ApplyDock = {
-  api, notify, load, esc, showView, dateLabel, openAnalysis, openProfileItem, coverageLabel,
+  api, notify, load, esc, showView, dateLabel, openAnalysis, openProfileItem, coverageLabel, profileChangedSince,
   state: () => state,
   currentView: () => currentView,
   selectEntry: id => { selectedId = id; render(true); },

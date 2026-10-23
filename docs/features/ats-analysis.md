@@ -38,8 +38,9 @@
    - Categories the job never mentions are **left out**, not scored as zero.
    - Overall = 95% relevance + 5% readability.
    - `potential_score` re-scores as if the profile evidence were added to the resume. It is informational only.
-8. **Compare.** `previous` points to the latest earlier completed run of the same job version. Each requirement carries `previous_status`, so the UI shows exactly what improved or regressed.
-9. **Store and sync.** Results go to `analysis_runs.result_json`, recommendations to `analysis_checklist`, and progress to `analysis_events`. The worker reports `events.application_changed`, which syncs the summary to Notion.
+8. **Draft checks.** `queue_analysis(document=…, draft_resume_id=…)` scores an unsaved editor draft. It has no resume version, never becomes an application's analysis unless its file matches the attached version, and is attached to that version when identical content is saved.
+9. **Compare.** `previous` points to the latest earlier completed run of the same job version. Each requirement carries `previous_status`, so the UI shows exactly what improved or regressed.
+10. **Store and sync.** Results go to `analysis_runs.result_json`, recommendations to `analysis_checklist`, and progress to `analysis_events`. The worker reports `events.application_changed`, which syncs the summary to Notion.
 
 ## Why scores used to drift (fixed in scoring v2)
 

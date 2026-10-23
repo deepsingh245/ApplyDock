@@ -276,6 +276,7 @@ def get_state(request, match, data):
         "codex": ats.codex_status(),
         "ats_usage": ats.usage_summary(config.DB),
         "local_time": dt.datetime.now().astimezone().isoformat(),
+        "profile_hash": career.profile_hash(),
     }
 
 
@@ -553,6 +554,11 @@ def render_draft(request, match, data):
     if action == "preview":
         return FileResponse("application/pdf", pdf, {"X-Page-Count": str(resume_render.page_count(pdf))})
     return {"validation": resume_render.validate(pdf, content)}
+
+
+@route("POST", r"/api/resumes/([a-f0-9-]+)/draft/analyze")
+def analyze_draft(request, match, data):
+    return resume_workflows.analyze_draft(match.group(1), str(data.get("entry_id", "")), data.get("expected_revision"))
 
 
 @route("POST", r"/api/resumes/([a-f0-9-]+)/versions/from-draft")

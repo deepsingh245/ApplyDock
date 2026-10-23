@@ -174,6 +174,29 @@ def queue_suggestions(analysis_id, resume_id):
     return {"job": job, "reused": reused, "suggestions": suggestions}
 
 
+def analyze_draft(resume_id, entry_id, expected_revision):
+    """Score the editor's current draft against an application without saving a resume version.
+
+    The draft is rendered exactly as "Save version" would render it; the PDF is stored content-addressed
+    for this check only. If the same content is saved later, that version reuses this result.
+    """
+    entry = applications.get_entry(entry_id)
+    if not entry:
+        raise ValueError("Application not found.")
+    if not resume_allowed_for_entry(entry, resume_id):
+        raise ValueError("Only this application's resume or its tailored copy can be checked against it.")
+    with database.connect() as db:
+        draft = resume_store._check_revision(db, resume_id, expected_revision)
+        blocks = profile.evidence_blocks(db)
+    if draft["needs_review"]:
+        raise ValueError("Review the imported content and confirm it before analyzing it.")
+    pdf, _ = resume_store.render_content(resume_model.normalize(draft["content"]))
+    with database.LOCK, database.connect() as db:
+        document = ats.install_document(db, config.DATA, pdf, ".pdf", "application/pdf")
+    run, cached = ats.queue_analysis(config.DB, entry, require_codex=True, profile_blocks=blocks, document=document, draft_resume_id=resume_id)
+    return {"analysis": ats.get_analysis(config.DB, run["id"]), "cached": cached}
+
+
 def candidate_version_allowed(entry, version_id):
     with database.connect() as db:
         row = db.execute("SELECT resume_id FROM resume_versions WHERE id=?", (version_id,)).fetchone()

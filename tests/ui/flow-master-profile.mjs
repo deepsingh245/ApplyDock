@@ -101,6 +101,14 @@ try {
   await b.click(`[data-suggestion="${profileCard}"] [data-sugg="accept"]`);
   await b.waitFor(`document.querySelector('[data-suggestion="${profileCard}"]')?.classList.contains("applied")`, 10000);
   log("project added to draft:", await b.eval(`[...document.querySelectorAll('[data-field="name"]')].some(el => el.value === "Auth service")`));
+  // Re-analyze the unsaved draft (no version is created)
+  const versionsBefore = await b.eval(`document.querySelectorAll('[data-side="versions"]').length && window.ApplyDock.state().resumes.find(r => r.kind === "tailored").version_count`);
+  await b.click('[data-re="analyze-draft"]');
+  await b.waitFor(`document.querySelector(".re-score span")?.textContent.includes("Draft check") && !/Analyzing/.test(document.querySelector(".re-analysis").textContent)`, 20000);
+  await b.eval(`window.ApplyDock.load(true).then(() => true)`);
+  log("draft check:", await b.eval(`document.querySelector(".re-score").innerText.replace(/\\s+/g, " ").slice(0, 80)`),
+    "versions unchanged:", (await b.eval(`window.ApplyDock.state().resumes.find(r => r.kind === "tailored").version_count`)) === versionsBefore);
+  await b.shot("p4b-draft-check");
   await b.click('[data-re="save-version"]');
   await noticeIncludes("Saved version");
   await b.click('[data-re="use-for-application"]');
@@ -143,6 +151,7 @@ try {
   if (b.consoleErrors.length) throw new Error("Console errors");
 } catch (error) {
   console.error("FAILED:", error.message);
+  console.error("last notice:", await b.eval(`document.getElementById("notice").textContent`).catch(() => ""));
   await b.shot("failure");
   console.error("console errors:", JSON.stringify(b.consoleErrors));
   process.exitCode = 1;
