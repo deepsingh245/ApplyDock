@@ -14,6 +14,7 @@
   <script src="/js/resume-library.js?v=1.0.0" defer></script>
   <script src="/js/analysis.js?v=1.0.0" defer></script>
   <script src="/js/settings.js?v=1.0.0" defer></script>
+  <script src="/js/profile.js?v=1.0.0" defer></script>
   <script src="/js/main.js?v=1.0.0" defer></script>
   <script src="/js/resume-editor.js?v=1.0.0" defer></script>
 </head>
@@ -87,6 +88,7 @@
               </section>
               <section class="form-section tab-pane" data-pane="resume" hidden>
                 <div class="assigned-resume-card"><div><strong>Assigned resume</strong><span id="resume-name" class="attachment-note"></span><span id="resume-version-line" class="attachment-note"></span></div><label><span class="sr-only">Assigned resume</span><select name="resume_id"></select></label><button id="manage-resumes-inline" class="back-button" type="button">Manage resumes</button><div id="resume-entry-actions" class="resume-entry-actions"></div></div>
+                <div id="submission-card" class="submission-card" aria-live="polite"></div>
               </section>
               <section class="form-section email-section tab-pane" data-pane="email" hidden><div class="email-pane-head"><span class="email-toggle-copy"><strong id="email-section-title">Email application</strong><small id="email-section-description">Optional. Use this only when you want to contact the employer by email.</small></span><button id="email-section-toggle" class="button secondary" type="button" aria-expanded="false" aria-controls="email-section-fields"><span id="email-toggle-label">Use email for this application</span></button></div>
                 <div id="email-section-fields" class="email-section-fields" hidden>
@@ -136,7 +138,9 @@
       </section>
 
       <section id="settings-view" class="secondary-view" hidden>
-        <div class="view-heading"><h1>Settings</h1><p>Connections and personal details stay with this local helper.</p></div>
+        <div class="view-heading"><h1>Settings</h1><p>Connections and your career profile stay with this local helper.</p></div>
+        <div class="editor-tabs settings-tabs" role="tablist" aria-label="Settings sections"><button type="button" role="tab" class="active" aria-selected="true" data-settings-tab="connections">Connections</button><button type="button" role="tab" aria-selected="false" data-settings-tab="profile">Master Profile</button></div>
+        <div data-settings-pane="connections">
         <div class="settings-layout"><div class="settings-grid">
           <div class="view-card"><div class="card-heading"><h2>ATS analysis with Codex</h2><span id="codex-state" class="sub-status"></span></div><p id="codex-detail">Uses the Codex CLI signed into your ChatGPT Plus account. No API key or separate billing.</p><div class="usage-strip"><span><strong id="codex-calls">0</strong> Codex calls</span><span><strong id="codex-cache">0</strong> cached results</span></div><div class="stack-actions"><button id="codex-check-button" class="button secondary" type="button">Check Codex connection</button><a class="small-link settings-link" href="https://chatgpt.com/#settings/usage" target="_blank" rel="noopener noreferrer">ChatGPT usage ↗</a></div><p class="subtle">Keep optional credits and automatic credit purchases disabled. ApplyDock pauses its queue when the plan limit is reached.</p></div>
           <form id="notion-form" class="view-card"><div class="card-heading"><h2>Notion</h2><span id="notion-state" class="sub-status"></span></div><p>Captures sync to the connected Applications database.</p><label>Data source ID<input name="data_source_id" required></label><label>Integration token <span class="field-help">Leave blank to keep the saved token</span><input name="token" type="password" autocomplete="off"></label><p id="notion-sync-detail" class="subtle"></p><button class="button secondary" type="submit">Save Notion connection</button></form>
@@ -145,6 +149,8 @@
           <form id="profile-form" class="view-card"><div class="card-heading"><h2>AI writing background</h2><span id="profile-state" class="sub-status"></span></div><p>Factual experience used for Codex email drafts and suggestions.</p><label>Your background<textarea name="profile" rows="8" placeholder="Your real experience, skills, and relevant work"></textarea></label><button class="button secondary" type="submit">Save background</button></form>
         </div><aside class="settings-side"><section class="view-card"><h2>Preferences</h2><label>Appearance<select id="appearance-select"><option value="light">Light</option><option value="dark">Dark</option></select></label><label>Default resume<span class="field-help">Used for new applications</span><select id="default-resume-select"></select></label><label class="settings-toggle-row"><span><strong>Notifications</strong><small>Important local status updates</small></span><input id="notifications-toggle" type="checkbox"></label></section>
           <section class="view-card"><h2>Maintenance</h2><p>Re-check every connection, or push all applications to Notion again.</p><div class="stack-actions"><button id="connection-checks-button" class="button secondary" type="button">Run connection checks</button><button id="sync-button" class="button quiet-button" type="button">Retry Notion sync</button></div><p class="subtle">Gmail sends scheduled messages even when this computer is off. The local 9 AM sender needs the helper running.</p></section></aside></div>
+        </div>
+        <div id="profile-pane" class="profile-pane" data-settings-pane="profile" hidden></div>
       </section>
       </main>
     </div>

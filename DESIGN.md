@@ -51,6 +51,10 @@ The rules the dashboard and the extension follow. A quiet, dense work tool: the 
 | Menu | `[popover].menu > .menu-item` | Native popover with CSS anchor positioning; Esc and outside click close it |
 | Disclosure | `<details class="filter-menu">`, `details.requirement-card` | Native `<details>`, no JS |
 | Note | `.inline-alert` (warn), `.workflow-note` / `.ai-notes` (accent) | 2px left rule on a soft fill |
+| Coverage chip | `.coverage-chip.represented/.weak/.profile_only/.unsupported` | How a requirement is covered by resume and Master Profile; always labelled |
+| Link check | `a.link-check.success/.warn/.danger` | Last on-demand result per project link; the title holds the detail and time |
+| Profile card | `.pf-card`, `.pf-form` (fields from `PROFILE_FIELDS` in `profile.js`) | Settings → Master Profile; forms are generated, never hand-written per kind |
+| Submission card | `#submission-card` with `dl.kv` | The exact submitted file per application, with View/Download/Compare/History |
 | Toast | `#notice.notice` (`.error`) | Bottom-right, above the bottom nav on phones, click to dismiss |
 
 **Interface rules:**

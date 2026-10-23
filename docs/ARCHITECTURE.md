@@ -27,6 +27,10 @@ applydock/                Python helper (package)
   applications.py         captured jobs/posts ("entries"): capture, URLs, editing, approval, stages
   resumes.py              resume library, versions, pinned/current file selection, access links
   resume_workflows.py     resume editor orchestration: editor state, import, tailor, suggestions, save version
+  profile.py              Master Profile entries, import from resume, evidence blocks for analysis/suggestions (DB layer)
+  linkcheck.py            on-demand, SSRF-safe reachability checks for project links
+  submissions.py          immutable record of the exact resume file submitted per application (DB layer)
+  career.py               Master Profile and submission workflows over HTTP
   resume_model.py         structured resume schema, edits, diffs, fact guard (pure functions)
   resume_import.py        PDF text -> structured resume (local heuristic + Codex prompt/grounding)
   resume_render.py        Typst rendering, fit-to-page, post-render PDF validation
@@ -48,6 +52,7 @@ dashboard/                web workspace (no build step)
   js/resume-library.js    resume library view
   js/analysis.js          ATS analysis view
   js/settings.js          settings + theme
+  js/profile.js           Settings → Master Profile (forms generated from PROFILE_FIELDS)
   js/main.js              view switching, load(), event wiring, startup — loads after features
   js/resume-editor.js     resume editor (self-contained; uses window.ApplyDock)
 extension/                Chrome MV3 side panel (own copy of its UI code)

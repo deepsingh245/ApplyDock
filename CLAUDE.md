@@ -45,6 +45,7 @@ Add or update tests with every behavior change:
 | `test_core.py` | Applications, Notion, email |
 | `test_ats.py` | Analysis |
 | `test_resume_*.py` | Resume editor modules |
+| `test_career.py` | Master Profile, link checks, profile suggestions, submission history |
 | `test_http_smoke.py` | The real server over HTTP |
 | `tests/ui/flow-*.mjs` | Browser flows |
 

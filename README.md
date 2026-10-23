@@ -10,8 +10,10 @@ Everything runs on `127.0.0.1`. Your data stays in the local `data/` folder.
 - **Applications workspace:** queue, filters, stages, email drafting, and a delivery inspector.
 - **Resume library:** PDF/DOCX uploads with content-addressed, immutable versions.
 - **Resume editor:** import a PDF into structured sections, edit with a live Typst-rendered PDF preview, adjust design (margins, fonts, spacing), and create tailored per-job copies. The master is never changed.
-- **ATS analysis:** evidence-based match estimate through the local Codex CLI. No API key, cached per resume and job.
-- **AI suggestions:** targeted edits you accept or reject. Unverified claims are flagged for your confirmation.
+- **ATS analysis:** evidence-based match estimate through the local Codex CLI against a fixed requirement checklist per job, so reruns are comparable. No API key, cached per resume and job.
+- **Master Profile:** your verified career records (experience, projects you built, skills), on-demand link checks, and job matching that shows which requirements your profile supports but a resume leaves out.
+- **AI suggestions:** targeted edits, including adding a profile project to a tailored resume, that you accept or reject. Unverified claims are flagged for your confirmation.
+- **Submission history:** the exact PDF sent to each company stays retrievable, even after the resume changes or is deleted.
 - **Delivery:** Gmail drafts (OAuth) or a local 9 AM SMTP sender, always attaching the pinned resume version.
 - **Notion:** two-way sync of application fields, plus trash reconciliation.
 

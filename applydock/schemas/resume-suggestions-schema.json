@@ -9,13 +9,14 @@
           "requirement_id": {"type": "string"},
           "target_id": {"type": "string"},
           "field": {"type": "string"},
-          "operation": {"type": "string", "enum": ["replace", "insert_after", "add_keyword"]},
+          "operation": {"type": "string", "enum": ["replace", "insert_after", "add_keyword", "add_project"]},
           "original_text": {"type": "string"},
           "proposed_text": {"type": "string"},
           "reason": {"type": "string"},
-          "claim_type": {"type": "string", "enum": ["rephrase", "emphasis", "new_claim"]}
+          "claim_type": {"type": "string", "enum": ["rephrase", "emphasis", "new_claim"]},
+          "source_profile_id": {"type": "string"}
         },
-        "required": ["requirement_id", "target_id", "field", "operation", "original_text", "proposed_text", "reason", "claim_type"],
+        "required": ["requirement_id", "target_id", "field", "operation", "original_text", "proposed_text", "reason", "claim_type", "source_profile_id"],
         "additionalProperties": false
       }
     },

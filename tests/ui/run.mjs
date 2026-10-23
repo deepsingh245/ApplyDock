@@ -9,7 +9,7 @@ import { findChrome } from "./cdp.mjs";
 
 const HERE = new URL(".", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 const PORT = Number(process.env.UI_PORT || 8799);
-const FLOWS = ["flow-resume-workflow.mjs", "flow-design-and-tabs.mjs"];
+const FLOWS = ["flow-resume-workflow.mjs", "flow-design-and-tabs.mjs", "flow-master-profile.mjs"];
 const python = process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");
 
 async function waitForServer(url, timeoutMs = 30000) {

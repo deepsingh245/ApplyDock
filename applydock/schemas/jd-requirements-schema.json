@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "properties": {
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "category": {"type": "string", "enum": ["required_skills", "experience", "responsibilities", "preferred_skills", "education"]},
+          "requirement": {"type": "string"},
+          "mandatory": {"type": "boolean"},
+          "priority": {"type": "string", "enum": ["high", "medium", "low"]},
+          "terms": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["id", "category", "requirement", "mandatory", "priority", "terms"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["warnings", "requirements"],
+  "additionalProperties": false
+}

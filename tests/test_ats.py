@@ -119,13 +119,81 @@ class ATSAnalyzerTests(unittest.TestCase):
         self.assertNotIn("Build Python", json.dumps(detail["events"]))
 
     def test_missing_evidence_cannot_earn_points(self):
-        matches = ats._validated_matches({"requirements": [{"id": "one", "category": "required_skills",
-            "requirement": "Python", "mandatory": True, "status": "demonstrated", "resume_evidence_ids": ["invented"],
-            "explanation": "claimed", "recommendation": "", "priority": "high"}]}, {"R1"})
+        checklist = [{"id": "one", "category": "required_skills", "requirement": "Python", "mandatory": True, "terms": []}]
+        matches = ats._validated_matches({"assessments": [{"requirement_id": "one", "status": "demonstrated", "resume_evidence_ids": ["invented"],
+            "explanation": "claimed", "recommendation": "", "profile_status": "none", "profile_evidence_ids": []}]}, checklist, {"R1": "Java only"})
         self.assertEqual(matches[0]["status"], "missing")
         relevance, _, overall, _ = ats.score_result(matches, 100)
         self.assertEqual(relevance, 0)
         self.assertEqual(overall, 5)
+
+    def test_requirements_codex_skipped_stay_in_the_score_as_uncertain(self):
+        checklist = [{"id": "J1", "category": "required_skills", "requirement": "Go", "mandatory": True, "terms": []},
+                     {"id": "J2", "category": "required_skills", "requirement": "Rust", "mandatory": True, "terms": []}]
+        matches = ats._validated_matches({"assessments": [{"requirement_id": "J1", "status": "demonstrated", "resume_evidence_ids": ["R1"],
+            "explanation": "", "recommendation": "", "profile_status": "none", "profile_evidence_ids": []}]}, checklist, {"R1": "Go services"})
+        self.assertEqual([item["status"] for item in matches], ["demonstrated", "uncertain"])
+
+    def test_terms_visible_in_the_resume_are_never_reported_missing(self):
+        checklist = [{"id": "J1", "category": "required_skills", "requirement": "RESTful APIs", "mandatory": True, "terms": ["rest", "api"]}]
+        matches = ats._validated_matches({"assessments": [{"requirement_id": "J1", "status": "missing", "resume_evidence_ids": [],
+            "explanation": "Not shown.", "recommendation": "", "profile_status": "none", "profile_evidence_ids": []}]},
+            checklist, {"R1": "Education", "R2": "Built a REST API for billing."})
+        self.assertEqual((matches[0]["status"], matches[0]["resume_evidence_ids"]), ("listed", ["R2"]))
+
+    def test_categories_the_job_never_mentions_do_not_cap_the_score(self):
+        matches = [{"category": "required_skills", "mandatory": True, "status": "demonstrated"},
+                   {"category": "experience", "mandatory": False, "status": "demonstrated"}]
+        relevance, _, _, categories = ats.score_result(matches, 100)
+        self.assertEqual(relevance, 100)
+        self.assertIsNone(categories["education"]["score"])
+
+    def test_profile_evidence_classifies_coverage_and_potential_score(self):
+        checklist = [{"id": "J1", "category": "required_skills", "requirement": "Authentication", "mandatory": True, "terms": ["oauth"]},
+                     {"id": "J2", "category": "required_skills", "requirement": "Kubernetes", "mandatory": True, "terms": ["kubernetes"]},
+                     {"id": "J3", "category": "required_skills", "requirement": "React", "mandatory": True, "terms": ["react"]}]
+        profile = {"P1": {"id": "P1", "item_id": "proj-1", "kind": "project", "label": "Auth service", "verified": True,
+                          "text": "Auth service: OAuth login with refresh tokens on Firebase."}}
+        output = {"assessments": [
+            {"requirement_id": "J1", "status": "missing", "resume_evidence_ids": [], "explanation": "", "recommendation": "",
+             "profile_status": "demonstrated", "profile_evidence_ids": ["P1"]},
+            {"requirement_id": "J2", "status": "missing", "resume_evidence_ids": [], "explanation": "", "recommendation": "",
+             "profile_status": "demonstrated", "profile_evidence_ids": ["P9"]},
+            {"requirement_id": "J3", "status": "demonstrated", "resume_evidence_ids": ["R1"], "explanation": "", "recommendation": "",
+             "profile_status": "none", "profile_evidence_ids": []}]}
+        matches = ats._validated_matches(output, checklist, {"R1": "React dashboards"}, profile)
+        self.assertEqual([item["coverage"] for item in matches], ["profile_only", "unsupported", "represented"])
+        self.assertEqual(matches[0]["profile_evidence"][0]["item_id"], "proj-1")
+        self.assertGreater(ats.score_result(ats.potential_matches(matches), 100)[0], ats.score_result(matches, 100)[0])
+
+    def test_requirement_checklist_is_extracted_once_and_reruns_compare_the_same_items(self):
+        self.add_version()
+        checklist = {"warnings": [], "requirements": [
+            {"id": "J1", "category": "required_skills", "requirement": "Python", "mandatory": True, "priority": "high", "terms": ["python"]},
+            {"id": "J2", "category": "experience", "requirement": "Kubernetes operations", "mandatory": True, "priority": "high", "terms": ["kubernetes"]}]}
+        assessments = {"summary": "", "warnings": [], "assessments": [
+            {"requirement_id": "J1", "status": "demonstrated", "resume_evidence_ids": ["R1"], "explanation": "", "recommendation": "",
+             "profile_status": "none", "profile_evidence_ids": []},
+            {"requirement_id": "J2", "status": "missing", "resume_evidence_ids": [], "explanation": "", "recommendation": "",
+             "profile_status": "none", "profile_evidence_ids": []}]}
+        profile = {"summary": "", "skills": [], "experience": [], "projects": [], "education": [], "certifications": [], "keywords": []}
+        purposes = []
+
+        def fake_codex(root, prompt, schema, purpose, analysis_id, db_path):
+            purposes.append(purpose)
+            return {"resume_parse": profile, "jd_requirements": checklist}.get(purpose, assessments)
+        with patch.object(ats, "_run_codex", side_effect=fake_codex):
+            ats.queue_analysis(self.db_path, self.entry())
+            ats.process_one(self.db_path, self.data, self.data)
+            self.add_version("Experience Python Kubernetes cluster operations and SQL delivery for software teams.\n" * 14)
+            second, _ = ats.queue_analysis(self.db_path, self.entry())
+            ats.process_one(self.db_path, self.data, self.data)
+        self.assertEqual(purposes.count("jd_requirements"), 1)
+        result = ats.get_analysis(self.db_path, second["id"])["result"]
+        self.assertEqual([item["id"] for item in result["requirements"]], ["J1", "J2"])
+        kubernetes = result["requirements"][1]
+        self.assertEqual((kubernetes["previous_status"], kubernetes["status"]), ("missing", "listed"))
+        self.assertIsNotNone(result["previous"])
 
     def test_prompt_injection_is_wrapped_as_untrusted_data(self):
         prompt = ats._analysis_prompt({}, [{"id": "R1", "text": "real evidence"}],

@@ -93,6 +93,13 @@ function stageOptions(selected = "") {
   return ['<option value="">Not set</option>', ...values.map(value => '<option value="' + esc(value) + '"' + (value.toLowerCase() === selected.toLowerCase() ? ' selected' : '') + '>' + esc(value) + '</option>')].join("");
 }
 
+// How a job requirement is covered by the resume and the Master Profile (see ats.COVERAGE_LABELS).
+const COVERAGE_LABELS = {represented: "Already represented", weak: "Weakly described", profile_only: "In your profile, not the resume", unsupported: "Missing from both"};
+
+function coverageLabel(value) {
+  return COVERAGE_LABELS[value] || "";
+}
+
 function plural(count, word) {
   return count === 1 ? word : word + "s";
 }
@@ -136,6 +143,10 @@ async function api(path, method = "GET", data) {
   catch { throw new Error("Unexpected response from the local helper."); }
   if (response.status === 404 && path.startsWith("/api/resume"))
     throw new Error("The running helper is older than the Resume Library. Close it, restart start.cmd, then refresh this page.");
-  if (!response.ok) throw new Error(result.error || "Request failed.");
+  if (!response.ok) {
+    const error = new Error(result.error || "Request failed.");
+    error.status = response.status;
+    throw error;
+  }
   return result;
 }

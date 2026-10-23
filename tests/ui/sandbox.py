@@ -13,7 +13,7 @@ import threading
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
-from applydock import app, applications, ats, config, database, resume_import, resume_model, resume_render, resume_store, resumes  # noqa: E402
+from applydock import app, applications, ats, config, database, linkcheck, resume_import, resume_model, resume_render, resume_store, resumes  # noqa: E402
 
 
 def fake_codex(root, prompt, schema, purpose, job_id, db_path):
@@ -43,8 +43,43 @@ def fake_codex(root, prompt, schema, purpose, job_id, db_path):
             {"requirement_id": "q3", "target_id": groups[-1]["target_id"], "field": "keywords", "operation": "add_keyword", "original_text": "",
              "proposed_text": "Testing Library", "reason": "Already mentioned in your experience.", "claim_type": "emphasis"},
         ]
+        profile = re.search(r"MASTER PROFILE EVIDENCE[^\n]*\n(.*?)\n\nJOB DESCRIPTION", prompt, re.S)
+        for block in json.loads(profile.group(1)) if profile else []:
+            if block["kind"] == "project":
+                suggestions.append({"requirement_id": "J2", "target_id": "projects", "field": "text", "operation": "add_project", "original_text": "",
+                                    "proposed_text": "Built OAuth sign-in with refresh tokens for my own Node.js apps.",
+                                    "reason": "Your profile shows authentication work this job asks for.", "claim_type": "rephrase",
+                                    "source_profile_id": block["id"]})
+        for item in suggestions:
+            item.setdefault("source_profile_id", "")
         return {"suggestions": suggestions, "notes": "Sandbox suggestions."}
+    if purpose == "resume_parse":
+        return {"summary": "Frontend engineer", "skills": [{"name": "React", "details": "React apps", "evidence_ids": ["R1"]}],
+                "experience": [], "projects": [], "education": [], "certifications": [], "keywords": ["React"]}
+    if purpose == "jd_requirements":
+        return {"warnings": [], "requirements": [
+            {"id": "J1", "category": "required_skills", "requirement": "React and TypeScript", "mandatory": True, "priority": "high", "terms": ["react"]},
+            {"id": "J2", "category": "required_skills", "requirement": "OAuth authentication for web apps", "mandatory": True, "priority": "high", "terms": ["oauth"]},
+            {"id": "J3", "category": "preferred_skills", "requirement": "Kubernetes operations", "mandatory": False, "priority": "low", "terms": ["kubernetes"]}]}
+    if purpose == "jd_match":
+        profile = re.search(r"CANDIDATE MASTER PROFILE[^\n]*\n(.*?)\n\nJOB DESCRIPTION", prompt, re.S)
+        oauth = [block["id"] for block in (json.loads(profile.group(1)) if profile else []) if "oauth" in block["text"].lower()]
+        return {"summary": "Strong React match; authentication only appears in your Master Profile.", "warnings": [], "assessments": [
+            {"requirement_id": "J1", "status": "demonstrated", "resume_evidence_ids": ["R1"], "explanation": "React work is shown.", "recommendation": "",
+             "profile_status": "none", "profile_evidence_ids": []},
+            {"requirement_id": "J2", "status": "missing", "resume_evidence_ids": [], "explanation": "No authentication work in the resume.",
+             "recommendation": "Add your authentication project from the Master Profile.", "profile_status": "demonstrated" if oauth else "none",
+             "profile_evidence_ids": oauth[:1]},
+            {"requirement_id": "J3", "status": "missing", "resume_evidence_ids": [], "explanation": "Not shown.", "recommendation": "Neither source shows this; do not claim it.",
+             "profile_status": "none", "profile_evidence_ids": []}]}
     raise RuntimeError("failed|Unexpected purpose " + purpose)
+
+
+def fake_link_check(url, **_):
+    """Link checks never touch the network in the sandbox."""
+    status = "unreachable" if "broken" in url else "reachable"
+    return {"url": url, "status": status, "http_status": 404 if status == "unreachable" else 200, "final_url": "",
+            "detail": "Sandbox check.", "checked_at": ats.now_iso()}
 
 
 def seed():
@@ -81,6 +116,7 @@ def main():
                             "candidate_profile": "Frontend engineer. React, TypeScript, accessibility, testing with Jest."})
     database.init_db()
     ats._run_codex = fake_codex
+    linkcheck.check_url = fake_link_check
     ats.codex_status = lambda force=False: {"installed": True, "connected": True, "checked": True, "model": ats.MODEL, "message": "Sandbox"}
     if not resumes.resumes():
         seed()

@@ -72,14 +72,15 @@ function updateCreateKind() {
 }
 
 function renderList() {
-  let entries = activeEntries();
-  $("active-count").textContent = entries.length;
-  $("nav-application-count").textContent = entries.length;
+  // "Applied" is the history view: it also lists sent applications, which otherwise leave the list.
+  let entries = filter === "applied" ? (state?.entries || []) : activeEntries();
+  $("active-count").textContent = activeEntries().length;
+  $("nav-application-count").textContent = activeEntries().length;
   const query = $("search-input").value.trim().toLowerCase();
   let shown = entries.filter(entry => {
     if (filter === "to_apply" && !["initiated", "to apply"].includes(String(entry.application_stage || "").trim().toLowerCase())) return false;
     if (filter === "review" && (!entry.needs_review || stageIsAfterApply(entry.application_stage)) && entry.status !== "failed") return false;
-    if (filter === "applied" && !stageIsAfterApply(entry.application_stage)) return false;
+    if (filter === "applied" && !stageIsAfterApply(entry.application_stage) && entry.status !== "sent" && !entry.submission) return false;
     if (filter === "scheduled" && (entry.apply_method !== "email" || !["gmail_schedule_pending", "gmail_scheduled"].includes(entry.delivery_mode))) return false;
     const analysis = entry.analysis || {status: "not_analyzed"};
     if (analysisFilter === "complete" && analysis.status !== "complete") return false;
@@ -128,7 +129,7 @@ function renderList() {
 }
 
 function selectedEntry() {
-  return activeEntries().find(entry => entry.id === selectedId) || null;
+  return (state?.entries || []).find(entry => entry.id === selectedId) || null;
 }
 
 function renderEditor() {
@@ -197,6 +198,7 @@ function renderEditor() {
     ? '<button class="button secondary" type="button" data-entry-resume="optimize">' + (tailoredFor(entry) ? "Edit tailored resume" : "Optimize resume for this job") + '</button>' +
       (entry.resume.kind === "master" ? '<button class="button quiet-button" type="button" data-entry-resume="edit">Edit master</button>' : '')
     : "";
+  renderSubmission(entry);
   const resumeTab = document.querySelector('[data-editor-tab="resume"]');
   resumeTab.classList.toggle("needs-attention", entry.resume_status !== "Resume Selected");
   setEditorTab(editorTab);
@@ -256,7 +258,8 @@ function progressSteps(entry) {
       done: analysis.status === "complete" && !analysis.stale, warn: analysis.stale || ["failed", "plan_limit", "extraction_limited"].includes(analysis.status)},
     {label: "Resume", detail: version ? "v" + version.version_number + (version.pinned ? " · pinned" : "") : "Missing", done: Boolean(version), warn: !version},
     {label: "Email", detail: entry.apply_method === "email" ? labelFor(entry) : entry.apply_method === "external_form" ? "External form" : "Route not set", done: emailDone || entry.apply_method === "external_form"},
-    {label: "Applied", detail: entry.application_stage || (entry.status === "sent" ? "Sent" : "Not yet"), done: sent},
+    {label: "Applied", detail: entry.submission ? "Submitted " + new Date(entry.submission.submitted_at).toLocaleDateString([], {month: "short", day: "numeric"}) : entry.application_stage || (entry.status === "sent" ? "Sent" : "Not yet"),
+      done: sent || Boolean(entry.submission)},
   ];
   let current = false;
   return steps.map(step => {
@@ -276,7 +279,8 @@ function renderInspector() {
   const editable = !["sent", "sending"].includes(entry.status) && entry.delivery_mode !== "gmail_scheduled";
   const category = entry.delivery_mode === "local" ? entry.status : entry.delivery_mode;
   const analysis = entry.analysis || {status: "not_analyzed", label: "Not analyzed"};
-  const email = editable && entry.apply_method === "email";
+  // Once a submission is recorded, delivery actions are hidden so the same application is not sent twice.
+  const email = editable && entry.apply_method === "email" && !entry.submission;
   // One recommended action, chosen from where the application is in the workflow.
   const actions = [];
   const add = (action, label, kind = "secondary") => actions.push({action, label, kind});
@@ -290,6 +294,9 @@ function renderInspector() {
   }
   if (analysis.id && !analysis.stale) add("ats-run", "Run analysis again");
   if (email) { add("ai-draft", "Draft email with Codex", "quiet"); add("ai-copy", "Copy prompt", "quiet"); }
+  // A Gmail draft or schedule is not proof of sending; the user confirms the submission explicitly.
+  if (!entry.submission && entry.status !== "sending") add("record-submission", entry.delivery_mode === "gmail_scheduled" ? "Confirm it was sent" : "Mark as submitted",
+    entry.delivery_mode === "gmail_scheduled" ? "secondary" : "quiet");
   const primaryIndex = actions.findIndex(item => item.kind === "secondary");
   const buttons = actions.map((item, index) => '<button class="button ' + (index === primaryIndex ? "primary" : item.kind === "quiet" ? "quiet-button" : "secondary") + '" data-action="' + item.action + '" type="button">' + esc(item.label) + '</button>').join("");
   const notionId = /^[a-f0-9-]{32,36}$/i.test(entry.notion_id || "") ? entry.notion_id.replace(/-/g, "") : "";
@@ -301,13 +308,14 @@ function renderInspector() {
     '<div class="score-meter ' + tone + '"><i style="width:' + Math.max(0, Math.min(100, Number(score || 0))) + '%"></i></div>' +
     '<p class="inspector-detail">' + esc(analysis.label) + (analysis.missing_mandatory ? ' · ' + esc(analysis.missing_mandatory) + ' required gap' + (analysis.missing_mandatory === 1 ? '' : 's') : '') + '</p>' +
     (analysis.id ? '<button class="text-button" data-action="ats-view" type="button">View analysis</button>' : '') + '</div>' +
-    '<div class="inspector-block"><span class="eyebrow">Next step</span><div class="action-stack">' + (buttons || '<p class="subtle">Choose an application route in the editor to see delivery actions.</p>') + '</div><p id="ai-notes" class="ai-notes" hidden></p></div>' +
+    '<div class="inspector-block"><span class="eyebrow">Next step</span><div class="action-stack">' + (buttons || '') + (entry.submission ? '<p class="subtle">Submitted ' + esc(dateLabel(entry.submission.submitted_at)) + '. Delivery actions are hidden so this application is not sent twice.</p>' : buttons ? '' : '<p class="subtle">Choose an application route in the editor to see delivery actions.</p>') + '</div><p id="ai-notes" class="ai-notes" hidden></p></div>' +
     '<div class="inspector-block"><span class="eyebrow">Status</span><dl class="kv">' +
     '<dt>Delivery</dt><dd><span class="badge ' + esc(category) + '">' + esc(labelFor(entry)) + '</span></dd>' +
     '<dt>Stage</dt><dd>' + esc(entry.application_stage || "Not set") + '</dd>' +
     (entry.apply_method === "email" ? '<dt>Readiness</dt><dd class="resume-state ' + (entry.resume_status === "Resume Selected" ? "ready" : "missing") + '">' + esc(entry.readiness_status) + '</dd>' : '') +
     (entry.delivery_mode === "local" && entry.apply_method === "email" ? '<dt>Local send</dt><dd class="mono">' + esc(dateLabel(entry.send_at)) + '</dd>' : '') +
     (entry.gmail_draft_id ? '<dt>Gmail</dt><dd>' + esc(entry.gmail_account || "Connected account") + '</dd>' : '') +
+    (entry.submission ? '<dt>Submitted</dt><dd>' + esc(dateLabel(entry.submission.submitted_at)) + ' · v' + esc(entry.submission.version_number) + '</dd>' : '') +
     '<dt>Notion</dt><dd>' + (notionId ? '<a href="https://www.notion.so/' + notionId + '" target="_blank" rel="noopener noreferrer">Open page ↗</a>' : entry.notion_id ? "Synced" : "Not synced") + '</dd></dl></div>' +
     (entry.apply_method === "email" ? '<div class="inspector-block preview-block"><span class="eyebrow">Email preview</span><div class="email-preview"><strong id="preview-subject"></strong><span id="preview-to"></span><span id="preview-resume"></span><p id="preview-body"></p></div></div>'
       : '<div class="inspector-block route-block"><span class="eyebrow">Application route</span><p class="inspector-detail">Not set up as an email application.</p>' + (entry.apply_url ? '<a class="button secondary route-link" href="' + esc(entry.apply_url) + '" target="_blank" rel="noopener noreferrer">Open application form</a>' : '') + '</div>');
@@ -345,6 +353,11 @@ async function performAction(action, button) {
   const id = entry.id;
   if (action === "ats-view") { await openAnalysis(entry.analysis.id); return; }
   if (action === "optimize-resume") { await openResumeEditorForEntry(entry, "optimize"); return; }
+  if (action === "record-submission") {
+    setEditorTab("resume");
+    openSubmissionForm(entry, entry.delivery_mode.startsWith("gmail") ? "gmail" : "external");
+    return;
+  }
   if (action === "ats-run") {
     button.disabled = true;
     try { await runAnalysis(entry); }
@@ -415,4 +428,107 @@ async function performAction(action, button) {
     if (gmailTab) gmailTab.close();
     notify(error.message, true);
   } finally { button.disabled = false; }
+}
+
+// ------------------------------------------------------------------ submission history
+
+let submissionFormFor = "";
+let submissionHistoryFor = "";
+let submissionHistory = [];
+
+function submissionDetails(item) {
+  return '<dl class="kv submission-kv"><dt>Resume</dt><dd>' + esc(item.resume_name || "Deleted resume") + ' — v' + esc(item.version_number) + '</dd>' +
+    '<dt>File</dt><dd class="mono" title="SHA-256 ' + esc(item.sha256) + '">' + esc(item.filename) + ' · ' + esc(item.sha256.slice(0, 10)) + '</dd>' +
+    '<dt>Status</dt><dd>Submitted · ' + esc(item.evidence_label) + '</dd>' +
+    '<dt>Date</dt><dd>' + esc(dateLabel(item.submitted_at)) + '</dd>' +
+    '<dt>Source</dt><dd>' + esc(item.channel_label) + '</dd>' + (item.note ? '<dt>Note</dt><dd>' + esc(item.note) + '</dd>' : '') + '</dl>';
+}
+
+function renderSubmission(entry) {
+  const card = $("submission-card");
+  if (!card) return;
+  const item = entry.submission;
+  const resumeExists = item && (state.resumes || []).some(resume => resume.id === item.resume_id);
+  let html = '<div class="card-heading"><div><strong>' + (item ? "Submitted resume" : "Submission") + '</strong>' +
+    (item ? '' : '<p>Not recorded yet. A Gmail draft or an approved email is not a submission — record it once you have actually applied.</p>') + '</div>' +
+    (item ? '<span class="sub-status success">Submitted</span>' : '') + '</div>';
+  if (item) {
+    html += submissionDetails(item) + '<div class="stack-actions"><a class="button secondary" href="' + esc(item.file_url) + '" target="_blank" rel="noopener noreferrer">View PDF</a>' +
+      '<a class="button quiet-button" href="' + esc(item.download_url) + '">Download</a>' +
+      (resumeExists ? '<button class="button quiet-button" type="button" data-submission="compare">Compare with current resume</button><button class="button quiet-button" type="button" data-submission="history">Version history</button>' : '') +
+      '<button class="button quiet-button" type="button" data-submission="log">' + (submissionHistoryFor === entry.id ? "Hide record history" : "Record history") + '</button>' +
+      '<button class="button quiet-button" type="button" data-submission="change">Change record</button></div>';
+    if (submissionHistoryFor === entry.id) html += '<div class="submission-log">' + (submissionHistory.length > 1
+      ? submissionHistory.map(record => '<div class="' + (record.active ? "current" : "") + '"><strong>' + (record.active ? "Current record" : "Replaced " + esc(dateLabel(record.replaced_at))) + '</strong>' + submissionDetails(record) + '</div>').join("")
+      : '<p class="subtle">This record has not been changed.</p>') + '</div>';
+  } else if (entry.status !== "sending") html += '<button class="button secondary" type="button" data-submission="change">Record submission</button>';
+  if (submissionFormFor === entry.id) html += '<div class="submission-form"><p class="subtle">Loading resume versions…</p></div>';
+  card.innerHTML = html;
+  if (submissionFormFor === entry.id) fillSubmissionForm(entry);
+}
+
+async function fillSubmissionForm(entry, channel) {
+  const box = $("submission-card").querySelector(".submission-form");
+  const resumeIds = [entry.resume_id, tailoredFor(entry)?.id].filter((value, index, list) => value && list.indexOf(value) === index);
+  const options = [];
+  try {
+    for (const resumeId of resumeIds) {
+      const resume = (state.resumes || []).find(item => item.id === resumeId);
+      const result = await api("/api/resumes/" + resumeId + "/versions");
+      for (const version of result.versions || []) if (version.available)
+        options.push('<option value="' + esc(version.id) + '"' + (version.id === entry.resume_version?.id ? " selected" : "") + '>' + esc(resume?.name || "Resume") + ' — v' + esc(version.version_number) + ' · ' + esc(version.original_filename) + (version.id === entry.resume_version?.id ? " (attached)" : "") + '</option>');
+    }
+  } catch (error) { notify(error.message, true); }
+  if (!box.isConnected) return;
+  const now = new Date();
+  const today = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);  // local date, not UTC
+  box.innerHTML = '<div class="field-grid"><label>Resume that was sent<select id="submission-version">' + (options.join("") || '<option value="">No resume file available</option>') + '</select></label>' +
+    '<label>How you applied<select id="submission-channel"><option value="external"' + (channel === "external" ? " selected" : "") + '>Company site or portal</option><option value="gmail"' + (channel === "gmail" ? " selected" : "") + '>Gmail</option><option value="other"' + (channel === "other" ? " selected" : "") + '>Other</option></select></label>' +
+    '<label>Date submitted<input id="submission-date" type="date" max="' + today + '" value="' + today + '"></label><label>Note<input id="submission-note" placeholder="Optional, e.g. referred by a recruiter"></label></div>' +
+    '<p class="subtle">ApplyDock keeps this exact file for this application even if you edit or delete the resume later.' + (entry.submission ? ' The previous record is kept in the history.' : '') + '</p>' +
+    '<div class="stack-actions"><button class="button primary" type="button" data-submission="save">Save submission</button><button class="button quiet-button" type="button" data-submission="cancel">Cancel</button></div>';
+}
+
+function openSubmissionForm(entry, channel = "external") {
+  submissionFormFor = entry.id;
+  renderSubmission(entry);
+  fillSubmissionForm(entry, channel);
+  $("submission-card").scrollIntoView({block: "nearest"});
+}
+
+function initializeSubmissionCard() {
+  $("submission-card").addEventListener("click", onSubmissionClick);
+}
+
+async function onSubmissionClick(event) {
+  const button = event.target.closest("[data-submission]");
+  const entry = selectedEntry();
+  if (!button || !entry) return;
+  event.preventDefault();
+  const action = button.dataset.submission;
+  if (action === "change") return openSubmissionForm(entry, entry.delivery_mode.startsWith("gmail") ? "gmail" : "external");
+  if (action === "cancel") { submissionFormFor = ""; return renderSubmission(entry); }
+  if (action === "compare" || action === "history") {
+    const item = entry.submission;
+    return window.ResumeEditor.open(item.resume_id, {entryId: entry.id, ...(action === "compare" ? {compareVersionId: item.resume_version_id} : {panel: "versions"})})
+      .catch(error => notify(error.message, true));
+  }
+  if (action === "log") {
+    if (submissionHistoryFor === entry.id) { submissionHistoryFor = ""; return renderSubmission(entry); }
+    try { submissionHistory = (await api("/api/entries/" + entry.id + "/submissions")).submissions; submissionHistoryFor = entry.id; renderSubmission(entry); }
+    catch (error) { notify(error.message, true); }
+    return;
+  }
+  if (action === "save") {
+    button.disabled = true;
+    try {
+      const date = $("submission-date").value;
+      await api("/api/entries/" + entry.id + "/submissions", "POST", {resume_version_id: $("submission-version").value, channel: $("submission-channel").value,
+        submitted_at: date ? date + "T12:00:00" : "", note: $("submission-note").value});
+      submissionFormFor = "";
+      submissionHistoryFor = "";
+      await load(true);
+      notify("Submission recorded. This exact resume file stays with the application.");
+    } catch (error) { notify(error.message, true); button.disabled = false; }
+  }
 }

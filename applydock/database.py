@@ -10,7 +10,7 @@ import sqlite3
 import threading
 import uuid
 
-from . import ats, config, resume_store
+from . import ats, config, profile, resume_store, submissions
 
 
 LOCK = threading.RLock()
@@ -72,6 +72,8 @@ def init_db():
         )""")
         ats.init_schema(db)
         resume_store.init_schema(db)
+        profile.init_schema(db)
+        submissions.init_schema(db)
         version = db.execute("PRAGMA user_version").fetchone()[0]
         if version < 1:
             for row in list(db.execute("SELECT id,excerpt,recipient,contact_emails FROM entries")):
@@ -113,6 +115,10 @@ def init_db():
             # (existing resumes become masters, existing versions are uploads); the version
             # bump exists so backup_before_migration() keeps a copy of the pre-v4 database.
             db.execute("PRAGMA user_version=4")
+        if version < 5:
+            # v5 adds the Master Profile, link checks, and submission history (new tables only), plus a
+            # profile snapshot column on analysis runs; the bump keeps a backup of the pre-v5 database.
+            db.execute("PRAGMA user_version=5")
         ats.refresh_failed_extractions(db, config.DATA)
         if not db.execute("SELECT 1 FROM resumes WHERE deleted_at='' AND is_default=1 LIMIT 1").fetchone():
             first_resume = db.execute("SELECT id FROM resumes WHERE deleted_at='' AND kind='master' ORDER BY created_at LIMIT 1").fetchone()
@@ -131,11 +137,11 @@ def init_db():
                         AND (needs_review<>0 OR status='approved')""", (stamp,))
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def backup_before_migration():
-    """Copy the database once before any schema migration (pre-ats for v<3, pre-v4 for the editor)."""
+    """Copy the database once before any schema migration (pre-ats for v<3, otherwise pre-v<SCHEMA_VERSION>)."""
     if not config.DB.exists():
         return
     source = sqlite3.connect(config.DB)

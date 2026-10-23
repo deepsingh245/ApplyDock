@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-from . import ats, config, database, resumes
+from . import ats, config, database, resumes, submissions
 
 
 def public_https_url(value):
@@ -100,6 +100,8 @@ def public_entry(row):
                 "is_current": version["id"] == resume.get("current_version_id"), "filename": version["original_filename"],
                 "sha256": version["sha256"], "source": version["source"], "file_url": resumes.version_file_url(resume["id"], version),
             }
+    with database.connect() as db:
+        entry["submission"] = submissions.active_for_entry(db, entry["id"])
     entry["analysis"] = ats.analysis_summary(config.DB, entry)
     if entry["analysis"]["status"] == "not_analyzed" and resume and resume.get("extraction_status") == "limited":
         entry["analysis"] = {"status": "extraction_limited", "label": "Resume Extraction Limited", "stale": False,

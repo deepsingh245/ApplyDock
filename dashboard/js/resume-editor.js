@@ -84,9 +84,15 @@
     const entry = currentEntry();
     if (entry && !s.analysisId && entry.analysis?.id && entry.analysis.status !== "not_analyzed") s.analysisId = entry.analysis.id;
     AD().showView("resume-editor");
+    if (context.panel) s.panel = context.panel;
     render();
     schedulePreview(0);
     if (s.analysisId) loadAnalysis();
+    // Opened from an application's submission record: compare that exact version with the current draft.
+    if (context.compareVersionId && s.data.versions.some(version => version.id === context.compareVersionId)) {
+      s.panel = "compare";
+      compareWith("v:" + context.compareVersionId);
+    }
     if (data.import.job && ["pending", "running"].includes(data.import.job.status)) pollImport(data.import.job.id);
   }
 
@@ -462,7 +468,7 @@
     else {
       const items = c[section];
       body = (section !== "custom" ? '<label class="re-field re-heading-field"><span>Heading shown on the resume</span><input data-section-title="' + section + '" value="' + esc(titles[section]) + '"></label>' : '') +
-        items.map((item, index) => itemCard(section, item, index, items.length)).join("") +
+        items.map((item, index) => itemCard(section, item, index, items.length)).join("") + (section === "projects" ? addProjectSuggestions() : "") +
         '<button class="button secondary re-add" type="button" data-add-item="' + section + '">+ Add ' + ({work: "experience", projects: "project", skills: "skill group", education: "education", certificates: "certification", awards: "award", custom: "section"})[section] + '</button>';
     }
     const count = section === "summary" ? (c.basics.summary ? 1 : 0) : c[section].length;
@@ -570,7 +576,10 @@
       const gaps = reqs.filter(item => item.status !== "demonstrated");
       html += '<div class="re-score"><strong>' + (a.overall_score == null ? "—" : esc(a.overall_score) + "%") + '</strong><div><span>' + esc(a.label) + '</span><small>Estimated match using ApplyDock\'s scoring — not a prediction of any employer\'s ATS.</small></div></div>';
       if (["pending", "analyzing"].includes(a.status)) html += '<p class="re-progress">Analyzing… ' + esc(a.progress_percent || 0) + '%</p>';
-      if (gaps.length) html += '<div class="re-gaps"><strong>Gaps and weak areas</strong>' + gaps.slice(0, 8).map(item => '<p><span class="match-status ' + esc(item.status) + '">' + esc(item.status) + '</span> ' + esc(item.requirement) + (item.recommendation ? '<small>' + esc(item.recommendation) + '</small>' : '') + '</p>').join("") + '</div>';
+      if (gaps.length) html += '<div class="re-gaps"><strong>Gaps and weak areas</strong>' + gaps.slice(0, 10).map(item => '<p><span class="match-status ' + esc(item.status) + '">' + esc(item.status) + '</span> ' + esc(item.requirement) +
+        (item.coverage ? ' <span class="coverage-chip ' + esc(item.coverage) + '">' + esc(AD().coverageLabel(item.coverage)) + '</span>' : '') +
+        (item.recommendation ? '<small>' + esc(item.recommendation) + '</small>' : '') +
+        (item.profile_evidence || []).map(source => '<button class="text-button" type="button" data-profile-item="' + esc(source.item_id) + '">From your profile: ' + esc(source.label) + '</button>').join("") + '</p>').join("") + '</div>';
     } else if (entry) html += '<p class="re-footnote">No completed analysis yet for this application.</p>';
     if (entry) {
       if (resume.kind === "master" && entry.resume_id === resume.id)
@@ -618,22 +627,33 @@
     return items.map(suggestionCard).join("");
   }
 
+  function addProjectSuggestions() {
+    return (s?.suggestions || []).filter(item => item.operation === "add_project" && item.status !== "rejected").map(suggestionCard).join("");
+  }
+
   function suggestionCard(item) {
     const applied = ["accepted", "edited"].includes(item.status);
-    const flags = item.guard_flags || [];
-    const verb = {replace: "Rewrite", insert_after: "Add a bullet", add_keyword: "Add skill"}[item.operation];
+    const flags = (item.guard_flags || []).filter(flag => flag.type !== "unverified_profile");
+    const verb = {replace: "Rewrite", insert_after: "Add a bullet", add_keyword: "Add skill", add_project: "Add a project from your profile"}[item.operation];
+    const source = item.source;
+    const support = item.needs_verification ? '<span class="re-verify">Needs your verification</span>'
+      : '<span class="re-safe">' + (source ? "Supported by your verified profile" : "Supported by your resume") + '</span>';
+    const project = item.project;
     return '<div class="re-suggestion' + (applied ? " applied" : "") + (item.stale ? " stale" : "") + '" data-suggestion="' + esc(item.id) + '">' +
-      '<div class="re-suggestion-head"><span class="eyebrow">AI SUGGESTION · ' + esc(verb) + '</span>' + (item.needs_verification ? '<span class="re-verify">Needs your verification</span>' : '<span class="re-safe">Supported by your resume</span>') + '</div>' +
+      '<div class="re-suggestion-head"><span class="eyebrow">AI SUGGESTION · ' + esc(verb) + '</span>' + support + '</div>' +
       (item.requirement ? '<p class="re-suggestion-req">For: ' + esc(item.requirement) + '</p>' : '') +
+      (source ? '<p class="re-suggestion-source">Evidence: ' + esc(source.label) + (source.verified ? '' : ' <b>(not yet verified in your profile)</b>') +
+        ' <button class="text-button" type="button" data-profile-item="' + esc(source.item_id) + '">View source</button></p>' : '') +
+      (project ? '<p class="re-suggestion-original re-suggestion-project"><span>Project</span>' + esc(project.name) + (project.keywords?.length ? ' · ' + esc(project.keywords.join(", ")) : '') + (project.url ? '<br>' + esc(project.url) : '') + '</p>' : '') +
       (item.original_text ? '<p class="re-suggestion-original"><span>Original</span>' + esc(item.original_text) + '</p>' : '') +
       '<p class="re-suggestion-proposed"><span>' + (applied ? "Applied" : "Suggested") + '</span>' + esc(applied ? item.applied_text : item.proposed_text) + '</p>' +
       (item.reason ? '<p class="re-suggestion-reason">' + esc(item.reason) + '</p>' : '') +
-      (flags.length ? '<p class="re-suggestion-flags">Not found in your resume: ' + flags.map(flag => '<b>' + esc(flag.value) + '</b>').join(", ") + '. Only accept if this is true.</p>' : '') +
+      (flags.length ? '<p class="re-suggestion-flags">Not found in your resume' + (source ? ' or verified profile' : '') + ': ' + flags.map(flag => '<b>' + esc(flag.value) + '</b>').join(", ") + '. Only accept if this is true.</p>' : '') +
       (item.stale ? '<p class="re-suggestion-flags">The original text has changed since this suggestion was made.</p>' : '') +
       '<div class="re-suggestion-actions">' + (applied
         ? '<button class="button quiet-button" type="button" data-sugg="revert" data-id="' + esc(item.id) + '">Revert</button>'
-        : (item.stale ? '' : '<button class="button primary" type="button" data-sugg="accept" data-id="' + esc(item.id) + '">Accept</button><button class="button secondary" type="button" data-sugg="edit" data-id="' + esc(item.id) + '">Edit, then accept</button>') +
-          '<button class="button quiet-button" type="button" data-sugg="reject" data-id="' + esc(item.id) + '">Reject</button>') + '</div></div>';
+        : (item.stale ? '' : '<button class="button primary" type="button" data-sugg="accept" data-id="' + esc(item.id) + '">' + (source ? "Add to resume" : "Accept") + '</button><button class="button secondary" type="button" data-sugg="edit" data-id="' + esc(item.id) + '">Edit suggestion</button>') +
+          '<button class="button quiet-button" type="button" data-sugg="reject" data-id="' + esc(item.id) + '">' + (source ? "Dismiss" : "Reject") + '</button>') + '</div></div>';
   }
 
   function renderSuggestionSummary() {
@@ -670,9 +690,9 @@
       let confirmVerified = false;
       if ((action === "accept" || action === "edit") && item.needs_verification) {
         const flags = (item.guard_flags || []).map(flag => flag.value).join(", ");
-        confirmVerified = window.confirm("This suggestion adds something not found in your resume" + (flags ? " (" + flags + ")" : "") + ".\n\nOnly continue if it is accurate for your real experience. Apply it?");
+        confirmVerified = window.confirm("This suggestion adds something not found in your resume" + (item.source ? " or verified profile" : "") + (flags ? " (" + flags + ")" : "") + ".\n\nOnly continue if it is accurate for your real experience. Apply it?");
         if (!confirmVerified) return;
-      }
+      } else if (action === "accept" && item.source && !window.confirm("Add this to the resume draft?\n\n" + item.proposed_text + "\n\nYou can revert it, and nothing is saved as a version until you choose Save version.")) return;
       const path = "/api/resume-suggestions/" + id + "/" + (action === "revert" ? "revert" : "accept");
       const result = await request(path, "POST", {expected_revision: s.revision, ...(text !== undefined ? {text} : {}), confirm_verified: confirmVerified});
       snapshot(true);
@@ -937,6 +957,7 @@
     }
     if (d.side) { s.panel = d.side; if (d.side === "analysis") loadAnalysis(); return renderSide(); }
     if (d.sugg) { event.preventDefault(); return suggestionAction(d.sugg, d.id); }
+    if (d.profileItem) { event.preventDefault(); return flushSave().then(() => AD().openProfileItem(d.profileItem)); }
     if (d.versionDownload) { const v = s.data.versions.find(item => item.id === d.versionDownload); return downloadVersion(v.id, v.original_filename); }
     if (d.versionCompare) { s.panel = "compare"; renderSide(); return compareWith("v:" + d.versionCompare); }
     if (d.versionRestore) {

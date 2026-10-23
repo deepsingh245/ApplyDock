@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from . import applications, ats, config, database, resume_import, resume_model, resume_render, resume_store, resumes
+from . import applications, ats, config, database, profile, resume_import, resume_model, resume_render, resume_store, resumes
 
 
 def save_editor_version(resume_id, expected_revision, label=""):
@@ -157,12 +157,17 @@ def queue_suggestions(analysis_id, resume_id):
         if draft["needs_review"]:
             raise ValueError("Review the imported content and confirm it before asking for suggestions.")
         content = draft["content"]
-        input_hash = resume_store.suggestions_job_hash(analysis_id, content)
+        # Only profile entries relevant to this analysis's gaps are offered, so suggestions stay focused.
+        cited = {value for item in (analysis.get("result") or {}).get("requirements", []) for value in item.get("profile_evidence_ids", [])}
+        profile_blocks = [block for block in json.loads(analysis.get("profile_json") or "[]") if block["id"] in cited]
+        verified_profile = profile.verified_corpus(db)
+        input_hash = resume_store.suggestions_job_hash(analysis_id, content, profile.evidence_hash(profile_blocks))
         reusable = db.execute("SELECT status FROM resume_ai_jobs WHERE purpose='resume_suggestions' AND input_hash=?", (input_hash,)).fetchone()
     if not reusable or reusable["status"] not in ("complete", "pending", "running"):
         require_codex()
     payload = {"content": content, "requirements": (analysis.get("result") or {}).get("requirements", []),
-               "jd_text": ats.canonical_jd(entry)[1], "profile": config.SETTINGS.get("candidate_profile", "")}
+               "jd_text": ats.canonical_jd(entry)[1], "profile_blocks": profile_blocks,
+               "profile": "\n".join([config.SETTINGS.get("candidate_profile", ""), verified_profile])}
     with database.LOCK, database.connect() as db:
         job, reused = resume_store.queue_job(db, "resume_suggestions", input_hash, payload, resume_id=resume_id, analysis_id=analysis_id)
         suggestions = resume_store.list_suggestions(db, resume_id, analysis_id)

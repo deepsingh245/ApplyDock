@@ -19,8 +19,8 @@ from pathlib import Path
 import re
 import urllib.parse
 
-from . import (ai_draft, applications, ats, config, database, delivery, events, gmail, notion, resume_model,
-               resume_render, resume_store, resume_workflows, resumes)
+from . import (ai_draft, applications, ats, career, config, database, delivery, events, gmail, notion, resume_model,
+               resume_render, resume_store, resume_workflows, resumes, submissions)
 from .resume_store import ConflictError
 
 ROUTES = []   # (method, compiled pattern, handler)
@@ -138,6 +138,10 @@ def serve_public_get(request, path):
     if version_match:
         serve_version_file(request, *version_match.groups(), urllib.parse.parse_qs(path.query))
         return True
+    submission_match = re.fullmatch(r"/api/submissions/([a-f0-9-]+)/file", path.path)
+    if submission_match:
+        serve_submission_file(request, submission_match.group(1), urllib.parse.parse_qs(path.query))
+        return True
     static_file = dashboard_file(path.path)
     if static_file:
         content = static_file.read_bytes()
@@ -225,6 +229,27 @@ def serve_version_file(request, resume_id, version_id, query):
     disposition = "attachment" if query.get("download", [""])[0] == "1" else "inline"
     request.respond_bytes(200, version["mime_type"], file_path.read_bytes(), {
         "Content-Disposition": f"{disposition}; filename*=UTF-8''{urllib.parse.quote(version['original_filename'])}",
+        "Referrer-Policy": "no-referrer"})
+
+
+def serve_submission_file(request, submission_id, query):
+    # The exact file recorded as submitted. It stays available after the resume itself is deleted or edited.
+    if request.headers.get("Host") not in allowed_hosts():
+        request.respond(403, {"error": "Invalid host."})
+        return
+    with database.connect() as db:
+        row, file_path = submissions.file_for(db, config.DATA, submission_id)
+    supplied_token = query.get("access", [""])[0]
+    key_ok = hmac.compare_digest(request.headers.get("X-Local-Key", ""), config.SETTINGS["pairing_key"])
+    if not row or not file_path:
+        request.respond(404, {"error": "The submitted file is unavailable."})
+        return
+    if not (key_ok or (supplied_token and hmac.compare_digest(supplied_token, row["access_token"]))):
+        request.respond(401, {"error": "Resume access is required."})
+        return
+    disposition = "attachment" if query.get("download", [""])[0] == "1" else "inline"
+    request.respond_bytes(200, row["mime_type"], file_path.read_bytes(), {
+        "Content-Disposition": f"{disposition}; filename*=UTF-8''{urllib.parse.quote(row['filename'])}",
         "Referrer-Policy": "no-referrer"})
 
 
@@ -419,7 +444,10 @@ def queue_analysis(request, match, data):
     candidate = str(data.get("resume_version_id") or "")
     if candidate and not resume_workflows.candidate_version_allowed(entry, candidate):
         raise ValueError("That resume version does not belong to this application.")
-    run, cached = ats.queue_analysis(config.DB, entry, retry=bool(data.get("retry")), require_codex=True, resume_version_id=candidate)
+    # The Master Profile is compared too (as a snapshot), unless the request opts out.
+    blocks = career.profile_evidence() if data.get("use_profile", True) else []
+    run, cached = ats.queue_analysis(config.DB, entry, retry=bool(data.get("retry")), require_codex=True, resume_version_id=candidate,
+                                     profile_blocks=blocks)
     events.application_changed(entry["id"])
     return {"analysis": ats.get_analysis(config.DB, run["id"]), "cached": cached}
 
@@ -567,6 +595,60 @@ def update_suggestion(request, match, data):
     with database.LOCK, database.connect() as db:
         suggestion = resume_store.set_suggestion_status(db, match.group(1), str(data.get("status", "")))
     return {"draft": None, "suggestion": suggestion}
+
+
+# ---------------------------------------------------------------- Master Profile
+
+@route("GET", r"/api/profile")
+def get_profile(request, match, data):
+    return {"profile": career.get_profile()}
+
+
+@route("PATCH", r"/api/profile/personal")
+def save_personal(request, match, data):
+    return {"profile": career.save_personal(data)}
+
+
+@route("POST", r"/api/profile/items")
+def create_profile_item(request, match, data):
+    return career.create_item(data)
+
+
+@route("PATCH", r"/api/profile/items/([a-f0-9-]+)")
+def update_profile_item(request, match, data):
+    return career.update_item(match.group(1), data)
+
+
+@route("DELETE", r"/api/profile/items/([a-f0-9-]+)")
+def delete_profile_item(request, match, data):
+    return career.delete_item(match.group(1))
+
+
+@route("POST", r"/api/profile/import")
+def import_profile(request, match, data):
+    return career.import_from_resume(str(data.get("resume_id", "")), data.get("verified", True))
+
+
+@route("POST", r"/api/profile/verify-links")
+def verify_profile_links(request, match, data):
+    return career.verify_links(str(data.get("item_id") or ""))
+
+
+# ---------------------------------------------------------------- submission history
+
+@route("GET", r"/api/entries/([a-f0-9-]+)/submissions")
+def list_submissions(request, match, data):
+    return career.entry_submissions(match.group(1))
+
+
+@route("POST", r"/api/entries/([a-f0-9-]+)/submissions")
+def record_submission(request, match, data):
+    return career.record_submission(match.group(1), data)
+
+
+@route("GET", r"/api/resumes/([a-f0-9-]+)/usage")
+def resume_usage(request, match, data):
+    return career.resume_usage(match.group(1))
 
 
 # ---------------------------------------------------------------- request handler

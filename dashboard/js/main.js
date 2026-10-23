@@ -196,9 +196,10 @@ $("score-filter").addEventListener("change", event => { scoreFilter = event.targ
 
 $("analysis-sort").addEventListener("change", event => { analysisSort = event.target.value; renderList(); });
 
-$("editor-form").addEventListener("input", event => { dirty = true; if (event.target.name === "apply_url") updateApplyLinkButton(); updatePreview(); });
+$("editor-form").addEventListener("input", event => { if (event.target.closest("#submission-card")) return; dirty = true; if (event.target.name === "apply_url") updateApplyLinkButton(); updatePreview(); });
 
 $("editor-form").addEventListener("change", event => {
+  if (event.target.closest("#submission-card")) return;  // the submission form saves on its own
   dirty = true;
   if (event.target.name === "apply_method") setEmailPanel(event.target.value === "email");
   if (event.target.name === "application_stage" && stageIsAfterApply(event.target.value))
@@ -338,13 +339,15 @@ window.addEventListener("beforeunload", event => { if (dirty) { event.preventDef
 window.addEventListener("applydock-paired", () => load().catch(error => { showPair(); notify(error.message, true); }));
 
 window.ApplyDock = {
-  api, notify, load, esc, showView, dateLabel, openAnalysis,
+  api, notify, load, esc, showView, dateLabel, openAnalysis, openProfileItem, coverageLabel,
   state: () => state,
   currentView: () => currentView,
   selectEntry: id => { selectedId = id; render(true); },
 };
 
 initializeSettingsDisclosures();
+initializeProfile();
+initializeSubmissionCard();
 
 // Follow the operating system until the user picks a theme explicitly.
 setTheme(localStorage.getItem("applydock-theme") || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"), Boolean(localStorage.getItem("applydock-theme")));

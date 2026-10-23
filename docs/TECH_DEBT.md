@@ -28,6 +28,10 @@ frame-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; 
 
 Resolved by the "Ledger" redesign: one `tokens.css` and one ordered `style.css` (see [DESIGN.md](../DESIGN.md)). `extension/sidepanel.css` holds a hand-copied set of the color tokens; `test_architecture.py` fails if they drift from `dashboard/tokens.css`. Other remaining UI items are listed in [DESIGN_HANDOFF.md](DESIGN_HANDOFF.md).
 
+## 4a. Master Profile follow-ups
+
+Deliberately left out of the first version (see [features/master-profile.md](features/master-profile.md#not-done-yet)): recurring link monitoring, confirming Gmail sends (needs the `gmail.readonly` scope), and profile suggestions that add a whole new job entry. The local resume reader can import a technology line as a project; Codex import avoids it.
+
 ## 4. Extension duplicates dashboard code
 
 `extension/sidepanel.js` re-implements about 15 helpers that also exist in `dashboard/js/core.js` (`api`, `resumeOptions`, stage helpers, formatters). An MV3 extension can only load its own packaged files, so sharing them needs a copy step or a build step. Its CSS (`sidepanel.css`) has hard-coded colors instead of the dashboard tokens.

@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import datetime as dt
 import email.message
+import email.utils
 import re
 import smtplib
 import ssl
 import time
 
-from . import applications, config, database, events, notion, resumes
+from . import applications, ats, config, database, events, notion, resumes, submissions
 
 
 def send_mail(entry):
@@ -23,6 +24,7 @@ def send_mail(entry):
     msg["From"] = settings["from"]
     msg["To"] = entry["recipient"]
     msg["Subject"] = entry["subject"]
+    msg["Message-ID"] = email.utils.make_msgid(domain="applydock.local")
     msg.set_content(entry["body"])
     mime = "application/pdf" if resume.suffix.lower() == ".pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     maintype, subtype = mime.split("/", 1)
@@ -40,7 +42,7 @@ def send_mail(entry):
             smtp.ehlo()
             smtp.login(settings["username"], password)
             smtp.send_message(msg)
-    return version
+    return {**version, "message_id": msg["Message-ID"]}
 
 
 def test_smtp_login(settings, password):
@@ -114,11 +116,28 @@ def process_due(current=None):
             with database.connect() as db:
                 db.execute("UPDATE entries SET status='sent',sent_at=?,updated_at=?,attachment_sha256=?,attachment_filename=?,attached_at=? WHERE id=?",
                            (config.now_iso(), config.now_iso(), record["attachment_sha256"], record["attachment_filename"], record["attached_at"], entry["id"]))
+            record_sent_submission(entry, sent_version)
         except Exception as error:
             with database.connect() as db:
                 db.execute("UPDATE entries SET status='failed',send_error=?,updated_at=? WHERE id=?", (str(error)[:1000], config.now_iso(), entry["id"]))
         events.application_changed(entry["id"])
     return attempted
+
+
+def record_sent_submission(entry, sent_version):
+    """The SMTP server accepted the message: a verified submission of exactly the attached version."""
+    if not isinstance(sent_version, dict) or not sent_version.get("id"):
+        return
+    try:
+        with database.LOCK, database.connect() as db:
+            version = ats.version_by_id(db, sent_version["id"])
+            resume = db.execute("SELECT name FROM resumes WHERE id=?", (version["resume_id"],)).fetchone() if version else None
+            submissions.record(db, config.DATA, entry, version, resume["name"] if resume else "", "email", "verified",
+                               message_ref=sent_version.get("message_id", ""))
+            if not applications.stage_is_after_apply(entry.get("application_stage")):
+                db.execute("UPDATE entries SET application_stage='Applied',needs_review=0 WHERE id=?", (entry["id"],))
+    except Exception as error:
+        print("Could not record the submission:", type(error).__name__, flush=True)
 
 
 def scheduler():

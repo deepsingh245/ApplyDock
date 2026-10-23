@@ -14,7 +14,7 @@ import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 
-from . import ats, config, database, events, resume_store
+from . import ats, config, database, events, resume_store, submissions
 
 
 def resume_file_url(resume):
@@ -42,6 +42,7 @@ def public_resume(row, include_token=False):
         analysis_count = db.execute("""SELECT COUNT(*) FROM analysis_runs ar JOIN resume_versions rv ON rv.id=ar.resume_version_id
                                        WHERE rv.resume_id=?""", (resume["id"],)).fetchone()[0]
         has_draft = bool(db.execute("SELECT 1 FROM resume_drafts WHERE resume_id=?", (resume["id"],)).fetchone())
+        submission_count = db.execute("SELECT COUNT(*) FROM application_submissions WHERE resume_id=? AND active=1", (resume["id"],)).fetchone()[0]
     result = {
         "id": resume["id"], "name": resume["name"], "category": resume["category"],
         "original_filename": resume["original_filename"], "mime_type": resume["mime_type"],
@@ -61,6 +62,7 @@ def public_resume(row, include_token=False):
         "parent_resume_id": resume.get("parent_resume_id", ""),
         "entry_id": resume.get("entry_id", ""),
         "has_draft": has_draft,
+        "submission_count": submission_count,
     }
     if include_token:
         result["access_token"] = resume["access_token"]
@@ -290,7 +292,7 @@ def delete_resume(resume_id):
             if replacement:
                 db.execute("UPDATE resumes SET is_default=1,updated_at=? WHERE id=?", (config.now_iso(), replacement["id"]))
         resume_store.purge(db, resume_id)
-        ats.purge_resume(db, config.DATA, resume_id)
+        ats.purge_resume(db, config.DATA, resume_id, submissions.kept_document_ids(db))
     affected = linked_entry_ids(resume_id)
     for entry_id in affected:
         with database.connect() as db:
