@@ -952,8 +952,10 @@
     if (!s || !row || event.button !== 0) return;
     const list = row.parentElement;
     const startY = event.clientY;
-    // Slot positions are measured once: rows move between slots, the slots themselves stay put.
-    const slots = [...list.children].map(item => { const rect = item.getBoundingClientRect(); return rect.top + rect.height / 2 + window.scrollY; });
+    // Slot positions are measured once, relative to the list: rows move between slots, the slots stay put
+    // (and the panel may scroll while dragging).
+    const listTop = () => list.getBoundingClientRect().top;
+    const slots = [...list.children].map(item => { const rect = item.getBoundingClientRect(); return rect.top - listTop() + rect.height / 2; });
     let dragging = false;
     event.preventDefault();
     // Listen on the document: moving the row in the DOM would release a pointer capture on it.
@@ -963,7 +965,7 @@
       dragging = true;
       row.classList.add("dragging");
       list.classList.add("sorting");
-      const y = moveEvent.clientY + window.scrollY;
+      const y = moveEvent.clientY - listTop();
       const target = slots.reduce((best, mid, index) => Math.abs(y - mid) < Math.abs(y - slots[best]) ? index : best, 0);
       if ([...list.children].indexOf(row) === target) return;
       const others = [...list.children].filter(item => item !== row);

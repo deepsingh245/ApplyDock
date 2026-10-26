@@ -742,6 +742,15 @@ details.requirement-card[open] > summary > b { transform: rotate(90deg); }
 .resume-usage-list li { display: grid; gap: 2px; }
 .resume-usage-list small { color: var(--ink-3); font-size: var(--text-xs); }
 
+/* The editor fills the window below the top bar; its form and its side panel scroll independently. */
+@media (min-width: 761px) {
+  .secondary-view.resume-editor-view:not([hidden]) { display: flex; flex-direction: column; height: calc(100dvh - var(--topbar-h)); min-height: 0; padding-bottom: var(--space-4); overflow: hidden; }
+  #resume-editor-root, #resume-editor-root > .re-header { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+  #resume-editor-root .re-layout { flex: 1; grid-template-rows: minmax(0, 1fr); align-items: stretch; min-height: 0; }
+  .re-form-panel, .re-side-panel { min-height: 0; padding-right: var(--space-2); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+  .re-side-panel, .re-toolbar { position: static; }
+}
+
 /* ============================================================== responsive */
 @media (max-width: 1280px) {
   .workspace { grid-template-columns: var(--list-w) minmax(0, 1fr); }

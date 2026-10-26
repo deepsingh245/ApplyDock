@@ -37,8 +37,10 @@ function render(preserveScroll = false) {
   $("app-view").hidden = false;
   $("connection-state").classList.add("connected");
   $("connection-label").textContent = "Local helper connected";
-  if (!activeEntries().some(entry => entry.id === selectedId))
-    selectedId = activeEntries()[0]?.id || "";
+  // Keep an explicit choice; otherwise open the first application that still needs action, or none
+  // (the "No active applications" screen) when everything is applied, sent, or rejected.
+  if (!(state.entries || []).some(entry => entry.id === selectedId))
+    selectedId = activeEntries().find(needsAction)?.id || "";
   renderList();
   renderEditor();
   renderInspector();

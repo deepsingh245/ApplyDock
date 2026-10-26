@@ -60,6 +60,11 @@ function isRejected(entry) {
   return String(entry?.application_stage || "").trim().toLowerCase() === "rejected";
 }
 
+// Still needs work from you: not sent, not submitted, not past the Applied stage, not rejected.
+function needsAction(entry) {
+  return entry.status !== "sent" && !entry.submission && !isRejected(entry) && !stageIsAfterApply(entry.application_stage);
+}
+
 function localInput(iso) {
   if (!iso) return "";
   const date = new Date(iso);

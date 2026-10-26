@@ -139,7 +139,7 @@ function renderEditor() {
   const entry = selectedEntry();
   $("empty-editor").hidden = !!entry;
   $("editor-view").hidden = !entry;
-  if (!entry) return;
+  if (!entry) return renderEmptyEditor();
   const editable = !["sent", "sending"].includes(entry.status) && entry.delivery_mode !== "gmail_scheduled";
   $("editor-title").textContent = entry.title || "Untitled opportunity";
   $("editor-subtitle").textContent = (entry.company || "Company not set") + " · " + (entry.platform || "Other");
@@ -276,7 +276,8 @@ function progressSteps(entry) {
 function renderInspector() {
   const entry = selectedEntry();
   if (!entry) {
-    $("inspector-content").innerHTML = '<div class="inspector-empty"><span class="eyebrow">Next step</span><p>Select an application to see its status, match score, and delivery actions.</p></div>';
+    $("inspector-content").innerHTML = '<div class="inspector-empty"><span class="eyebrow">Next step</span><p>' +
+      ((state?.entries || []).some(needsAction) ? "Select an application to see its status, match score, and delivery actions." : "Nothing needs action. Add a job when you find the next one.") + '</p></div>';
     return;
   }
   const editable = !["sent", "sending"].includes(entry.status) && entry.delivery_mode !== "gmail_scheduled";
@@ -453,9 +454,11 @@ function submissionDetails(item) {
 function renderSubmission(entry) {
   const card = $("submission-card");
   if (!card) return;
-  // A background refresh must not wipe a submission form the user is filling in.
-  if (submissionFormFor === entry.id && card.dataset.entry === entry.id && card.querySelector("#submission-version")) return;
-  card.dataset.entry = entry.id;
+  // A background refresh must not wipe a submission form the user is filling in, unless the resume it
+  // offers changed underneath it (then the old choices would be wrong).
+  const formKey = entry.id + ":" + entry.resume_id + ":" + (entry.resume_version?.id || "");
+  if (submissionFormFor === entry.id && card.dataset.formKey === formKey && card.querySelector("#submission-version")) return;
+  card.dataset.formKey = formKey;
   const item = entry.submission;
   const resumeExists = item && (state.resumes || []).some(resume => resume.id === item.resume_id);
   let html = '<div class="card-heading"><div><strong>' + (item ? "Submitted resume" : "Submission") + '</strong>' +
@@ -540,4 +543,29 @@ async function onSubmissionClick(event) {
       notify("Submission recorded. This exact resume file stays with the application.");
     } catch (error) { notify(error.message, true); button.disabled = false; }
   }
+}
+
+// The middle pane when no application is open: either pick one, or nothing is left to do.
+function renderEmptyEditor() {
+  const all = state?.entries || [];
+  const waiting = all.filter(needsAction).length;
+  const done = all.filter(entry => !needsAction(entry) && !isRejected(entry)).length;
+  const box = $("empty-editor");
+  box.querySelector("h2").textContent = waiting ? "Select an application" : "No active applications";
+  box.querySelector("p").textContent = waiting
+    ? "Pick one from the list to review the posting, prepare the resume, and send the email."
+    : all.length ? "Everything is applied, sent, or closed. Add the next job when you find it, or look back at what you sent." : "Add a job or hiring post to get started.";
+  let actions = box.querySelector(".empty-actions");
+  if (!actions) {
+    actions = document.createElement("div");
+    actions.className = "stack-actions empty-actions";
+    box.append(actions);
+  }
+  actions.innerHTML = waiting ? "" : '<button class="button primary" type="button" data-empty-action="add">Add a job</button>' +
+    (done ? '<button class="button secondary" type="button" data-empty-action="applied">View applied (' + done + ')</button>' : '');
+  for (const button of actions.querySelectorAll("[data-empty-action]")) button.addEventListener("click", () => {
+    if (button.dataset.emptyAction === "add") return $("new-item-button").click();
+    filter = "applied";
+    renderList();
+  });
 }

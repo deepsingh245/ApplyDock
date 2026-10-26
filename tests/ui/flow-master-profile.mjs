@@ -121,6 +121,12 @@ try {
   await b.click('[data-re="recommend-profile"]');
   await b.waitFor(`[...document.querySelectorAll(".re-suggestion")].some(card => card.querySelector(".re-suggestion-source"))`, 30000);
   log("recommend from profile produced", await b.eval(`document.querySelectorAll(".re-suggestion").length`), "suggestion cards");
+  // The form and the side panel scroll independently (the page itself does not scroll)
+  const scroll = await b.eval(`(() => { const f = document.querySelector(".re-form-panel"), p = document.querySelector(".re-side-panel"); p.scrollTop = 0; f.scrollTop = 400;
+    return {form: f.scrollTop, side: p.scrollTop, page: Math.round(window.scrollY), formScrolls: f.scrollHeight > f.clientHeight}; })()`);
+  log("independent scroll:", JSON.stringify(scroll));
+  if (!scroll.formScrolls || scroll.form === 0 || scroll.side !== 0 || scroll.page !== 0) throw new Error("Editor panels do not scroll independently");
+  await b.eval(`document.querySelector(".re-form-panel").scrollTop = 0; true`);
   await b.click('[data-side="analysis"]');
   const profileCard = await b.eval(`[...document.querySelectorAll(".re-suggestion")].find(card => card.querySelector(".re-suggestion-project")).dataset.suggestion`);
   log("profile suggestion:", await b.eval(`document.querySelector('[data-suggestion="${profileCard}"]').innerText.replace(/\\s+/g, " ").slice(0, 300)`));
@@ -140,7 +146,7 @@ try {
   await b.click('[data-re="save-version"]');
   await noticeIncludes("Saved version");
   await b.click('[data-re="use-for-application"]');
-  await b.sleep(800);
+  await noticeIncludes("will attach version");
 
   // 6. Record the submission and open the exact file
   await b.click("#applications-button");
@@ -172,6 +178,13 @@ try {
   await b.click('[data-filter="all"]');
   await b.waitFor(`document.querySelectorAll("#entry-list .queue-item").length === 1`, 10000);
   log("back in All after un-rejecting");
+  // Home: with nothing left to do, no application is opened and the empty state says so
+  await b.goto(BASE);
+  await b.waitFor(`!document.getElementById("app-view").hidden`);
+  const home = await b.eval(`document.querySelector("#empty-editor h2").textContent + " | editor hidden: " + document.getElementById("editor-view").hidden`);
+  log("home:", home);
+  if (!home.startsWith("No active applications | editor hidden: true")) throw new Error("Home did not show the empty state");
+  await b.shot("p5c-home-empty");
 
   // 7. The library shows where the resume was used
   await b.click("#settings-button");
@@ -196,6 +209,7 @@ try {
   await b.size(375, 812, true);
   await b.click("#settings-button");
   await b.click('[data-settings-tab="profile"]');
+  await b.waitFor(`document.querySelector('[data-profile-tab="projects"]')`, 10000);
   await b.click('[data-profile-tab="projects"]');
   await b.sleep(400);
   await b.shot("p6-mobile-projects");
