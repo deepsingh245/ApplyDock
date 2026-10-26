@@ -51,9 +51,11 @@ export async function launch() {
     },
     // Wait for the new document to finish loading (a fixed delay let a slow first load overlap the next navigation).
     async goto(url) {
+      // Mark the current document so a reload of the same URL is not mistaken for the old, already-loaded page.
+      await api.eval(`window.__previousDocument = true`).catch(() => {});
       await send("Page.navigate", { url });
       // Evaluating while the old document is torn down throws ("context destroyed"); keep polling through that.
-      const ready = `document.readyState === "complete" && location.href.startsWith(${JSON.stringify(url.split("#")[0])})`;
+      const ready = `!window.__previousDocument && document.readyState === "complete" && location.href.startsWith(${JSON.stringify(url.split("#")[0])})`;
       for (const deadline = Date.now() + 15000; Date.now() < deadline;) {
         await api.sleep(150);
         if (await api.eval(ready).catch(() => false)) break;

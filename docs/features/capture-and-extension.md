@@ -14,6 +14,25 @@
 | `applydock/applications.py` | `capture()`, `canonical_url()`, `public_https_url()`, `platform_for_host()`, contact email detection |
 | `tests/test_post_extraction.js` | Runs `extractPage` against a LinkedIn post fixture |
 
+## Side panel design and behavior (0.8.0)
+
+The side panel follows the dashboard's design system ([DESIGN.md](../../DESIGN.md)): the same color tokens (copied into
+`sidepanel.css`; `tests/test_architecture.py` fails on drift), bundled IBM Plex fonts (`extension/fonts/`, OFL), the ApplyDock
+brand, icon actions with the **Settings gear last**, theme button that follows the system until you choose, list rows with the
+estimated-match score and status chips, and settings cards collapsed behind **Configure**. It applies the same rules:
+
+- **All / Applied / Rejected** filters; rejected applications appear only under Rejected; Applied also lists sent ones.
+- On open it expands the first application that still needs action, or shows *No active applications*.
+- Details show the estimated match, the attached resume version, and the **submission record** (with the exact PDF). Delivery
+  buttons are hidden once a submission is recorded; a Gmail draft or approval is never shown as submitted.
+- **Open analysis**, **Optimize resume**, **Mark as submitted**, and **Open Master Profile** open the dashboard on exactly that
+  application or page: the panel pairs the tab and dispatches `applydock-open` with `{entryId, action}`
+  (`analysis | optimize | submission | profile`), handled in `dashboard/js/main.js`.
+- Remove from ApplyDock moved from every row into the opened item's details.
+
+Browser test: `tests/ui/flow-extension.mjs` loads the real `sidepanel.html` from the sandbox (`/__extension/`, test-only) with
+stubbed `chrome.*` APIs.
+
 ## Rules
 
 - **Deduplication:** URLs are canonicalized (LinkedIn job and post IDs, tracking parameters stripped). The same canonical URL returns the existing entry (`duplicate: true`).

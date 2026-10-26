@@ -47,7 +47,7 @@ Add or update tests with every behavior change:
 | `test_resume_*.py` | Resume editor modules |
 | `test_career.py` | Master Profile, link checks, profile suggestions, submission history |
 | `test_http_smoke.py` | The real server over HTTP |
-| `tests/ui/flow-*.mjs` | Browser flows |
+| `tests/ui/flow-*.mjs` | Browser flows (`flow-extension.mjs` covers the side panel) |
 
 Run `py -3 scripts/check.py` before finishing.
 

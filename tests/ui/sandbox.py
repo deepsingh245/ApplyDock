@@ -107,6 +107,23 @@ def seed():
                                 "category_scores": {}, "warnings": [], "resume_version": 1}), ats.now_iso(), run["id"]))
 
 
+def serve_extension_for_tests():
+    """Serve extension/ under /__extension/ so a browser test can load the side panel same-origin with the API.
+
+    Test-only: the real helper never serves extension files.
+    """
+    from applydock import http_server
+    root = (REPO / "extension").resolve()
+    original = http_server.dashboard_file
+
+    def dashboard_or_extension_file(url_path):
+        if url_path.startswith("/__extension/"):
+            candidate = (root / url_path[len("/__extension/"):]).resolve()
+            return candidate if candidate.is_relative_to(root) and candidate.is_file() and candidate.suffix in http_server.STATIC_TYPES else None
+        return original(url_path)
+    http_server.dashboard_file = dashboard_or_extension_file
+
+
 def main():
     data_dir, port = Path(sys.argv[1]), int(sys.argv[2])
     config.set_data_dir(data_dir)
@@ -117,6 +134,7 @@ def main():
     database.init_db()
     ats._run_codex = fake_codex
     linkcheck.check_url = fake_link_check
+    serve_extension_for_tests()
     ats.codex_status = lambda force=False: {"installed": True, "connected": True, "checked": True, "model": ats.MODEL, "message": "Sandbox"}
     if not resumes.resumes():
         seed()

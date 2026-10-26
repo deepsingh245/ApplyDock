@@ -3,23 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
-  <title>Applications</title>
+  <meta name="color-scheme" content="light dark">
+  <title>ApplyDock</title>
   <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
   <div class="shell">
     <header class="topbar">
-      <div>
-        <h1>Applications</h1>
-        <p class="connection"><span id="connection-dot" class="connection-dot"></span><span id="connection-label">Checking local app…</span></p>
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">A</span>
+        <div><h1>ApplyDock</h1><p class="connection" role="status"><span id="connection-dot" class="connection-dot"></span><span id="connection-label">Checking local app…</span></p></div>
       </div>
       <div class="header-actions">
-        <label class="theme-control" for="theme-toggle">Night <input id="theme-toggle" type="checkbox" role="switch" aria-label="Night mode"></label>
-        <button id="open-web" class="utility-button icon-button" type="button" aria-label="Open ApplyDock in a web page" title="Open in web">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 5h6v6"/><path d="M19 5l-9 9"/><path d="M19 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg>
-        </button>
-        <button id="settings-open" class="utility-button" type="button">Settings</button>
+        <button id="open-web" class="icon-action" type="button" aria-label="Open the ApplyDock dashboard" title="Open the dashboard"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></button>
+        <button id="theme-button" class="icon-action" type="button" aria-label="Switch to dark mode" title="Switch to dark mode"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.98 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.77 9.79Z"/></svg></button>
+        <button id="settings-open" class="icon-action settings-gear" type="button" aria-label="Settings" title="Settings"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
       </div>
     </header>
 
@@ -55,9 +53,10 @@
 
       <section class="list-section" aria-labelledby="captured-heading">
         <div class="section-heading">
-          <h2 id="captured-heading">Captured <span id="count" class="count">0</span></h2>
-          <button id="refresh" class="text-button" type="button">Refresh</button>
+          <h2 id="captured-heading">Applications <span id="count" class="count">0</span></h2>
+          <button id="refresh" class="icon-action" type="button" aria-label="Refresh from Notion" title="Refresh from Notion"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></button>
         </div>
+        <div id="filters" class="filter-row" role="group" aria-label="Filter applications"><button type="button" data-filter="all" class="active" aria-pressed="true">All</button><button type="button" data-filter="applied" aria-pressed="false">Applied</button><button type="button" data-filter="rejected" aria-pressed="false">Rejected <span id="rejected-count" class="count"></span></button></div>
         <div id="list" class="entry-list"></div>
       </section>
       <footer class="capture-footer">Only approved emails are sent at 9:00 AM local time.</footer>
@@ -65,7 +64,7 @@
 
     <main id="settings-screen" hidden>
       <div class="settings-heading">
-        <button id="settings-back" class="back-button" type="button">← Back</button>
+        <button id="settings-back" class="back-button" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>Applications</button>
         <h2>Settings</h2>
         <p>Connections and your writing profile stay on this computer.</p>
       </div>
@@ -127,6 +126,12 @@
       </section>
 
       <section class="settings-card">
+        <div class="settings-card-head"><h3>Master Profile</h3><span id="master-profile-status" class="small-status"></span></div>
+        <p class="muted">Your verified experience, projects, and skills. ApplyDock matches jobs against it and suggests resume additions from it. Edit it in the dashboard.</p>
+        <button id="master-profile-open" class="secondary-button gmail-settings-action" type="button">Open Master Profile</button>
+      </section>
+
+      <section class="settings-card">
         <div class="settings-card-head"><h3>Resume library</h3><span id="resume-library-status" class="small-status"></span></div>
         <p class="muted">Upload resumes once and reuse them across applications.</p>
         <button id="resumes-open" class="secondary-button gmail-settings-action" type="button">Manage resumes</button>
@@ -146,8 +151,8 @@
 
     <main id="resumes-screen" hidden>
       <div class="settings-heading">
-        <button id="resumes-back" class="back-button" type="button">← Back</button>
-        <div class="resume-heading-row"><h2>Resume Library</h2><button id="resume-refresh" class="utility-button icon-button" type="button" aria-label="Refresh resume library" title="Refresh resume library"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M6.1 9a7 7 0 0 1 11.8-2.2L20 9M4 15l2.1 2.2A7 7 0 0 0 17.9 15"/></svg></button></div>
+        <button id="resumes-back" class="back-button" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>Settings</button>
+        <div class="resume-heading-row"><h2>Resume library</h2><button id="resume-refresh" class="icon-action" type="button" aria-label="Refresh resume library" title="Refresh resume library"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M6.1 9a7 7 0 0 1 11.8-2.2L20 9M4 15l2.1 2.2A7 7 0 0 0 17.9 15"/></svg></button></div>
         <p>Files stay private on this computer and can be reused for every application.</p>
       </div>
       <section class="settings-card">

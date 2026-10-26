@@ -336,6 +336,25 @@ window.addEventListener("beforeunload", event => { if (dirty) { event.preventDef
 
 window.addEventListener("applydock-paired", () => load().catch(error => { showPair(); notify(error.message, true); }));
 
+// The extension opens the dashboard on one application (and optionally its analysis, tailoring, or
+// submission form), or on the Master Profile: detail = {entryId, action}.
+window.addEventListener("applydock-open", async event => {
+  const {entryId = "", action = ""} = event.detail || {};
+  try {
+    await load();
+    if (action === "profile") { showView("settings"); setSettingsTab("profile"); return; }
+    const entry = (state.entries || []).find(item => item.id === entryId);
+    if (!entry) return notify("That application is no longer in ApplyDock.", true);
+    selectedId = entry.id;
+    showView("queue");
+    render(true);
+    document.body.classList.add("detail-open");
+    if (action === "analysis") return entry.analysis?.id ? openAnalysis(entry.analysis.id) : runAnalysis(entry);
+    if (action === "optimize") return openResumeEditorForEntry(entry, "optimize");
+    if (action === "submission") { setEditorTab("resume"); openSubmissionForm(entry); }
+  } catch (error) { notify(error.message, true); }
+});
+
 window.ApplyDock = {
   api, notify, load, esc, showView, dateLabel, openAnalysis, openProfileItem, coverageLabel, profileChangedSince,
   state: () => state,

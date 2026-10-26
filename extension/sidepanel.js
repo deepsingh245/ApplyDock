@@ -13,11 +13,27 @@ let pendingCapture = null;
 let unsavedForm = false;
 const emailOpenIds = new Set();
 let previewEmailOpen = false;
+let filter = "all";
 const FALLBACK_APPLICATION_STAGES = ["Initiated", "To apply", "No Answer", "Applied", "Offer", "Rejected"];
 const STAGES_AFTER_APPLY = new Set(["applied", "no answer", "offer", "rejected"]);
 
 function stageIsAfterApply(value) {
   return STAGES_AFTER_APPLY.has(String(value || "").trim().toLowerCase());
+}
+
+// Same rules as the dashboard: rejected applications only appear under the Rejected filter, and
+// "needs action" means not sent, not submitted, not past Applied, and not rejected.
+function isRejected(entry) {
+  return String(entry?.application_stage || "").trim().toLowerCase() === "rejected";
+}
+
+function needsAction(entry) {
+  return entry.status !== "sent" && !entry.submission && !isRejected(entry) && !stageIsAfterApply(entry.application_stage);
+}
+
+function shortDate(iso) {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(undefined, {month: "short", day: "numeric", year: "numeric"});
 }
 
 function platformLabel(url) {
@@ -156,6 +172,36 @@ function deliveryLabel(entry) {
   return ({gmail_draft: "Gmail draft", gmail_schedule_pending: "Schedule in Gmail", gmail_scheduled: "Gmail scheduled"})[entry.delivery_mode] || statusLabel(entry.status);
 }
 
+// Estimated match and the next steps that live in the dashboard (analysis, tailoring, Master Profile).
+function summaryHtml(entry) {
+  const analysis = entry.analysis || {};
+  const id = escapeHtml(entry.id);
+  const score = analysis.overall_score;
+  const tone = score == null ? "neutral" : score >= 75 ? "strong" : score >= 50 ? "medium" : "weak";
+  const actions = [];
+  if (analysis.id) actions.push(`<button class="secondary-button web-action" type="button" data-id="${id}" data-web-action="analysis">Open analysis</button>`);
+  if (analysis.status === "complete" && entry.resume?.available && !entry.submission)
+    actions.push(`<button class="secondary-button web-action" type="button" data-id="${id}" data-web-action="optimize">Optimize resume</button>`);
+  if (!analysis.id) actions.push(`<button class="secondary-button web-action" type="button" data-id="${id}" data-web-action="analysis">Run analysis in dashboard</button>`);
+  return `<div class="entry-summary"><span class="eyebrow">Estimated match</span>
+    <div class="score-figure ${tone}"><strong>${score == null ? "—" : escapeHtml(Number(score).toFixed(1))}</strong><span>/ 100</span></div>
+    <div class="score-meter ${tone}"><i style="width:${Math.max(0, Math.min(100, Number(score || 0)))}%"></i></div>
+    <p class="hint">${escapeHtml(analysis.label || "Not analyzed")}${analysis.missing_mandatory ? ` · ${escapeHtml(analysis.missing_mandatory)} required gap${analysis.missing_mandatory === 1 ? "" : "s"}` : ""}</p>
+    <div class="form-actions">${actions.join("")}</div></div>`;
+}
+
+// The exact file recorded as sent. A Gmail draft or an approval is never shown as a submission.
+function submissionHtml(entry) {
+  const item = entry.submission;
+  if (item) return `<div class="submission-box"><div class="settings-card-head"><strong>Submitted resume</strong><span class="small-status good">Submitted</span></div>
+    <dl class="kv"><dt>Resume</dt><dd>${escapeHtml(item.resume_name || "Deleted resume")} — v${escapeHtml(item.version_number)}</dd>
+    <dt>Date</dt><dd>${escapeHtml(shortDate(item.submitted_at))}</dd><dt>Source</dt><dd>${escapeHtml(item.channel_label)}</dd></dl>
+    <div class="form-actions"><a class="secondary-button" href="${escapeHtml(item.file_url)}" target="_blank" rel="noopener noreferrer">View PDF</a></div></div>`;
+  if (entry.status === "sending" || entry.status === "sent") return "";
+  return `<div class="submission-box quiet-box"><p class="hint">Not recorded as submitted. A Gmail draft or approval is not a submission.</p>
+    <button class="text-button web-action" type="button" data-id="${escapeHtml(entry.id)}" data-web-action="submission">Mark as submitted in the dashboard</button></div>`;
+}
+
 function entryHtml(entry) {
   const editable = !["sending", "sent"].includes(entry.status) && entry.delivery_mode !== "gmail_scheduled";
   const stageEditable = !["sending", "sent"].includes(entry.status);
@@ -163,16 +209,18 @@ function entryHtml(entry) {
   const id = escapeHtml(entry.id);
   const emailOpen = emailOpenIds.has(entry.id) || entry.apply_method === "email";
   const isPost = entry.kind === "post";
-  return `<article class="entry">
-    <div class="entry-head">
-      <button class="entry-toggle" type="button" data-id="${id}" aria-expanded="${expanded}" aria-controls="details-${id}">
-        <span class="entry-title-group"><span class="entry-title">${escapeHtml(entry.title)}</span><span class="entry-company">${escapeHtml(entry.company || (entry.kind === "job" ? "Job" : "Hiring post"))} · ${escapeHtml(platformLabel(entry.url))}${entry.application_stage ? ` · ${escapeHtml(entry.application_stage)}` : ""}</span></span>
-        <span class="badge ${escapeHtml(entry.delivery_mode === "local" ? entry.status : entry.delivery_mode)}">${escapeHtml(deliveryLabel(entry))}</span>
-        <span class="view-label" aria-hidden="true">${expanded ? "Close" : "View"}</span>
-      </button>
-      ${entry.status !== "sending" ? `<button class="entry-delete local-delete" type="button" data-id="${id}" aria-label="Delete ${escapeHtml(entry.title)} from ApplyDock" title="Delete from ApplyDock">Delete</button>` : ""}
-    </div>
+  const analysis = entry.analysis || {};
+  const score = analysis.overall_score != null ? Number(analysis.overall_score).toFixed(1) : "—";
+  const review = entry.needs_review && !stageIsAfterApply(entry.application_stage);
+  return `<article class="entry${expanded ? " open" : ""}">
+    <button class="entry-toggle" type="button" data-id="${id}" aria-expanded="${expanded}" aria-controls="details-${id}">
+      <span class="entry-top"><span class="entry-title">${escapeHtml(entry.title)}</span><span class="entry-score${analysis.stale ? " stale" : ""}" title="${escapeHtml(analysis.label || "Not analyzed")}">${escapeHtml(score)}</span></span>
+      <span class="entry-company">${escapeHtml(entry.company || (entry.kind === "job" ? "Company not set" : "Hiring post"))} · ${escapeHtml(platformLabel(entry.url))}</span>
+      <span class="entry-chips"><span class="badge ${escapeHtml(entry.delivery_mode === "local" ? entry.status : entry.delivery_mode)}">${escapeHtml(deliveryLabel(entry))}</span>${entry.application_stage ? `<span class="badge stage">${escapeHtml(entry.application_stage)}</span>` : ""}${review ? '<span class="badge review">Needs review</span>' : ""}${entry.submission ? '<span class="badge approved">Submitted</span>' : ""}</span>
+    </button>
     <div class="entry-details" id="details-${id}" ${expanded ? "" : "hidden"}>
+      ${summaryHtml(entry)}
+      ${submissionHtml(entry)}
       <div class="detail-links">
         <div class="detail-line"><span class="detail-label">Source</span><a class="detail-value" href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer">Open ${escapeHtml(platformLabel(entry.url))} ${escapeHtml(entry.kind)}</a></div>
         ${entry.apply_url ? `<div class="detail-line"><span class="detail-label">Apply</span><a class="detail-value" href="${escapeHtml(entry.apply_url)}" target="_blank" rel="noopener noreferrer">Open application form</a></div>` : ""}
@@ -182,6 +230,7 @@ function entryHtml(entry) {
         <div class="detail-line"><span class="detail-label">Route</span><span class="detail-value">${escapeHtml(({email:"Email application",external_form:"External form",unknown:"Not decided"})[entry.apply_method] || "Not decided")}</span></div>
         ${entry.gmail_draft_id ? `<div class="detail-line"><span class="detail-label">Gmail</span><span class="detail-value">Draft in ${escapeHtml(entry.gmail_account || "your connected account")}${entry.gmail_dirty ? " · local changes need an update" : ""}</span></div>` : ""}
         ${entry.apply_method === "email" ? `<div class="detail-line"><span class="detail-label">Resume</span><span class="detail-value">${escapeHtml(entry.readiness_status || entry.resume_status)}</span></div>` : ""}
+        ${entry.resume_version ? `<div class="detail-line"><span class="detail-label">Attaches</span><span class="detail-value">v${escapeHtml(entry.resume_version.version_number)} · ${escapeHtml(entry.resume_version.filename)}${entry.resume_version.pinned ? " · pinned" : ""}</span></div>` : ""}
         ${entry.delivery_mode === "gmail_scheduled" ? `<div class="detail-line"><span class="detail-label">Scheduled</span><a href="https://mail.google.com/mail/#scheduled" target="_blank" rel="noopener noreferrer">Check Gmail Scheduled</a></div>` : ""}
         ${entry.apply_method === "email" && entry.delivery_mode === "local" ? `<div class="detail-line"><span class="detail-label">Send</span><span class="detail-value">${escapeHtml(displayTime(entry.send_at))}</span></div>` : ""}
       </div>
@@ -211,7 +260,7 @@ function entryHtml(entry) {
             <label>Resume<select name="resume_id" ${editable ? "" : "disabled"}>${resumeOptions(entry.resume_id, entry.resume)}</select></label>
             <span class="attached ${entry.resume_status === "Resume Selected" ? "resume-ok" : "resume-missing"}">${entry.resume_status === "Resume Selected" ? `Resume Selected · ${escapeHtml(entry.resume.name)} · ${escapeHtml(entry.resume.category)}` : "Resume Missing · choose one before sending"}</span>
             <div class="delivery-group"><strong>Local 9 AM sender</strong><span class="hint">Set this date only for local SMTP. Leave it empty for Gmail drafts.</span><input name="send_at" type="datetime-local" step="60" value="${escapeHtml(localInput(entry.send_at))}" ${editable ? "" : "disabled"}></div>
-            ${editable ? `<div class="form-actions email-actions">
+            ${editable && !entry.submission ? `<div class="form-actions email-actions">
               ${entry.status === "approved" ? `<button class="primary-button unapprove" type="button" data-id="${id}">Remove approval</button>` : entry.delivery_mode === "local" ? `<button class="primary-button approve" type="button" data-id="${id}">Approve for local 9 AM</button>` : ""}
               <button class="secondary-button gmail-draft" type="button" data-id="${id}">${entry.gmail_draft_id ? "Update Gmail draft" : "Save to Gmail Drafts"}</button><button class="secondary-button gmail-prepare" type="button" data-id="${id}">Prepare Gmail schedule</button>
               ${entry.delivery_mode === "gmail_schedule_pending" && !entry.gmail_dirty ? `<button class="text-button gmail-scheduled" type="button" data-id="${id}">I scheduled it in Gmail</button>` : ""}
@@ -221,16 +270,30 @@ function entryHtml(entry) {
           ${stageEditable ? `<div class="form-actions save-row"><button class="secondary-button save-entry" type="submit">${editable ? "Save changes" : "Save stage"}</button></div>` : ""}
         </div>
       </form>
+      ${entry.status !== "sending" ? `<div class="entry-remove-row"><button class="text-button danger local-delete" type="button" data-id="${id}">Remove from ApplyDock</button></div>` : ""}
     </div>
   </article>`;
 }
 function renderEntries() {
   const list = $("list");
-  const entries = (state?.entries || []).filter(entry => entry.status !== "sent");
-  $("count").textContent = entries.length;
+  const all = state?.entries || [];
+  const active = all.filter(entry => entry.status !== "sent" && !isRejected(entry));
+  const rejected = all.filter(isRejected);
+  // "Applied" is the history view: it also lists sent applications, which otherwise leave the list.
+  const entries = filter === "rejected" ? rejected
+    : filter === "applied" ? all.filter(entry => !isRejected(entry) && (stageIsAfterApply(entry.application_stage) || entry.status === "sent" || entry.submission))
+    : active;
+  $("count").textContent = active.length;
+  $("rejected-count").textContent = rejected.length || "";
+  for (const button of $("filters").querySelectorAll("[data-filter]")) {
+    button.classList.toggle("active", button.dataset.filter === filter);
+    button.setAttribute("aria-pressed", String(button.dataset.filter === filter));
+  }
   if (openId && !entries.some(entry => entry.id === openId)) openId = "";
-  list.innerHTML = entries.length ? entries.map(entryHtml).join("") :
-    '<div class="empty">No active items. Capture a job or hiring post to start; sent applications remain in Notion.</div>';
+  const empty = filter === "rejected" ? "No rejected applications."
+    : filter === "applied" ? "Nothing applied yet."
+    : all.some(needsAction) ? "Nothing matches this view." : "<strong>No active applications.</strong> Capture the next job or hiring post when you find it.";
+  list.innerHTML = entries.length ? entries.map(entryHtml).join("") : `<div class="empty">${empty}</div>`;
   list.querySelectorAll(".entry-toggle").forEach(button => button.addEventListener("click", () => {
     openId = openId === button.dataset.id ? "" : button.dataset.id;
     renderEntries();
@@ -285,6 +348,7 @@ function renderEntries() {
   list.querySelectorAll(".gmail-scheduled").forEach(button => button.addEventListener("click", () => markGmailScheduled(button.dataset.id, button)));
   list.querySelectorAll(".ai-copy").forEach(button => button.addEventListener("click", () => copyPrompt(button.dataset.id)));
   list.querySelectorAll(".local-delete").forEach(button => button.addEventListener("click", () => removeEntry(button.dataset.id)));
+  list.querySelectorAll(".web-action").forEach(button => button.addEventListener("click", () => openWebWorkspace({entryId: button.dataset.id, action: button.dataset.webAction})));
 }
 
 function renderSettings() {
@@ -311,6 +375,8 @@ function renderSettings() {
   $("profile").value = state.candidate_profile || "";
   $("profile-status").textContent = state.profile_saved ? "Saved" : "Not saved";
   $("profile-status").className = "small-status" + (state.profile_saved ? " good" : "");
+  $("master-profile-status").textContent = state.profile_hash ? "In use" : "Not set up";
+  $("master-profile-status").className = "small-status" + (state.profile_hash ? " good" : "");
   $("resume-library-status").textContent = `${(state.resumes || []).length} saved`;
   $("resume-library-status").className = "small-status" + ((state.resumes || []).length ? " good" : "");
 }
@@ -355,7 +421,8 @@ async function removeEntry(id) {
 async function load() {
   state = await api("/api/state");
   if (firstLoad) {
-    openId = state.entries.find(entry => entry.status !== "sent")?.id || "";
+    // Open the first application that still needs action; none when everything is applied or closed.
+    openId = state.entries.find(needsAction)?.id || "";
     firstLoad = false;
   }
   renderEntries();
@@ -368,7 +435,8 @@ function showScreen(name) {
   $("capture-screen").hidden = name !== "capture";
   $("settings-screen").hidden = name !== "settings";
   $("resumes-screen").hidden = name !== "resumes";
-  $("settings-open").hidden = name !== "capture";
+  // The gear stays in the header (as in the dashboard) and shows when Settings is open.
+  $("settings-open").classList.toggle("active", name !== "capture");
   if (name === "settings") $("pairing-key").value = pairingKey;
   window.scrollTo(0, 0);
 }
@@ -657,7 +725,9 @@ async function saveSettings(event, path, success) {
   finally { button.disabled = false; }
 }
 
-async function openWebWorkspace() {
+// Opens the dashboard, pairs it, and optionally jumps to one application's analysis, tailoring, or
+// submission form, or to the Master Profile (detail = {entryId, action}).
+async function openWebWorkspace(detail = null) {
   try {
     const tab = await chrome.tabs.create({url: `${API}/`});
     if (!pairingKey || !tab.id) return;
@@ -666,11 +736,12 @@ async function openWebWorkspace() {
         await chrome.scripting.executeScript({
           target: {tabId: tab.id},
           world: "MAIN",
-          func: key => {
+          func: (key, open) => {
             sessionStorage.setItem("pairingKey", key);
             window.dispatchEvent(new Event("applydock-paired"));
+            if (open) window.dispatchEvent(new CustomEvent("applydock-open", {detail: open}));
           },
-          args: [pairingKey]
+          args: [pairingKey, detail]
         });
       } catch { /* The web page can still be paired manually. */ }
     };
@@ -682,8 +753,15 @@ async function openWebWorkspace() {
   } catch (error) { notice(error.message || "Could not open the web workspace."); }
 }
 
-$("settings-open").addEventListener("click", () => showScreen("settings"));
-$("open-web").addEventListener("click", openWebWorkspace);
+$("settings-open").addEventListener("click", () => showScreen($("capture-screen").hidden ? "capture" : "settings"));
+$("open-web").addEventListener("click", () => openWebWorkspace());
+$("master-profile-open").addEventListener("click", () => openWebWorkspace({action: "profile"}));
+$("filters").addEventListener("click", event => {
+  const button = event.target.closest("[data-filter]");
+  if (!button) return;
+  filter = button.dataset.filter;
+  renderEntries();
+});
 $("settings-back").addEventListener("click", () => showScreen("capture"));
 $("resumes-open").addEventListener("click", () => showScreen("resumes"));
 $("resumes-back").addEventListener("click", () => showScreen("settings"));
@@ -696,11 +774,43 @@ $("resume-refresh").addEventListener("click", async event => {
   finally { button.disabled = false; button.classList.remove("refreshing"); }
 });
 $("capture").addEventListener("click", captureCurrent);
-$("theme-toggle").addEventListener("change", async event => {
-  const theme = event.currentTarget.checked ? "dark" : "light";
+const MOON = '<path d="M20.98 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.77 9.79Z"/>';
+const SUN = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>';
+
+function setTheme(theme) {
   document.documentElement.dataset.theme = theme;
+  const label = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+  $("theme-button").setAttribute("aria-label", label);
+  $("theme-button").title = label;
+  $("theme-button").querySelector("svg").innerHTML = theme === "dark" ? SUN : MOON;
+}
+
+$("theme-button").addEventListener("click", async () => {
+  const theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  setTheme(theme);
   await chrome.storage.local.set({theme});
 });
+
+// Settings cards start collapsed behind a Configure button (as in the dashboard); pairing stays open.
+function initializeSettingsCards() {
+  for (const card of [...document.querySelectorAll("#settings-screen .settings-card")].slice(1)) {
+    const head = card.querySelector(".settings-card-head");
+    if (!head || head.querySelector(".settings-card-toggle")) continue;
+    card.classList.add("collapsible");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "settings-card-toggle";
+    button.textContent = "Configure";
+    button.setAttribute("aria-expanded", "false");
+    button.addEventListener("click", () => {
+      const open = card.classList.toggle("expanded");
+      button.textContent = open ? "Close" : "Configure";
+      button.setAttribute("aria-expanded", String(open));
+    });
+    head.append(button);
+  }
+}
+initializeSettingsCards();
 $("preview-cancel").addEventListener("click", () => {
   pendingCapture = null;
   $("capture-preview").hidden = true;
@@ -819,9 +929,8 @@ chrome.runtime.onMessage.addListener(message => {
 (async () => {
   const settings = await chrome.storage.local.get(["pairingKey","theme"]);
   pairingKey = settings.pairingKey || "";
-  const dark = settings.theme === "dark";
-  $("theme-toggle").checked = dark;
-  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  // Follow the system theme until the user picks one.
+  setTheme(settings.theme || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
   updateCaptureLabel();
   const {pendingCapture: savedPreview} = await chrome.storage.session.get("pendingCapture");
   if (savedPreview) {
