@@ -12,7 +12,8 @@ try {
   log("app loaded");
 
   // 1. Resume library -> import & edit the master
-  await b.click("#resumes-button");
+  await b.click("#settings-button");
+  await b.click("#settings-resume-library");
   await b.waitFor(`document.querySelector("[data-open-resume-editor]")`);
   await b.shot("01-library");
   await b.click("[data-open-resume-editor]");

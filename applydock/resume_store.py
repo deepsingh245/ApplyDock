@@ -26,7 +26,7 @@ from . import resume_model
 from . import resume_render
 
 # v2: suggestions can draw on Master Profile evidence (source_profile_id) and add a whole profile project.
-SUGGESTION_VERSION = "suggest-v2"
+SUGGESTION_VERSION = "suggest-v3"  # v3: may propose a summary when the resume has none
 JOB_WAKE = threading.Event()
 JOB_STOP = threading.Event()
 MAX_SUGGESTIONS = 15
@@ -385,6 +385,9 @@ def suggestion_prompt(content: dict, requirements: list, jd_text: str, profile_b
     items = [{"target_id": item["target_id"], "field": item["field"], "section": item["section"], "label": item["label"], "text": item["text"]}
              for item in resume_model.iter_items(content)
              if item["section"] != "basics" or (item["target_id"] == "basics" and item["field"] == "label")]
+    if not content["basics"].get("summary"):
+        # An empty summary is offered too, so a job-specific one can be proposed (as a 'replace' of empty text).
+        items.insert(0, {"target_id": "basics", "field": "summary", "section": "summary", "label": "summary", "text": ""})
     gaps = [{"requirement_id": item["id"], "requirement": item["requirement"], "status": item["status"],
              "coverage": item.get("coverage", ""), "profile_evidence_ids": item.get("profile_evidence_ids", []),
              "recommendation": item.get("recommendation", ""), "explanation": item.get("explanation", "")}
@@ -406,6 +409,8 @@ def suggestion_prompt(content: dict, requirements: list, jd_text: str, profile_b
             "'projects', field 'text') to add a profile project the resume lacks, with proposed_text as one bullet about it. "
             "Pick only records relevant to this job; prefer recent, substantial work; never duplicate what the resume already says.\n"
             "- Leave source_profile_id empty when the suggestion uses only the resume.\n"
+            "- If the summary item's text is empty, you may propose a 2-3 sentence summary for this job (operation 'replace', "
+            "original_text empty) built only from facts in the resume items and profile evidence.\n"
             "- Never invent employers, job titles, degrees, certifications, projects, dates, metrics, percentages, team sizes, or results. "
             "Requirements with coverage 'unsupported' have no evidence anywhere: do not write content for them. If you reword toward a "
             "requirement in a way the evidence does not state outright, set claim_type 'new_claim' so the candidate verifies it. "

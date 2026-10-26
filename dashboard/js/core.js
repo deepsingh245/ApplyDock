@@ -55,6 +55,11 @@ function stageIsAfterApply(value) {
   return STAGES_AFTER_APPLY.has(String(value || "").trim().toLowerCase());
 }
 
+// Rejected applications stay out of every list view except the Rejected filter.
+function isRejected(entry) {
+  return String(entry?.application_stage || "").trim().toLowerCase() === "rejected";
+}
+
 function localInput(iso) {
   if (!iso) return "";
   const date = new Date(iso);

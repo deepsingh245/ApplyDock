@@ -25,8 +25,10 @@ function showView(name, scrollToTop = true) {
   const navView = name === "create" ? "queue" : name === "resume-editor" ? "resumes" : name;
   const labels = {queue: "Applications", create: "Applications", resumes: "Resume Library", analysis: "ATS Analysis", settings: "Settings", "resume-editor": "Resume Editor"};
   $("breadcrumb-current").textContent = labels[name] || "Applications";
-  for (const [id, view] of [["applications-button", "queue"], ["resumes-button", "resumes"], ["analysis-nav-button", "analysis"], ["settings-button", "settings"]])
-    $(id).classList.toggle("active", view === navView);
+  // No sidebar: the brand returns to Applications and the gear opens Settings.
+  $("settings-button").classList.toggle("active", navView === "settings");
+  if (navView === "settings") $("settings-button").setAttribute("aria-current", "page");
+  else $("settings-button").removeAttribute("aria-current");
   if (scrollToTop) window.scrollTo(0, 0);
 }
 
@@ -76,18 +78,12 @@ $("applications-button").addEventListener("click", () => showView("queue"));
 
 $("settings-button").addEventListener("click", () => showView("settings"));
 
-$("resumes-button").addEventListener("click", () => showView("resumes"));
+$("settings-resume-library").addEventListener("click", () => showView("resumes"));
 
 $("resume-upload-toggle").addEventListener("click", () => {
   const form = $("resume-upload-form");
   form.hidden = !form.hidden;
   $("resume-upload-toggle").textContent = form.hidden ? "＋ Upload resume" : "Close upload";
-});
-
-$("analysis-nav-button").addEventListener("click", async () => {
-  const entry = selectedEntry();
-  if (entry?.analysis?.id) await openAnalysis(entry.analysis.id);
-  else showView("analysis");
 });
 
 for (const button of document.querySelectorAll("[data-editor-tab]")) button.addEventListener("click", async () => {

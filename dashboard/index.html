@@ -22,12 +22,13 @@
   <!-- Icons: Lucide (ISC license), inlined so the dashboard needs no icon library. -->
   <div class="app-shell">
     <header class="topbar">
-      <div class="brand"><span class="brand-mark" aria-hidden="true">A</span><strong>ApplyDock</strong></div>
+      <button id="applications-button" class="brand" type="button" aria-label="ApplyDock — applications"><span class="brand-mark" aria-hidden="true">A</span><strong>ApplyDock</strong></button>
       <div class="topbar-context"><strong id="breadcrumb-current">Applications</strong></div>
       <div class="topbar-actions">
         <span id="connection-state" class="connection-state" role="status"><span class="status-dot" aria-hidden="true"></span><span id="connection-label">Local helper</span></span>
         <button id="refresh-button" class="icon-action" type="button" aria-label="Refresh from Notion" title="Refresh from Notion"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></button>
         <button id="theme-button" class="icon-action" type="button" aria-label="Switch color theme" title="Switch color theme"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.98 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.77 9.79Z"/></svg></button>
+        <button id="settings-button" class="icon-action settings-gear" type="button" aria-label="Settings" title="Settings"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
       </div>
     </header>
 
@@ -39,20 +40,12 @@
     </main>
 
     <div id="app-view" class="app-body" hidden>
-      <aside class="global-sidebar" aria-label="Workspace navigation">
-        <nav class="workspace-nav">
-          <button id="applications-button" class="workspace-nav-item active" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg><span>Applications</span><small id="nav-application-count">0</small></button>
-          <button id="resumes-button" class="workspace-nav-item" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/></svg><span>Resumes</span></button>
-          <button id="analysis-nav-button" class="workspace-nav-item" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg><span>Analysis</span></button>
-          <button id="settings-button" class="workspace-nav-item" type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></svg><span>Settings</span></button>
-        </nav>
-      </aside>
       <main class="workspace-content">
       <div id="queue-view" class="workspace">
         <aside class="queue-rail" aria-label="Application queue">
           <div class="rail-heading"><h1>Applications <span id="active-count" class="count">0</span></h1><button id="new-item-button" class="button primary new-item" type="button" aria-label="Add a job or post" title="Add a job or post"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg><span>Add</span></button></div>
           <div class="search-wrap"><label class="sr-only" for="search-input">Search applications</label><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="search-input" type="search" placeholder="Search applications"><kbd aria-hidden="true">/</kbd></div>
-          <div id="filters" class="filter-row" role="group" aria-label="Filter applications"><button data-filter="all" class="active" type="button" aria-pressed="true">All</button><button data-filter="to_apply" type="button" aria-pressed="false">To apply</button><button data-filter="review" type="button" aria-pressed="false">Review</button><button data-filter="applied" type="button" aria-pressed="false">Applied</button><button data-filter="scheduled" type="button" aria-pressed="false">Scheduled</button></div>
+          <div id="filters" class="filter-row" role="group" aria-label="Filter applications"><button data-filter="all" class="active" type="button" aria-pressed="true">All</button><button data-filter="to_apply" type="button" aria-pressed="false">To apply</button><button data-filter="review" type="button" aria-pressed="false">Review</button><button data-filter="applied" type="button" aria-pressed="false">Applied</button><button data-filter="scheduled" type="button" aria-pressed="false">Scheduled</button><button data-filter="rejected" type="button" aria-pressed="false">Rejected <span id="rejected-count" class="count"></span></button></div>
           <details class="filter-menu"><summary><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M7 12h10M10 18h4"/></svg>Analysis filters and sort</summary>
             <div class="analysis-controls"><label><span>Analysis</span><select id="analysis-filter"><option value="all">All results</option><option value="complete">Complete</option><option value="stale">Needs reanalysis</option><option value="failed">Failed or limited</option><option value="not_analyzed">Not analyzed</option></select></label><label><span>Score</span><select id="score-filter"><option value="all">Any score</option><option value="high">75–100</option><option value="medium">50–74</option><option value="low">0–49</option></select></label><label class="analysis-sort-control"><span>Sort</span><select id="analysis-sort"><option value="newest">Newest</option><option value="score_desc">Highest match</option><option value="score_asc">Lowest match</option><option value="analyzed">Last analyzed</option></select></label></div>
           </details>
@@ -138,6 +131,7 @@
       </section>
 
       <section id="settings-view" class="secondary-view" hidden>
+        <button class="back-button" data-back type="button"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>Applications</button>
         <div class="view-heading"><h1>Settings</h1><p>Connections and your career profile stay with this local helper.</p></div>
         <div class="editor-tabs settings-tabs" role="tablist" aria-label="Settings sections"><button type="button" role="tab" class="active" aria-selected="true" data-settings-tab="connections">Connections</button><button type="button" role="tab" aria-selected="false" data-settings-tab="profile">Master Profile</button></div>
         <div data-settings-pane="connections">
@@ -148,6 +142,7 @@
           <div class="view-card"><div class="card-heading"><h2>Gmail drafts</h2><span id="gmail-state" class="sub-status"></span></div><p id="gmail-account">Create drafts with attachments in your connected Gmail account.</p><p id="gmail-client-info" class="subtle"></p><form id="gmail-client-form"><label>Google OAuth Desktop app client JSON<input name="client" type="file" accept=".json,application/json" required></label><button class="button secondary" type="submit">Save OAuth client</button></form><div class="stack-actions"><button id="gmail-connect-button" class="button secondary" type="button">Connect Gmail</button><button id="gmail-refresh-button" class="button quiet-button" type="button">Refresh status</button></div></div>
           <form id="profile-form" class="view-card"><div class="card-heading"><h2>AI writing background</h2><span id="profile-state" class="sub-status"></span></div><p>Factual experience used for Codex email drafts and suggestions.</p><label>Your background<textarea name="profile" rows="8" placeholder="Your real experience, skills, and relevant work"></textarea></label><button class="button secondary" type="submit">Save background</button></form>
         </div><aside class="settings-side"><section class="view-card"><h2>Preferences</h2><label>Appearance<select id="appearance-select"><option value="light">Light</option><option value="dark">Dark</option></select></label><label>Default resume<span class="field-help">Used for new applications</span><select id="default-resume-select"></select></label><label class="settings-toggle-row"><span><strong>Notifications</strong><small>Important local status updates</small></span><input id="notifications-toggle" type="checkbox"></label></section>
+          <section class="view-card"><h2>Resume library</h2><p>Upload a resume, edit master resumes, and see where each version was sent.</p><div class="stack-actions"><button id="settings-resume-library" class="button secondary" type="button">Open resume library</button></div></section>
           <section class="view-card"><h2>Maintenance</h2><p>Re-check every connection, or push all applications to Notion again.</p><div class="stack-actions"><button id="connection-checks-button" class="button secondary" type="button">Run connection checks</button><button id="sync-button" class="button quiet-button" type="button">Retry Notion sync</button></div><p class="subtle">Gmail sends scheduled messages even when this computer is off. The local 9 AM sender needs the helper running.</p></section></aside></div>
         </div>
         <div id="profile-pane" class="profile-pane" data-settings-pane="profile" hidden></div>

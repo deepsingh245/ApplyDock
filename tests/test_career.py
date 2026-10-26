@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from support import isolate_app
 from test_resume_workflow import HAVE_TYPST, call, sample_pdf
-from applydock import (applications, ats, career, config, database, delivery, linkcheck, profile, resume_store,
+from applydock import (applications, ats, career, config, database, delivery, linkcheck, profile, resume_model, resume_store,
                        resume_workflows, resumes, submissions)
 from applydock.resume_store import ConflictError
 
@@ -268,6 +268,61 @@ class CareerWorkflowTests(unittest.TestCase):
         resumes.delete_resume(self.master["id"])
         self.assertIsNone(ats.get_analysis(config.DB, other["id"]))
         self.assertFalse(other_path.is_file())
+
+    def test_profile_entries_are_copied_into_the_draft_exactly_and_safely(self):
+        with database.connect() as db:
+            profile.save_personal(db, {"summary": "Backend engineer focused on authentication.", "headline": "Backend Engineer"})
+            project = profile.create_item(db, "project", {"name": "Auth service", "technologies": ["Node.js", "OAuth"], "summary": "Login for my apps.",
+                                                          "repo_url": "https://github.com/me/auth",
+                                                          "achievements": [{"text": "Shipped OAuth login.", "verified": True}, {"text": "Unproven claim.", "verified": False}]}, "verified")
+            private = profile.create_item(db, "project", {"name": "Private tool", "resume_ready": False}, "verified")
+            experience = profile.create_item(db, "experience", {"company": "Acme", "title": "Backend Intern", "start": "2023-01",
+                                                                "achievements": [{"text": "Built billing APIs.", "verified": True}]}, "unverified")
+            skill = profile.create_item(db, "skill", {"name": "PostgreSQL", "category": "databases"}, "verified")
+        tailored_master = self.master["id"]
+        state = resume_workflows.editor_state(tailored_master)
+        revision = state["draft"]["revision"]
+        add = lambda key, **extra: call("POST", f"/api/resumes/{tailored_master}/draft/add-from-profile", {"key": key, "expected_revision": revision, **extra})  # noqa: E731
+        listed = call("GET", f"/api/resumes/{tailored_master}/draft/profile-entries")["payload"]["entries"]
+        self.assertEqual({entry["key"]: entry["in_resume"] for entry in listed}[project["id"]], False)
+        self.assertFalse({entry["key"]: entry for entry in listed}[private["id"]]["addable"])
+
+        result = add(project["id"])
+        self.assertEqual(result["code"], 200, result)
+        revision = result["payload"]["draft"]["revision"]
+        added = [p for p in result["payload"]["draft"]["content"]["projects"] if p["name"] == "Auth service"][0]
+        self.assertEqual((added["url"], added["keywords"], [h["text"] for h in added["highlights"]]),
+                         ("https://github.com/me/auth", ["Node.js", "OAuth"], ["Shipped OAuth login."]))  # unverified bullet left out
+        self.assertTrue({entry["key"]: entry for entry in result["payload"]["entries"]}[project["id"]]["in_resume"])
+        self.assertIn("Already in this resume", add(project["id"])["payload"]["error"])
+        self.assertIn("not for resumes", add(private["id"])["payload"]["error"])
+        self.assertIn("not verified", add(experience["id"])["payload"]["error"])
+        result = add(experience["id"], confirm_unverified=True)
+        revision = result["payload"]["draft"]["revision"]
+        work = [w for w in result["payload"]["draft"]["content"]["work"] if w["name"] == "Acme"][0]
+        self.assertEqual((work["position"], work["startDate"], [h["text"] for h in work["highlights"]]), ("Backend Intern", "2023-01", ["Built billing APIs."]))
+        result = add(skill["id"])
+        revision = result["payload"]["draft"]["revision"]
+        self.assertIn("PostgreSQL", [k for group in result["payload"]["draft"]["content"]["skills"] for k in group["keywords"]])
+        # A summary that already exists is only replaced after confirmation.
+        has_summary = bool(result["payload"]["draft"]["content"]["basics"]["summary"])
+        if has_summary:
+            self.assertIn("Confirm replacing", add("personal:summary")["payload"]["error"])
+        result = add("personal:summary", replace=True)
+        self.assertEqual(result["payload"]["draft"]["content"]["basics"]["summary"], "Backend engineer focused on authentication.")
+        self.assertEqual(add("personal:summary", expected_revision=0)["code"], 409)
+        with database.connect() as db:  # nothing became a version
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM resume_versions WHERE resume_id=?", (tailored_master,)).fetchone()[0], 1)
+
+    def test_suggestion_prompt_offers_an_empty_summary(self):
+        content = resume_model.normalize({"basics": {"name": "Jordan"}, "work": [{"name": "Acme", "position": "Engineer", "highlights": [{"text": "Built APIs."}]}]})
+        prompt = resume_store.suggestion_prompt(content, [], "Job text")
+        items = json.loads(prompt.split("RESUME ITEMS:\n", 1)[1].split("\n\nREQUIREMENTS", 1)[0])
+        self.assertEqual(items[0], {"target_id": "basics", "field": "summary", "section": "summary", "label": "summary", "text": ""})
+        output = {"suggestions": [{"requirement_id": "", "target_id": "basics", "field": "summary", "operation": "replace", "original_text": "",
+                                   "proposed_text": "Engineer who built APIs at Acme.", "reason": "", "claim_type": "rephrase", "source_profile_id": ""}]}
+        valid = resume_store.validated_suggestions(output, content, [], "Acme Engineer Built APIs.")
+        self.assertEqual((len(valid), valid[0]["field"], valid[0]["original_text"]), (1, "summary", ""))
 
     def test_recorded_submission_keeps_the_exact_file_after_edits_and_deletion(self):
         result = call("POST", f"/api/entries/{self.entry['id']}/submissions", {"channel": "external", "submitted_at": "2026-10-01"})

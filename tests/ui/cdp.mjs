@@ -35,6 +35,9 @@ export async function launch() {
     const msg = JSON.parse(event.data);
     if (msg.id && pending.has(msg.id)) { const { resolve, reject } = pending.get(msg.id); pending.delete(msg.id); msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result); }
     if (msg.method === "Runtime.exceptionThrown") consoleErrors.push(msg.params.exceptionDetails.exception?.description || msg.params.exceptionDetails.text);
+    // UI_DEBUG=1 prints errors and page navigations as they happen, to locate where a flow went wrong.
+    if (process.env.UI_DEBUG && (msg.method === "Runtime.exceptionThrown" || msg.method === "Page.frameNavigated"))
+      console.log("[debug]", msg.method, msg.method === "Page.frameNavigated" ? msg.params.frame.url : msg.params.exceptionDetails.exception?.description?.split("\n")[0]);
     if (msg.method === "Runtime.consoleAPICalled" && msg.params.type === "error") consoleErrors.push(msg.params.args.map(a => a.value || a.description).join(" "));
   });
   const send = (method, params = {}) => new Promise((resolve, reject) => { const n = ++id; pending.set(n, { resolve, reject }); ws.send(JSON.stringify({ id: n, method, params })); });
@@ -46,7 +49,13 @@ export async function launch() {
       if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
       return result.result.value;
     },
-    async goto(url) { await send("Page.navigate", { url }); await api.sleep(1200); },
+    // Wait for the new document to finish loading (a fixed delay let a slow first load overlap the next navigation).
+    async goto(url) {
+      await send("Page.navigate", { url });
+      await api.sleep(300);
+      await api.waitFor(`document.readyState === "complete" && location.href.startsWith(${JSON.stringify(url.split("#")[0])})`, 15000).catch(() => {});
+      await api.sleep(400);
+    },
     sleep: ms => new Promise(r => setTimeout(r, ms)),
     async waitFor(expression, timeout = 15000) {
       const start = Date.now();

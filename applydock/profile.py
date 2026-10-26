@@ -511,3 +511,108 @@ def verified_corpus(db) -> str:
 
 def evidence_hash(blocks: list) -> str:
     return hashlib.sha256(json.dumps(blocks, sort_keys=True, ensure_ascii=False).encode()).hexdigest() if blocks else ""
+
+
+# ---------------------------------------------------------------- adding profile entries to a resume draft
+
+PERSONAL_FIELDS = {"summary": ("summary", "Summary"), "headline": ("label", "Headline")}
+SKILL_GROUPS = {"languages": "Languages", "frameworks": "Frameworks", "backend": "Backend", "databases": "Databases", "cloud": "Cloud",
+                "devops": "DevOps & Tools", "testing": "Testing", "architecture_security": "Architecture & Security",
+                "domain": "Domain", "other": "Other"}
+
+
+def _verified_bullets(data: dict) -> list:
+    return [{"text": claim["text"]} for claim in data.get("achievements", []) if claim.get("verified")]
+
+
+def in_content(content: dict, item: dict, field: str = "") -> bool:
+    """Whether a resume already holds this profile entry (matched by name, as a person would recognize it)."""
+    data, kind = item["data"], item["kind"]
+    if kind == "personal":
+        resume_field = PERSONAL_FIELDS[field][0]
+        return bool(data.get(field)) and _fold(content["basics"].get(resume_field)) == _fold(data.get(field))
+    if kind == "experience":
+        return any(_fold(work.get("name")) == _fold(data["company"]) and _fold(work.get("position")) == _fold(data["title"]) for work in content.get("work", []))
+    if kind == "project":
+        return any(_fold(project.get("name")) == _fold(data["name"]) for project in content.get("projects", []))
+    if kind == "skill":
+        return any(_fold(keyword) == _fold(data["name"]) for group in content.get("skills", []) for keyword in group.get("keywords", []) + [group.get("name", "")])
+    if kind == "achievement":
+        return any(_fold(award.get("title")) == _fold(data["text"][:300]) for award in content.get("awards", []))
+    if kind == "education":
+        return any(_fold(school.get("institution")) == _fold(data["institution"]) for school in content.get("education", []))
+    if kind == "certification":
+        return any(_fold(cert.get("name")) == _fold(data["name"]) for cert in content.get("certificates", []))
+    return False
+
+
+def add_to_content(content: dict, item: dict, field: str = "", replace: bool = False) -> dict:
+    """A copy of resume content with one profile entry added. Every value is copied from the profile, never generated.
+
+    Only verified achievement bullets are copied. Raises ValueError when the entry is already present, when a
+    filled summary/headline would be overwritten without replace=True, or when a project is marked not for resumes.
+    """
+    content = json.loads(json.dumps(content))
+    data, kind = item["data"], item["kind"]
+    if in_content(content, item, field):
+        raise ValueError("Already in this resume.")
+    if kind == "personal":
+        if field not in PERSONAL_FIELDS or not data.get(field):
+            raise ValueError("Your Master Profile has no " + field + " to add.")
+        resume_field, label = PERSONAL_FIELDS[field]
+        if content["basics"].get(resume_field) and not replace:
+            raise ValueError(f"This resume already has a {label.lower()}. Confirm replacing it.")
+        content["basics"][resume_field] = data[field]
+    elif kind == "experience":
+        content.setdefault("work", []).append({"name": data["company"], "position": data["title"], "location": data["location"],
+                                               "startDate": data["start"], "endDate": data["end"], "summary": data["summary"],
+                                               "highlights": _verified_bullets(data)})
+    elif kind == "project":
+        if not data.get("resume_ready", True):
+            raise ValueError("This project is marked as not for resumes in your Master Profile.")
+        content.setdefault("projects", []).append({"name": data["name"], "url": data["live_url"] or data["repo_url"],
+                                                   "description": data["summary"], "keywords": data["technologies"][:8],
+                                                   "startDate": data["start"], "endDate": data["end"], "highlights": _verified_bullets(data)})
+    elif kind == "skill":
+        group_name = SKILL_GROUPS.get(data["category"], "Other")
+        groups = content.setdefault("skills", [])
+        group = next((g for g in groups if _fold(g.get("name")) == _fold(group_name) or
+                      (_fold(group_name)[:5] and _fold(g.get("name")).startswith(_fold(group_name)[:5]))), None)
+        if group is None:
+            group = {"name": group_name, "keywords": []}
+            groups.append(group)
+        group["keywords"] = list(group.get("keywords", [])) + [data["name"]]
+    elif kind == "achievement":
+        content.setdefault("awards", []).append({"title": data["text"][:300], "date": data["date"], "awarder": "", "summary": ""})
+    elif kind == "education":
+        content.setdefault("education", []).append({"institution": data["institution"], "studyType": data["degree"], "area": data["field"],
+                                                    "startDate": data["start"], "endDate": data["end"], "score": ""})
+    elif kind == "certification":
+        content.setdefault("certificates", []).append({"name": data["name"], "issuer": data["issuer"], "date": data["date"], "url": data["url"]})
+    else:
+        raise ValueError("This profile entry cannot be added to a resume.")
+    return resume_model.normalize(content)
+
+
+def entries_for_resume(db, content: dict) -> list:
+    """Profile entries the resume editor can offer: [{key, item_id, field, kind, label, detail, verified, in_resume, addable, reason}]."""
+    result = []
+    own = personal(db)
+    for field, (_, label) in PERSONAL_FIELDS.items():
+        if own["id"] and own["data"].get(field):
+            result.append({"key": "personal:" + field, "item_id": own["id"], "field": field, "kind": "personal", "label": label,
+                           "detail": own["data"][field][:160], "verified": True, "in_resume": in_content(content, own, field),
+                           "addable": True, "reason": ""})
+    for item in items(db, include_archived=False):
+        if item["kind"] not in ("experience", "project", "skill", "achievement", "education", "certification"):
+            continue
+        data = item["data"]
+        detail = {"experience": " · ".join(filter(None, [data.get("start"), data.get("end")])),
+                  "project": ", ".join(data.get("technologies", [])[:5]),
+                  "skill": SKILL_GROUPS.get(data.get("category"), ""), "certification": data.get("issuer", ""),
+                  "education": data.get("degree", "")}.get(item["kind"], "")
+        blocked = item["kind"] == "project" and not data.get("resume_ready", True)
+        result.append({"key": item["id"], "item_id": item["id"], "field": "", "kind": item["kind"], "label": item["label"], "detail": detail,
+                       "verified": item["verification"] == "verified", "in_resume": in_content(content, item),
+                       "addable": not blocked, "reason": "Marked not for resumes" if blocked else ""})
+    return result

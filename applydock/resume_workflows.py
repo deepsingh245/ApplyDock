@@ -197,6 +197,34 @@ def analyze_draft(resume_id, entry_id, expected_revision):
     return {"analysis": ats.get_analysis(config.DB, run["id"]), "cached": cached}
 
 
+def profile_entries(resume_id):
+    """Master Profile entries the editor can add to this resume, with whether each is already in its draft."""
+    if not resumes.get_resume(resume_id):
+        raise ValueError("Resume not found.")
+    with database.LOCK, database.connect() as db:
+        draft = resume_store.open_draft(db, resume_id)
+        return {"entries": profile.entries_for_resume(db, draft["content"]), "revision": draft["revision"]}
+
+
+def add_from_profile(resume_id, key, expected_revision, confirm_unverified=False, replace=False):
+    """Copy one Master Profile entry into the resume's draft (no AI). Nothing is saved as a version."""
+    if not resumes.get_resume(resume_id):
+        raise ValueError("Resume not found.")
+    key = str(key or "")
+    field = key.split(":", 1)[1] if key.startswith("personal:") else ""
+    with database.LOCK, database.connect() as db:
+        draft = resume_store._check_revision(db, resume_id, expected_revision)
+        item = profile.personal(db) if field else profile.get_item(db, key)
+        if not item or not item["id"] or item["archived"] or (field and field not in profile.PERSONAL_FIELDS):
+            raise ValueError("That Master Profile entry no longer exists.")
+        if item["verification"] != "verified" and not confirm_unverified:
+            raise ValueError("This profile entry is not verified. Confirm it is accurate before adding it.")
+        content = profile.add_to_content(draft["content"], item, field, bool(replace))
+        updated = resume_store._write_draft(db, resume_id, content, draft["base_version_id"], draft["revision"] + 1)
+        entries = profile.entries_for_resume(db, updated["content"])
+    return {"draft": updated, "entries": entries}
+
+
 def candidate_version_allowed(entry, version_id):
     with database.connect() as db:
         row = db.execute("SELECT resume_id FROM resume_versions WHERE id=?", (version_id,)).fetchone()

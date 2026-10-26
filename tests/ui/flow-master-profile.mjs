@@ -15,6 +15,12 @@ try {
   await b.waitFor(`!document.getElementById("app-view").hidden`);
   await b.eval(`window.confirm = () => true; window.prompt = (m, v) => v; true`);
 
+  // 0. Layout: no sidebar, settings gear last in the top bar, the workspace spans the window
+  const layout = await b.eval(`(() => { const actions = document.querySelector(".topbar-actions"); const w = document.querySelector(".workspace").getBoundingClientRect();
+    return {sidebar: !!document.querySelector(".global-sidebar"), gearLast: actions.lastElementChild.id === "settings-button", left: Math.round(w.left), width: Math.round(w.width), viewport: document.documentElement.clientWidth}; })()`);
+  log("layout:", JSON.stringify(layout));
+  if (layout.sidebar || !layout.gearLast || layout.left !== 0 || layout.width < layout.viewport - 1) throw new Error("Layout is not the sidebar-free full-width workspace");
+
   // 1. Settings → Master Profile, import from the existing resume
   await b.click("#settings-button");
   await b.click('[data-settings-tab="profile"]');
@@ -75,7 +81,8 @@ try {
   log("view source ->", await b.eval(`document.querySelector(".pf-card.pf-highlight strong").textContent`));
 
   // 5. Tailor, get profile-based suggestions, add the project to the resume
-  await b.click("#resumes-button");
+  await b.click("#settings-button");
+  await b.click("#settings-resume-library");
   await b.click("[data-open-resume-editor]");
   await b.waitFor(`!document.getElementById("resume-editor-view").hidden && document.querySelector("#re-form .re-section")`, 20000);
   await b.sleep(500);
@@ -86,14 +93,35 @@ try {
     await b.click('[data-re="save-version"]');
     await noticeIncludes("Saved version");
   }
+  // From profile tab: add a project straight from the profile (no AI), then undo it
+  await b.click('[data-side="profile"]');
+  await b.waitFor(`document.querySelector('.re-profile-entry [data-profile-add]')`, 10000);
+  const authKey = await b.eval(`[...document.querySelectorAll(".re-profile-entry")].find(row => row.textContent.includes("Auth service")).querySelector("[data-profile-add]").dataset.profileAdd`);
+  await b.click(`[data-profile-add="${authKey}"]`);
+  await noticeIncludes("Added");
+  log("from profile added:", await b.eval(`[...document.querySelectorAll('#re-form [data-field="name"]')].some(el => el.value === "Auth service")`),
+    "marked in resume:", await b.eval(`[...document.querySelectorAll(".re-profile-entry")].find(row => row.textContent.includes("Auth service")).textContent.includes("In resume")`));
+  await b.shot("p3b-from-profile");
+  await b.click('[data-re="undo"]');
+  await b.waitFor(`![...document.querySelectorAll('#re-form [data-field="name"]')].some(el => el.value === "Auth service")`, 5000);
+  await b.waitFor(`document.getElementById("re-save-status").textContent === "All changes saved"`, 8000);
+  log("undo removed it");
+  // "Add a section": empty sections are offered as chips
+  const chip = await b.eval(`document.querySelector("[data-reveal-section]")?.dataset.revealSection || ""`);
+  if (chip) {
+    await b.click(`[data-reveal-section="${chip}"]`);
+    log("revealed section:", chip, await b.eval(`!!document.querySelector('#re-form details[data-section="${chip}"]')`));
+  }
   await b.click("#applications-button");
   await b.waitFor(`document.querySelector('[data-entry-resume="optimize"]')`);
   await b.click('[data-entry-resume="optimize"]');
   await b.waitFor(`!document.getElementById("resume-editor-view").hidden && document.querySelector(".re-kind.tailored")`, 20000);
+  await b.click('[data-side="profile"]');
+  await b.waitFor(`document.querySelector('[data-re="recommend-profile"]')`, 10000);
+  await b.click('[data-re="recommend-profile"]');
+  await b.waitFor(`[...document.querySelectorAll(".re-suggestion")].some(card => card.querySelector(".re-suggestion-source"))`, 30000);
+  log("recommend from profile produced", await b.eval(`document.querySelectorAll(".re-suggestion").length`), "suggestion cards");
   await b.click('[data-side="analysis"]');
-  await b.waitFor(`document.querySelector('[data-re="suggest"]')`);
-  await b.click('[data-re="suggest"]');
-  await b.waitFor(`[...document.querySelectorAll(".re-suggestion")].some(card => card.querySelector(".re-suggestion-source"))`, 20000);
   const profileCard = await b.eval(`[...document.querySelectorAll(".re-suggestion")].find(card => card.querySelector(".re-suggestion-project")).dataset.suggestion`);
   log("profile suggestion:", await b.eval(`document.querySelector('[data-suggestion="${profileCard}"]').innerText.replace(/\\s+/g, " ").slice(0, 300)`));
   await b.eval(`document.querySelector('[data-suggestion="${profileCard}"]').scrollIntoView({block: "center"}); true`);
@@ -131,13 +159,38 @@ try {
   await b.shot("p5-submission");
   log("progress applied:", await b.eval(`[...document.querySelectorAll("#editor-progress .step")].pop().className`));
 
+  // 6b. Rejected applications leave every list except the Rejected filter
+  await b.eval(`(() => { const s = document.querySelector('#editor-form [name="application_stage"]'); s.value = "Rejected"; s.dispatchEvent(new Event("change", {bubbles: true})); return true; })()`);
+  await b.click("#save-button");
+  await b.waitFor(`document.getElementById("active-count").textContent === "0"`, 10000);
+  log("all list after rejecting:", await b.eval(`document.querySelectorAll("#entry-list .queue-item").length`), "rejected count:", await b.eval(`document.getElementById("rejected-count").textContent`));
+  await b.click('[data-filter="rejected"]');
+  await b.waitFor(`document.querySelectorAll("#entry-list .queue-item").length === 1`, 5000);
+  await b.shot("p5b-rejected");
+  await b.eval(`(() => { const s = document.querySelector('#editor-form [name="application_stage"]'); s.value = "Applied"; s.dispatchEvent(new Event("change", {bubbles: true})); return true; })()`);
+  await b.click("#save-button");
+  await b.click('[data-filter="all"]');
+  await b.waitFor(`document.querySelectorAll("#entry-list .queue-item").length === 1`, 10000);
+  log("back in All after un-rejecting");
+
   // 7. The library shows where the resume was used
-  await b.click("#resumes-button");
+  await b.click("#settings-button");
+  await b.click("#settings-resume-library");
   const tailoredRow = await b.eval(`[...document.querySelectorAll("[data-resume-select]")].find(row => row.classList.contains("tailored-row"))?.dataset.resumeSelect`);
   await b.click(`[data-resume-select="${tailoredRow}"]`);
   await b.eval(`(() => { const d = document.querySelector("[data-resume-usage]"); d.open = true; d.dispatchEvent(new Event("toggle")); return true; })()`);
   await b.waitFor(`document.querySelector(".resume-usage-list li")`, 10000);
   log("usage:", await b.eval(`document.querySelector(".resume-usage-list").innerText.replace(/\\s+/g, " ").slice(0, 200)`));
+
+  // 7b. Settings uses the full width on a large screen
+  await b.size(1920, 1080);
+  await b.click("#settings-button");
+  await b.sleep(300);
+  await b.click('[data-settings-tab="connections"]');
+  const settingsWidth = await b.eval(`Math.round(document.querySelector(".settings-layout").getBoundingClientRect().width)`);
+  log("settings width at 1920:", settingsWidth);
+  if (settingsWidth <= 1200) throw new Error("Settings is still a narrow centered column");
+  await b.shot("p6a-settings-1920");
 
   // 8. Mobile layout of the profile
   await b.size(375, 812, true);

@@ -96,6 +96,27 @@ The migration to `PRAGMA user_version=4` is additive. `backup_before_migration()
   - `PATCH /api/resume-suggestions/{sid}` with `{status}`.
 - **Jobs:** `GET /api/resume-jobs/{id}`.
 
+## Using the Master Profile in the editor
+
+- **From profile** (side panel tab) lists Master Profile entries with **In resume** or **Add to resume**; entries the job analysis
+  cited for a gap come first, tagged "Helps with: …". Adding copies facts exactly (`POST /api/resumes/{id}/draft/add-from-profile`
+  with `{key, expected_revision, confirm_unverified, replace}`; `GET …/draft/profile-entries` lists them):
+
+  | Profile entry | Becomes |
+  |---|---|
+  | Summary / headline (`personal:summary`, `personal:headline`) | `basics.summary` / `basics.label` (replacing existing text needs `replace`) |
+  | Experience | a work item with its verified bullets |
+  | Project | a project item (live or repo URL, technologies as keywords) with its verified bullets; refused when marked not for resumes |
+  | Skill | a keyword in the skill group for its category (created if missing) |
+  | Achievement / education / certification | an award / education item / certificate |
+
+  Unverified entries need `confirm_unverified`; entries already present are refused. It is a draft edit (one undo step); nothing
+  becomes a version until **Save version**.
+- **Recommend from my profile for this job** re-analyzes the draft with the current profile, then asks for suggestions in one click.
+  Suggestions may now also *write a missing summary* (the empty summary is sent to Codex; `suggest-v3`).
+- **Add a section:** empty sections are listed as chips under Personal information instead of sitting empty in the form; a chip
+  opens that section. A section with a pending suggestion (an AI summary, an added project) is always shown.
+
 ## Design tab
 
 Cards are grouped into two independent columns (layout: template, page, margins, spacing, header · type: text, color, sections and entries) so short cards never leave gaps; Section order spans both. Sections are reordered by dragging a row (pointer events, so it also works on touch) or by focusing a row's handle and pressing ↑/↓; each move is one undo step.

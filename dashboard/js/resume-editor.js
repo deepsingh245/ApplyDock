@@ -80,6 +80,7 @@
       previewTimer: null, previewController: null, previewSeq: 0, previewUrl: "", pageCount: null, previousPageCount: null,
       previewError: "", validation: null, suggestions: [], suggestionJob: null, analysis: null, panel: "preview", compare: null,
       mobileTab: "edit", leftTab: s?.resumeId === resumeId ? s.leftTab : "content", conflict: null, onlySuggested: false,
+      revealed: new Set(), profileEntries: null, recommending: "",
     };
     const entry = currentEntry();
     if (entry && !s.analysisId && entry.analysis?.id && entry.analysis.status !== "not_analyzed") s.analysisId = entry.analysis.id;
@@ -88,6 +89,7 @@
     render();
     schedulePreview(0);
     if (s.analysisId) loadAnalysis();
+    loadProfileEntries();
     // Opened from an application's submission record: compare that exact version with the current draft.
     if (context.compareVersionId && s.data.versions.some(version => version.id === context.compareVersionId)) {
       s.panel = "compare";
@@ -356,7 +358,7 @@
           const label = section === "custom" ? SECTION_LABELS.custom : meta.section_titles[section] || SECTION_LABELS[section];
           return '<div class="re-order-row" role="listitem" data-order-section="' + section + '"><button type="button" class="re-drag-handle" data-drag-section="' + section + '" aria-label="' +
             esc(label) + ', position ' + (index + 1) + ' of ' + order.length + '. Use the arrow keys to move it.">' + '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></svg>' + '</button><span class="re-order-label">' + esc(label) +
-            (resumeSectionEmpty(section) ? ' <small>(empty — hidden)</small>' : '') + '</span><span class="re-order-position" aria-hidden="true">' + (index + 1) + '</span></div>';
+            (resumeSectionEmpty(section) ? ' <small>(empty — not printed until you add content)</small>' : '') + '</span><span class="re-order-position" aria-hidden="true">' + (index + 1) + '</span></div>';
         }).join("") + '</div></section>';
     for (const select of box.querySelectorAll("[data-meta]")) select.value = String(meta[select.dataset.meta]);
   }
@@ -466,11 +468,24 @@
       (section === "custom" ? lineList(item, "items", item.title || "Section") : "") + suggestionsFor(item.id, "text", true) + '</div>';
   }
 
+  // Empty sections stay out of the form until revealed, unless a suggestion targets them.
+  function sectionVisible(section) {
+    if (!resumeSectionEmpty(section) || s.revealed.has(section)) return true;
+    const pending = (s.suggestions || []).filter(item => item.status !== "rejected");
+    if (section === "summary") return pending.some(item => item.target_id === "basics" && item.field === "summary");
+    if (section === "projects") return pending.some(item => item.operation === "add_project");
+    return false;
+  }
+
   function sectionBlock(section, position, total) {
     const c = s.content;
     const titles = c.meta.section_titles;
     let body;
-    if (section === "summary") body = field("basics", "summary", "Professional summary", c.basics.summary, {type: "textarea", wide: true, attrs: ' rows="4"'});
+    if (section === "summary") {
+      const fromProfile = (s.profileEntries || []).find(entry => entry.key === "personal:summary" && !entry.in_resume);
+      body = field("basics", "summary", "Professional summary", c.basics.summary, {type: "textarea", wide: true, attrs: ' rows="4"'}) +
+        (fromProfile ? '<button class="button quiet-button re-add" type="button" data-profile-add="personal:summary">' + (c.basics.summary ? "Replace with my profile summary" : "Use my profile summary") + '</button>' : '');
+    }
     else {
       const items = c[section];
       body = (section !== "custom" ? '<label class="re-field re-heading-field"><span>Heading shown on the resume</span><input data-section-title="' + section + '" value="' + esc(titles[section]) + '"></label>' : '') +
@@ -499,7 +514,10 @@
       '<div class="re-lines"><span class="re-lines-label">Profiles</span>' + b.profiles.map(p => '<div class="re-profile"><input data-target="' + esc(p.id) + '" data-field="network" value="' + esc(p.network) + '" placeholder="LinkedIn" aria-label="Profile name"><input data-target="' + esc(p.id) + '" data-field="url" value="' + esc(p.url) + '" placeholder="https://" aria-label="Profile link"><button type="button" class="re-icon" data-remove-profile="' + esc(p.id) + '" aria-label="Remove profile">×</button></div>').join("") +
       '<button class="button quiet-button re-add" type="button" data-re="add-profile">+ Add profile link</button></div></div></details>';
     const order = c.meta.section_order;
-    form.innerHTML = personal + order.map((section, index) => sectionBlock(section, index, order.length)).join("");
+    const hidden = order.filter(section => !sectionVisible(section));
+    const strip = hidden.length ? '<div class="re-add-sections"><span>Add a section</span>' + hidden.map(section =>
+      '<button type="button" class="re-add-section" data-reveal-section="' + section + '">+ ' + esc(section === "custom" ? SECTION_LABELS.custom : c.meta.section_titles[section] || SECTION_LABELS[section]) + '</button>').join("") + '</div>' : '';
+    form.innerHTML = personal + strip + order.map((section, index) => sectionVisible(section) ? sectionBlock(section, index, order.length) : "").join("");
     for (const details of form.querySelectorAll("details[data-section]")) if (details.dataset.section in openState) details.open = openState[details.dataset.section];
     if (s.onlySuggested) applySuggestedFilter();
     if (focus) {
@@ -515,11 +533,13 @@
     const side = document.getElementById("re-side");
     if (!side) return;
     const tabs = '<div class="re-side-tabs" role="tablist"><button type="button" data-side="preview" class="' + (s.panel === "preview" ? "active" : "") + '">Preview</button><button type="button" data-side="versions" class="' + (s.panel === "versions" ? "active" : "") + '">Versions</button><button type="button" data-side="compare" class="' + (s.panel === "compare" ? "active" : "") + '">Compare</button>' +
-      (s.analysisId || currentEntry() ? '<button type="button" data-side="analysis" class="' + (s.panel === "analysis" ? "active" : "") + '">Job match</button>' : '') + '</div>';
+      (s.analysisId || currentEntry() ? '<button type="button" data-side="analysis" class="' + (s.panel === "analysis" ? "active" : "") + '">Job match</button>' : '') +
+      '<button type="button" data-side="profile" class="' + (s.panel === "profile" ? "active" : "") + '">From profile</button></div>';
     let body = "";
     if (s.panel === "preview") body = '<div class="re-preview"><div id="re-preview-frame" class="re-preview-frame"></div><div id="re-validation"></div><p class="re-footnote">This is the actual PDF ApplyDock generates. Text is selectable; checks below confirm it can be extracted in order.</p></div>';
     else if (s.panel === "versions") body = versionsHtml();
     else if (s.panel === "compare") body = compareHtml();
+    else if (s.panel === "profile") body = profileHtml();
     else body = analysisHtml();
     side.innerHTML = tabs + body;
     if (s.panel === "preview") { renderPreviewFrame(); renderValidation(); }
@@ -715,6 +735,98 @@
       if (error.status === 409) { s.conflict = error.payload.draft; s.status = "conflict"; renderStatus(); }
       AD().notify(error.message, true);
     }
+  }
+
+  // ------------------------------------------------------------------ Master Profile inside the editor
+
+  async function loadProfileEntries() {
+    const session = s;
+    try {
+      const result = await request("/api/resumes/" + s.resumeId + "/draft/profile-entries");
+      if (session !== s) return;
+      s.profileEntries = result.entries || [];
+      renderForm();
+      if (s.panel === "profile") renderSide();
+    } catch (error) { if (session === s) { s.profileEntries = []; if (s.panel === "profile") renderSide(); } }
+  }
+
+  const PROFILE_GROUPS = [["personal", "Summary and headline"], ["experience", "Experience"], ["project", "Projects"], ["skill", "Skills"],
+    ["achievement", "Achievements"], ["education", "Education"], ["certification", "Certifications"]];
+
+  function profileHtml() {
+    const entries = s.profileEntries;
+    if (!entries) return '<div class="re-profile-panel"><p class="re-progress">Loading your Master Profile…</p></div>';
+    // Entries the job analysis cited for a gap come first, tagged with what they help with.
+    const helps = {};
+    for (const requirement of s.analysis?.result?.requirements || []) {
+      if (requirement.coverage === "represented") continue;
+      for (const source of requirement.profile_evidence || []) (helps[source.item_id] = helps[source.item_id] || []).push(requirement.requirement);
+    }
+    const entry = currentEntry();
+    const busy = s.recommending;
+    let html = '<div class="re-profile-panel"><p class="re-footnote">Add entries from your Master Profile to this draft. Facts are copied as written in your profile; nothing is saved as a version until you choose Save version.</p>';
+    if (entry) html += '<div class="re-recommend"><button class="button primary" type="button" data-re="recommend-profile"' + (busy || s.data.draft.needs_review ? " disabled" : "") + '>Recommend from my profile for this job</button>' +
+      (busy ? '<p class="re-progress">' + esc(busy) + '</p>' : '<p class="re-footnote">Checks this draft against the job with your current profile, then suggests what to add — shown next to the text it changes.</p>') + '</div>';
+    if (!entries.length) return html + '<p class="re-footnote">Your Master Profile is empty. Add experience and projects under Settings → Master Profile.</p></div>';
+    for (const [kind, title] of PROFILE_GROUPS) {
+      const group = entries.filter(item => item.kind === kind).sort((a, b) => (helps[b.item_id] ? 1 : 0) - (helps[a.item_id] ? 1 : 0));
+      if (!group.length) continue;
+      html += '<section class="re-profile-group"><h3>' + esc(title) + '</h3>' + group.map(item => {
+        const help = kind === "personal" ? [] : helps[item.item_id] || [];
+        const action = item.in_resume ? '<span class="re-safe">In resume</span>'
+          : !item.addable ? '<span class="subtle">' + esc(item.reason) + '</span>'
+          : '<button class="button secondary" type="button" data-profile-add="' + esc(item.key) + '">Add to resume</button>';
+        return '<div class="re-profile-entry' + (help.length ? " relevant" : "") + '"><div><strong>' + esc(item.label) + '</strong>' +
+          (item.detail ? '<small>' + esc(item.detail) + '</small>' : '') +
+          (help.length ? '<small class="re-helps">Helps with: ' + esc(help.slice(0, 2).join("; ")) + '</small>' : '') +
+          (item.verified ? '' : '<span class="re-verify">Not verified</span>') + '</div>' + action + '</div>';
+      }).join("") + '</section>';
+    }
+    return html + '</div>';
+  }
+
+  async function addFromProfile(key, button) {
+    const entry = (s.profileEntries || []).find(item => item.key === key);
+    if (!entry) return;
+    const personalField = key.startsWith("personal:") ? (key === "personal:summary" ? "summary" : "label") : "";
+    const replace = Boolean(personalField && s.content.basics[personalField]);
+    if (replace && !window.confirm("Replace the resume's current " + (personalField === "label" ? "headline" : "summary") + " with the one from your Master Profile? You can undo this.")) return;
+    if (!entry.verified && !window.confirm("‘" + entry.label + "’ is not verified in your Master Profile.\n\nOnly add it if it is accurate. Add it?")) return;
+    if (button) button.disabled = true;
+    try {
+      await flushSave();
+      const result = await request("/api/resumes/" + s.resumeId + "/draft/add-from-profile", "POST",
+        {key, expected_revision: s.revision, confirm_unverified: !entry.verified, replace});
+      s.profileEntries = result.entries;
+      if (personalField === "summary") s.revealed.add("summary");
+      acceptServerDraft(result.draft);
+      renderSide();
+      AD().notify("Added ‘" + entry.label + "’ to the draft. Undo is available; choose Save version when you're happy.");
+    } catch (error) {
+      if (error.status === 409) { s.conflict = error.payload?.draft; s.status = "conflict"; renderStatus(); }
+      AD().notify(error.message, true);
+    } finally { if (button?.isConnected) button.disabled = false; }
+  }
+
+  async function recommendFromProfile() {
+    const session = s;
+    try {
+      s.recommending = "Checking this draft against the job with your current profile…";
+      renderSide();
+      await analyzeDraft(null);
+      if (session !== s) return;
+      s.panel = "profile";
+      for (let tries = 0; tries < 120 && ["pending", "analyzing"].includes(s.analysis?.status); tries++) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        if (session !== s) return;
+        s.analysis = (await request("/api/analyses/" + s.analysisId)).analysis;
+      }
+      if (s.analysis?.status !== "complete") throw new Error(s.analysis?.error_message || "The analysis did not finish. Open Job match for details.");
+      s.recommending = "Preparing suggestions from your profile…";
+      renderSide();
+      await requestSuggestions();
+    } catch (error) { AD().notify(error.message, true); }
+    finally { if (session === s) { s.recommending = ""; renderSide(); } }
   }
 
   async function requestSuggestions() {
@@ -940,6 +1052,7 @@
       if (name === "save-version") return saveVersion();
       if (name === "save-analyze") return saveVersion({analyze: true});
       if (name === "analyze-draft") return analyzeDraft(button);
+      if (name === "recommend-profile") return recommendFromProfile();
       if (name === "validate") {
         s.validation = (await request("/api/resumes/" + s.resumeId + "/draft/validate", "POST", {content: s.content})).validation;
         return renderValidation();
@@ -1042,9 +1155,17 @@
       changed();
       return renderDesign();
     }
-    if (d.side) { s.panel = d.side; if (d.side === "analysis") loadAnalysis(); return renderSide(); }
+    if (d.side) { s.panel = d.side; if (d.side === "analysis") loadAnalysis(); if (d.side === "profile") loadProfileEntries(); return renderSide(); }
     if (d.sugg) { event.preventDefault(); return suggestionAction(d.sugg, d.id); }
     if (d.profileItem) { event.preventDefault(); return flushSave().then(() => AD().openProfileItem(d.profileItem)); }
+    if (d.profileAdd) { event.preventDefault(); return addFromProfile(d.profileAdd, el); }
+    if (d.revealSection) {
+      s.revealed.add(d.revealSection);
+      renderForm();
+      const block = root().querySelector('#re-form details[data-section="' + d.revealSection + '"]');
+      if (block) { block.open = true; block.scrollIntoView({block: "start"}); block.querySelector("input, textarea, button.re-add")?.focus(); }
+      return;
+    }
     if (d.versionDownload) { const v = s.data.versions.find(item => item.id === d.versionDownload); return downloadVersion(v.id, v.original_filename); }
     if (d.versionCompare) { s.panel = "compare"; renderSide(); return compareWith("v:" + d.versionCompare); }
     if (d.versionRestore) {

@@ -63,6 +63,9 @@ resume_suggestions.source_item_id / payload_json: profile entry a suggestion cam
 
 Each analysis stores the profile evidence it used (`analysis_runs.profile_json`); `/api/state.profile_hash` and each analysis's `profile_hash` let the dashboard show “Your Master Profile changed since this analysis” in the inspector, the analysis view, and the editor's Job match tab. Re-running (or **Re-analyze draft** in the editor) uses the current profile — no resume needs to be saved — and new suggestions come from that run. The evidence includes the personal headline and summary and the evidence notes on projects and achievements.
 
+Inside the resume editor, the **From profile** tab adds profile entries to a draft and **Recommend from my profile** runs the
+check plus suggestions in one click; see [resume-editor](resume-editor.md#using-the-master-profile-in-the-editor).
+
 ## Link verification
 
 `linkcheck.check_url` only requests http(s) URLs on standard ports, with no credentials. Every resolved address must be public: loopback, private, link-local, CGNAT, multicast and reserved ranges, plus `.local` and `.internal` names, are refused.

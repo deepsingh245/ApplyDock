@@ -72,10 +72,12 @@ function updateCreateKind() {
 }
 
 function renderList() {
-  // "Applied" is the history view: it also lists sent applications, which otherwise leave the list.
-  let entries = filter === "applied" ? (state?.entries || []) : activeEntries();
-  $("active-count").textContent = activeEntries().length;
-  $("nav-application-count").textContent = activeEntries().length;
+  // "Applied" and "Rejected" are history views: they also list sent applications, which otherwise leave the list.
+  const rejected = (state?.entries || []).filter(isRejected);
+  let entries = filter === "rejected" ? rejected
+    : (filter === "applied" ? (state?.entries || []) : activeEntries()).filter(entry => !isRejected(entry));
+  $("active-count").textContent = activeEntries().filter(entry => !isRejected(entry)).length;
+  $("rejected-count").textContent = rejected.length || "";
   const query = $("search-input").value.trim().toLowerCase();
   let shown = entries.filter(entry => {
     if (filter === "to_apply" && !["initiated", "to apply"].includes(String(entry.application_stage || "").trim().toLowerCase())) return false;
@@ -107,7 +109,8 @@ function renderList() {
       '<span class="queue-item-bottom"><span class="mini-badge ' + esc(category) + '">' + esc(labelFor(entry)) + '</span>' +
       (entry.application_stage ? '<span class="mini-badge stage">' + esc(entry.application_stage) + '</span>' : '') +
       (review ? '<span class="mini-badge review">Needs review</span>' : '') + '</span></button>';
-  }).join("") : '<div class="queue-empty"><strong>' + (entries.length ? "Nothing matches this view." : "Your queue is clear.") +
+  }).join("") : filter === "rejected" && !entries.length ? '<div class="queue-empty"><strong>No rejected applications.</strong><p>Applications whose stage is Rejected are kept here, out of your other lists.</p></div>'
+    : '<div class="queue-empty"><strong>' + (entries.length ? "Nothing matches this view." : "Your queue is clear.") +
     '</strong><p>' + (entries.length ? "Try another filter or search." : "Add a selected job or hiring post. Sent emails stay in Notion.") + '</p></div>';
   for (const button of $("entry-list").querySelectorAll("[data-id]")) {
     button.addEventListener("click", () => {

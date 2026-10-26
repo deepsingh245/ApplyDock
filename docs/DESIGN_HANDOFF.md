@@ -15,7 +15,8 @@ This note covers the state of the UI after the October 2026 "Ledger" redesign: w
 | Editor header | Title and badges; delete inside the inspector | Title, kind, stage and status. Delete moved to a "More" menu. A five-step progress strip (Captured → Analyzed → Resume → Email → Applied) |
 | Inspector | A long list of equal-weight buttons | Score figure and meter. "Next step" with one primary action. A key/value status list. Email preview |
 | Settings | Duplicate "system status" card | Connection rows in one column; a "Maintenance" card for checks and Notion resync |
-| Phones | List and editor stacked; glyph-only bottom nav; clipped tabs | Separate list and detail screens, labelled bottom nav, 44px controls |
+| Phones | List and editor stacked; glyph-only bottom nav; clipped tabs | Separate list and detail screens, 44px controls (the bottom nav was later removed with the sidebar) |
+| Navigation (2026-10-24) | Left sidebar: Applications, Resumes, Analysis, Settings | No sidebar. Brand = Applications, gear = Settings (last in the top bar); Resumes and Analysis are opened from an application or Settings; pages use the full width with fluid padding; rejected applications only appear under the Rejected filter |
 | Theme | Manual only | Follows `prefers-color-scheme` until the user picks one |
 | Extension | Its own blue palette and hard-coded dark mode | The same tokens (copied), system font |
 

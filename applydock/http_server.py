@@ -556,6 +556,17 @@ def render_draft(request, match, data):
     return {"validation": resume_render.validate(pdf, content)}
 
 
+@route("GET", r"/api/resumes/([a-f0-9-]+)/draft/profile-entries")
+def draft_profile_entries(request, match, data):
+    return resume_workflows.profile_entries(match.group(1))
+
+
+@route("POST", r"/api/resumes/([a-f0-9-]+)/draft/add-from-profile")
+def add_from_profile(request, match, data):
+    return resume_workflows.add_from_profile(match.group(1), data.get("key", ""), data.get("expected_revision"),
+                                             bool(data.get("confirm_unverified")), bool(data.get("replace")))
+
+
 @route("POST", r"/api/resumes/([a-f0-9-]+)/draft/analyze")
 def analyze_draft(request, match, data):
     return resume_workflows.analyze_draft(match.group(1), str(data.get("entry_id", "")), data.get("expected_revision"))

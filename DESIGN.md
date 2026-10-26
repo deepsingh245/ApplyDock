@@ -28,7 +28,7 @@ The rules the dashboard and the extension follow. A quiet, dense work tool: the 
 | Space | `--space-1` … `--space-12` | A 4px grid: 4, 8, 12, 16, 20, 24, 32, 48 |
 | Shape | `--radius-sm` 4 (controls) · `--radius-md` 6 (panels) · `--radius-pill` (chips only) | |
 | Motion | `--duration-fast` 120ms · `--duration` 160ms · `--ease` | Both become 0 under `prefers-reduced-motion` |
-| Layout | `--topbar-h` 52 · `--sidebar-w` 208 · `--list-w` 320 · `--context-w` 280 · `--control-h` 32 | `--control-h` is 44 on phones |
+| Layout | `--topbar-h` 52 · `--list-w` 360 · `--context-w` 280 · `--control-h` 32 | `--list-w` is 280 at ≤ 960px; `--control-h` is 44 on phones |
 
 **Fonts:** IBM Plex Sans (400/500/600) and IBM Plex Mono (400/500). They are self-hosted in `dashboard/fonts/` under the SIL Open Font License (`OFL.txt`), served with a one-year immutable cache, and need no network access. The extension uses the system font stack.
 
@@ -55,7 +55,7 @@ The rules the dashboard and the extension follow. A quiet, dense work tool: the 
 | Link check | `a.link-check.success/.warn/.danger` | Last on-demand result per project link; the title holds the detail and time |
 | Profile card | `.pf-card`, `.pf-form` (fields from `PROFILE_FIELDS` in `profile.js`) | Settings → Master Profile; forms are generated, never hand-written per kind |
 | Submission card | `#submission-card` with `dl.kv` | The exact submitted file per application, with View/Download/Compare/History |
-| Toast | `#notice.notice` (`.error`) | Bottom-right, above the bottom nav on phones, click to dismiss |
+| Toast | `#notice.notice` (`.error`) | Bottom-right (full width on phones), click to dismiss |
 
 **Interface rules:**
 
@@ -65,13 +65,19 @@ The rules the dashboard and the extension follow. A quiet, dense work tool: the 
 
 ## Layout and breakpoints
 
+There is no sidebar. The top bar holds the brand (a button that returns to Applications), the current view name, the connection
+state, refresh, theme and, last, the **Settings gear**. Applications is the home screen: a full-width three-pane workspace.
+Resumes and Analysis are reached from an application (Resume tab → Manage resumes, inspector → View analysis) and from
+Settings (Resume library). Every other page is full width with fluid side padding (`clamp(16px, 3vw, 48px)`); long prose
+keeps a readable 72ch measure.
+
 | Width | Behavior |
 |---|---|
 | > 1280px | Three panes: list (`--list-w`), editor, context (`--context-w`) |
 | ≤ 1280px | The context pane moves under the editor as a grid of blocks |
 | ≤ 1080px | Analysis and settings drop to one column |
-| ≤ 960px | The sidebar becomes icons only (56px); the list narrows to 280px |
-| ≤ 760px | Phone layout. A labelled bottom nav. List and detail are separate screens (`body.detail-open`, with a back button). 44px controls. One-column forms. The resume editor switches to Edit/Preview tabs |
+| ≤ 960px | The list narrows to 280px; the context pane stays under the editor |
+| ≤ 760px | Phone layout. List and detail are separate screens (`body.detail-open`, with a back button). 44px controls. One-column forms. The resume editor switches to Edit/Preview tabs |
 
 ## Accessibility
 
