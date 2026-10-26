@@ -32,6 +32,12 @@ try {
   await b.click('[data-profile-action="import"]');
   await noticeIncludes("Nothing new");
   log("second import is a no-op");
+  // Skills are compact cells (several per row); the job-details form fills the middle pane (checked later)
+  await b.click('[data-profile-tab="skills"]');
+  await b.waitFor(`document.querySelectorAll(".pf-skill-grid .pf-card").length >= 2`);
+  const skillRow = await b.eval(`(() => { const [a, c] = document.querySelectorAll(".pf-skill-grid .pf-card"); return Math.round(a.getBoundingClientRect().top) === Math.round(c.getBoundingClientRect().top); })()`);
+  log("skills share a row:", skillRow);
+  if (!skillRow) throw new Error("Skills are not laid out as cells");
 
   // 2. Register a project with links, then verify them
   await b.click('[data-profile-tab="projects"]');
@@ -50,6 +56,8 @@ try {
   const projectId = await b.eval(`[...document.querySelectorAll(".pf-card")].find(card => card.textContent.includes("Auth service")).id.replace("pf-item-", "")`);
   await b.click(`#pf-item-${projectId} [data-profile-action="verify-links"]`);
   await noticeIncludes("links checked");
+  const projectWide = await b.eval(`(() => { const card = document.querySelector(".pf-list .pf-card"); return Math.round(card.getBoundingClientRect().width) >= Math.round(card.parentElement.getBoundingClientRect().width) - 1; })()`);
+  if (!projectWide) throw new Error("Project cards are not full width");
   log("link checks:", await b.eval(`[...document.querySelectorAll("#pf-item-${projectId} .link-check")].map(el => el.textContent).join(" | ")`));
   await b.shot("p1-projects");
 
@@ -59,6 +67,15 @@ try {
   await noticeIncludes("test result was recorded");
   log("functional:", await b.eval(`document.querySelector('[data-functional="${projectId}"]').closest("label").querySelector(".field-help").textContent`));
   await b.shot("p2-verification");
+
+  // Job details: the form uses the whole middle pane
+  await b.click("#applications-button");
+  await b.waitFor(`document.querySelector('[data-editor-tab="details"]')`);
+  await b.click('[data-editor-tab="details"]');
+  const detailsWidth = await b.eval(`(() => { const pane = document.querySelector('[data-pane="details"]').getBoundingClientRect(), box = document.querySelector('#editor-form [name="excerpt"]').getBoundingClientRect(), surface = document.querySelector(".editor-surface").getBoundingClientRect(); return {pane: Math.round(pane.width), textarea: Math.round(box.width), surface: Math.round(surface.width)}; })()`);
+  log("job details width:", JSON.stringify(detailsWidth));
+  if (detailsWidth.textarea < detailsWidth.surface - 80) throw new Error("Job details do not use the full width");
+  await b.click('[data-editor-tab="overview"]');
 
   // 4. Analyze the job against resume + profile
   await b.click("#applications-button");

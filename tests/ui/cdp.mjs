@@ -52,9 +52,13 @@ export async function launch() {
     // Wait for the new document to finish loading (a fixed delay let a slow first load overlap the next navigation).
     async goto(url) {
       await send("Page.navigate", { url });
+      // Evaluating while the old document is torn down throws ("context destroyed"); keep polling through that.
+      const ready = `document.readyState === "complete" && location.href.startsWith(${JSON.stringify(url.split("#")[0])})`;
+      for (const deadline = Date.now() + 15000; Date.now() < deadline;) {
+        await api.sleep(150);
+        if (await api.eval(ready).catch(() => false)) break;
+      }
       await api.sleep(300);
-      await api.waitFor(`document.readyState === "complete" && location.href.startsWith(${JSON.stringify(url.split("#")[0])})`, 15000).catch(() => {});
-      await api.sleep(400);
     },
     sleep: ms => new Promise(r => setTimeout(r, ms)),
     async waitFor(expression, timeout = 15000) {

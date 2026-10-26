@@ -180,7 +180,7 @@ function listSection(kind, title, description) {
   const adding = profileEditing === "new:" + kind;
   return '<section class="pf-section"><div class="card-heading"><div><h2>' + esc(title) + ' <span class="count">' + list.length + '</span></h2>' + (description ? '<p>' + esc(description) + '</p>' : '') + '</div>' +
     (adding ? '' : '<button class="button secondary" type="button" data-profile-action="new" data-kind="' + kind + '">+ Add ' + esc(KIND_LABELS[kind]) + '</button>') + '</div>' +
-    (adding ? itemForm(kind, null) : '') + '<div class="pf-list' + (kind === "project" ? " pf-grid-cards" : "") + '">' +
+    (adding ? itemForm(kind, null) : '') + '<div class="pf-list' + (kind === "skill" ? " pf-skill-grid" : "") + '">' +
     (list.length ? list.map(itemCard).join("") : (adding ? '' : '<p class="subtle pf-empty">Nothing here yet.</p>')) + '</div></section>';
 }
 

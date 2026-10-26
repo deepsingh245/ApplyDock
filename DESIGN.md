@@ -53,7 +53,7 @@ The rules the dashboard and the extension follow. A quiet, dense work tool: the 
 | Note | `.inline-alert` (warn), `.workflow-note` / `.ai-notes` (accent) | 2px left rule on a soft fill |
 | Coverage chip | `.coverage-chip.represented/.weak/.profile_only/.unsupported` | How a requirement is covered by resume and Master Profile; always labelled |
 | Link check | `a.link-check.success/.warn/.danger` | Last on-demand result per project link; the title holds the detail and time |
-| Profile card | `.pf-card`, `.pf-form` (fields from `PROFILE_FIELDS` in `profile.js`) | Settings → Master Profile; forms are generated, never hand-written per kind |
+| Profile card | `.pf-card`, `.pf-form` (fields from `PROFILE_FIELDS` in `profile.js`) | Settings → Master Profile; forms are generated, never hand-written per kind. Skills are compact cells (`.pf-skill-grid`); every other entry is a full-width card |
 | Submission card | `#submission-card` with `dl.kv` | The exact submitted file per application, with View/Download/Compare/History |
 | Toast | `#notice.notice` (`.error`) | Bottom-right (full width on phones), click to dismiss |
 
@@ -70,6 +70,10 @@ state, refresh, theme and, last, the **Settings gear**. Applications is the home
 Resumes and Analysis are reached from an application (Resume tab → Manage resumes, inspector → View analysis) and from
 Settings (Resume library). Every other page is full width with fluid side padding (`clamp(16px, 3vw, 48px)`); long prose
 keeps a readable 72ch measure.
+
+On load, Applications opens the first application that still needs action (not applied, sent, submitted, or rejected); when
+there is none, the middle pane shows **No active applications** with *Add a job* and *View applied*. In the resume editor
+(wider than 760px) the page itself does not scroll: the form and the side panel each scroll on their own below the toolbar.
 
 | Width | Behavior |
 |---|---|
