@@ -80,7 +80,7 @@
       previewTimer: null, previewController: null, previewSeq: 0, previewUrl: "", pageCount: null, previousPageCount: null,
       previewError: "", validation: null, suggestions: [], suggestionJob: null, analysis: null, panel: "preview", compare: null,
       mobileTab: "edit", leftTab: s?.resumeId === resumeId ? s.leftTab : "content", conflict: null, onlySuggested: false,
-      revealed: new Set(), profileEntries: null, recommending: "",
+      revealed: new Set(), profileEntries: null, recommending: "", scoreCheck: null,
     };
     const entry = currentEntry();
     if (entry && !s.analysisId && entry.analysis?.id && entry.analysis.status !== "not_analyzed") s.analysisId = entry.analysis.id;
@@ -270,7 +270,8 @@
       '<button class="button quiet-button" type="button" data-re="reset">Reset unsaved edits</button>' +
       '<span class="re-toolbar-spacer"></span>' +
       '<button class="button quiet-button" type="button" data-re="download">Download PDF</button>' +
-      (entry ? '<button class="button secondary" type="button" data-re="save-analyze">Save &amp; re-analyze</button>' : '') +
+      (entry ? '<button class="button secondary" type="button" data-re="check-score" title="Score the current draft, including accepted suggestions, against this job — no version is saved">Check score</button>' +
+        '<button class="button quiet-button" type="button" data-re="save-analyze">Save &amp; new analysis</button>' : '') +
       '<button class="button primary" type="button" data-re="save-version">Save version</button></div>' +
       '<div id="re-banners"></div>' +
       '<div class="re-mobile-tabs" role="tablist"><button type="button" data-re-tab="edit" role="tab">Edit</button><button type="button" data-re-tab="preview" role="tab">Preview</button></div>' +
@@ -599,21 +600,27 @@
     if (!entry) html += '<p class="re-footnote">Open this resume from an application to compare it with that job.</p>';
     if (a) {
       const reqs = a.result?.requirements || [];
-      const gaps = reqs.filter(item => item.status !== "demonstrated");
+      const addressedCount = reqs.filter(item => a.checklist?.[item.id] === "addressed").length;
+      const gaps = reqs.filter(item => item.status !== "demonstrated" && a.checklist?.[item.id] !== "addressed");
       html += '<div class="re-score"><strong>' + (a.overall_score == null ? "—" : esc(a.overall_score) + "%") + '</strong><div><span>' + esc(a.result?.draft ? "Draft check · not saved as a version" : a.label) + '</span><small>Estimated match using ApplyDock\'s scoring — not a prediction of any employer\'s ATS.</small></div></div>';
       if (["pending", "analyzing"].includes(a.status)) html += '<p class="re-progress">Analyzing… ' + esc(a.progress_percent || 0) + '%</p>';
-      if (AD().profileChangedSince(a)) html += '<p class="re-check warn">Your Master Profile changed since this result. Use <b>Re-analyze draft</b> to compare against it, then refresh suggestions — nothing needs to be saved first.</p>';
+      if (AD().profileChangedSince(a)) html += '<p class="re-check warn">Your Master Profile changed since this result. Use <b>New analysis</b> to compare against it, then refresh suggestions — nothing needs to be saved first.</p>';
+      html += scoreCheckHtml(a);
       if (gaps.length) html += '<div class="re-gaps"><strong>Gaps and weak areas</strong>' + gaps.slice(0, 10).map(item => '<p><span class="match-status ' + esc(item.status) + '">' + esc(item.status) + '</span> ' + esc(item.requirement) +
         (item.coverage ? ' <span class="coverage-chip ' + esc(item.coverage) + '">' + esc(AD().coverageLabel(item.coverage)) + '</span>' : '') +
         (item.recommendation ? '<small>' + esc(item.recommendation) + '</small>' : '') +
         (item.profile_evidence || []).map(source => '<button class="text-button" type="button" data-profile-item="' + esc(source.item_id) + '">From your profile: ' + esc(source.label) + '</button>').join("") + '</p>').join("") + '</div>';
+      if (addressedCount) html += '<p class="re-footnote">' + addressedCount + ' requirement' + (addressedCount === 1 ? ' is' : 's are') + ' marked addressed and hidden here.</p>';
     } else if (entry) html += '<p class="re-footnote">No completed analysis yet for this application.</p>';
     if (entry) {
       if (resume.kind === "master" && entry.resume_id === resume.id)
         html += '<div class="re-banner"><span>You are editing the master resume. To tailor it for ' + esc(entry.company || "this job") + ' without changing the master, create a tailored copy.</span><div><button class="button secondary" type="button" data-re="tailor">Create tailored copy</button></div></div>';
-      html += '<div class="re-suggest-actions">' + (a?.status === "complete" ? '<button class="button primary" type="button" data-re="suggest"' + (running || s.data.draft.needs_review ? " disabled" : "") + '>' + (s.suggestions.length ? "Refresh suggestions" : "Suggest improvements") + '</button>' : '') +
-        '<button class="button ' + (a?.status === "complete" ? "secondary" : "primary") + '" type="button" data-re="analyze-draft"' + (s.data.draft.needs_review ? " disabled" : "") + '>Re-analyze draft</button>' +
-        '<button class="button quiet-button" type="button" data-re="save-analyze">Save version &amp; re-analyze</button>' +
+      // "Check score" re-scores edits against this analysis (no history entry); a new analysis only runs on request.
+      const checking = ["pending", "running"].includes(s.scoreCheck?.job?.status);
+      html += '<div class="re-suggest-actions">' + (a?.status === "complete" ? '<button class="button primary" type="button" data-re="check-score"' + (checking || s.data.draft.needs_review ? " disabled" : "") + '>Check score</button>' +
+          '<button class="button secondary" type="button" data-re="suggest"' + (running || s.data.draft.needs_review ? " disabled" : "") + '>' + (s.suggestions.length ? "Refresh suggestions" : "Suggest improvements") + '</button>' : '') +
+        '<button class="button ' + (a?.status === "complete" ? "quiet-button" : "primary") + '" type="button" data-re="analyze-draft"' + (s.data.draft.needs_review ? " disabled" : "") + '>New analysis</button>' +
+        '<button class="button quiet-button" type="button" data-re="save-analyze">Save version &amp; new analysis</button>' +
         (a?.id ? '<button class="button quiet-button" type="button" data-re="open-analysis">Open full analysis</button>' : '') + '</div>';
       if (s.data.draft.needs_review) html += '<p class="re-footnote">Confirm the imported content before asking for suggestions.</p>';
       if (running) html += '<p class="re-progress">Codex is preparing suggestions… ' + esc(job.percent || 0) + '%</p>';
@@ -625,6 +632,54 @@
         '<button class="button secondary" type="button" data-re="use-for-application">Use current version for this application</button></div>';
     }
     return html + '</div>';
+  }
+
+  // ------------------------------------------------------------------ score check (no new analysis)
+
+  function scoreCheckHtml(a) {
+    const check = s.scoreCheck;
+    if (!check || check.analysisId !== a?.id) return a?.status === "complete" ? '<p class="re-footnote">After applying suggestions, use <b>Check score</b> to see their effect on this analysis. It keeps every requirement whose text you did not change and adds nothing to the analysis history.</p>' : '';
+    const job = check.job;
+    if (["pending", "running"].includes(job?.status)) return '<p class="re-progress">Checking the score of your changes… ' + esc(job.percent || 0) + '%</p>';
+    if (job?.status === "failed") return '<p class="re-check warn">' + esc(job.error_message || "The score check failed.") + '</p>';
+    const r = job?.result;
+    if (!r) return '';
+    const delta = Math.round((r.overall_score - (r.baseline_score ?? a.overall_score)) * 10) / 10;
+    const outdated = r.content_hash && r.content_hash !== s.contentHash;
+    return '<div class="re-score-check"><div class="re-score-check-head"><div><span class="eyebrow">Score with your changes</span>' +
+      '<strong>' + esc(Number(r.overall_score).toFixed(1)) + '</strong><span class="re-delta ' + (delta > 0 ? "up" : delta < 0 ? "down" : "") + '">' + (delta > 0 ? "+" : "") + esc(delta.toFixed(1)) + '</span></div>' +
+      '<small>vs ' + esc(Number(r.baseline_score ?? a.overall_score).toFixed(1)) + ' in this analysis</small></div>' +
+      '<p class="re-checked-what">Checked: your current draft (not saved as a version)' + (r.applied_suggestions ? ', including ' + esc(r.applied_suggestions) + ' accepted suggestion' + (r.applied_suggestions === 1 ? '' : 's') : '') + '. Nothing was added to the analysis history.</p>' +
+      '<p class="re-footnote">' + (r.full ? 'Re-checked every requirement (' + esc(r.rechecked) + ').' : 'Re-checked ' + esc(r.rechecked) + ' requirement' + (r.rechecked === 1 ? '' : 's') + ' your edits touched; ' + esc(r.kept) + ' kept their verdict because their text is unchanged.') + ' A requirement never drops while its supporting text is unchanged.</p>' +
+      ((r.rechecked_items || []).length ? '<ul class="re-check-changes">' + r.rechecked_items.map(item => '<li><span class="match-status ' + esc(item.from) + '">' + esc(item.from) + '</span> → <span class="match-status ' + esc(item.to) + '">' + esc(item.to) + '</span> ' + esc(item.requirement) +
+        (item.from === item.to ? ' <small class="re-unchanged">unchanged</small>' : '') + (item.explanation ? '<small>' + esc(item.explanation) + '</small>' : '') + '</li>').join("") + '</ul>'
+        : (r.changes?.length ? '<ul class="re-check-changes">' + r.changes.map(change => '<li><span class="match-status ' + esc(change.from) + '">' + esc(change.from) + '</span> → <span class="match-status ' + esc(change.to) + '">' + esc(change.to) + '</span> ' + esc(change.requirement) + '</li>').join("") + '</ul>' : '<p class="re-footnote">No requirement needed re-checking: none of the text the analysis relied on changed.</p>')) +
+      (r.full ? '' : '<button class="button quiet-button" type="button" data-re="check-score-full">Re-check all requirements</button>') +
+      (outdated ? '<p class="re-check warn">The draft changed after this check. Check again to include the latest edits.</p>' : '') + '</div>';
+  }
+
+  async function checkScore(button, full = false) {
+    if (!s.analysisId) return AD().notify("Run an analysis for this job first; Check score compares your draft with it.", true);
+    const session = s;
+    if (button) button.disabled = true;
+    s.panel = "analysis";  // the result is shown in Job match
+    try {
+      await flushSave();
+      const result = await request("/api/analyses/" + s.analysisId + "/score-check", "POST", {resume_id: s.resumeId, expected_revision: s.revision, full});
+      s.scoreCheck = {analysisId: s.analysisId, job: result.job};
+      renderSide();
+      while (["pending", "running"].includes(s.scoreCheck?.job?.status)) {
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        if (session !== s) return;
+        s.scoreCheck.job = (await request("/api/resume-jobs/" + result.job.id)).job;
+        renderSide();
+      }
+      const r = s.scoreCheck.job.result;
+      if (r) AD().notify("Score with your changes: " + Number(r.overall_score).toFixed(1) + " (" + (r.changes.length ? r.changes.length + " requirement(s) changed" : "no requirement changed") + "). The analysis history is unchanged.");
+    } catch (error) {
+      if (error.status === 409) { s.conflict = error.payload?.draft; s.status = "conflict"; renderStatus(); }
+      AD().notify(error.message, true);
+    } finally { if (button?.isConnected) button.disabled = false; if (session === s) renderSide(); }
   }
 
   async function loadAnalysis() {
@@ -730,7 +785,7 @@
       s.status = "saved";
       await loadSuggestions();
       schedulePreview(0);
-      AD().notify(action === "revert" ? "Suggestion reverted." : "Suggestion applied. Review the preview.");
+      AD().notify(action === "revert" ? "Suggestion reverted." : "Suggestion applied to the draft. Use Check score to see its effect — no need to save a version.");
     } catch (error) {
       if (error.status === 409) { s.conflict = error.payload.draft; s.status = "conflict"; renderStatus(); }
       AD().notify(error.message, true);
@@ -766,7 +821,7 @@
     const busy = s.recommending;
     let html = '<div class="re-profile-panel"><p class="re-footnote">Add entries from your Master Profile to this draft. Facts are copied as written in your profile; nothing is saved as a version until you choose Save version.</p>';
     if (entry) html += '<div class="re-recommend"><button class="button primary" type="button" data-re="recommend-profile"' + (busy || s.data.draft.needs_review ? " disabled" : "") + '>Recommend from my profile for this job</button>' +
-      (busy ? '<p class="re-progress">' + esc(busy) + '</p>' : '<p class="re-footnote">Checks this draft against the job with your current profile, then suggests what to add — shown next to the text it changes.</p>') + '</div>';
+      (busy ? '<p class="re-progress">' + esc(busy) + '</p>' : '<p class="re-footnote">Uses this job\'s current analysis (or runs one if there is none) and suggests what to add from your profile — shown next to the text it changes.</p>') + '</div>';
     if (!entries.length) return html + '<p class="re-footnote">Your Master Profile is empty. Add experience and projects under Settings → Master Profile.</p></div>';
     for (const [kind, title] of PROFILE_GROUPS) {
       const group = entries.filter(item => item.kind === kind).sort((a, b) => (helps[b.item_id] ? 1 : 0) - (helps[a.item_id] ? 1 : 0));
@@ -811,11 +866,13 @@
   async function recommendFromProfile() {
     const session = s;
     try {
-      s.recommending = "Checking this draft against the job with your current profile…";
-      renderSide();
-      await analyzeDraft(null);
-      if (session !== s) return;
-      s.panel = "profile";
+      if (s.analysis?.status !== "complete") {
+        s.recommending = "Analyzing this draft against the job with your current profile…";
+        renderSide();
+        await analyzeDraft(null);
+        if (session !== s) return;
+        s.panel = "profile";
+      }
       for (let tries = 0; tries < 120 && ["pending", "analyzing"].includes(s.analysis?.status); tries++) {
         await new Promise(resolve => setTimeout(resolve, 1500));
         if (session !== s) return;
@@ -1054,6 +1111,8 @@
       if (name === "save-version") return saveVersion();
       if (name === "save-analyze") return saveVersion({analyze: true});
       if (name === "analyze-draft") return analyzeDraft(button);
+      if (name === "check-score") return checkScore(button);
+      if (name === "check-score-full") return checkScore(button, true);
       if (name === "recommend-profile") return recommendFromProfile();
       if (name === "validate") {
         s.validation = (await request("/api/resumes/" + s.resumeId + "/draft/validate", "POST", {content: s.content})).validation;
@@ -1101,7 +1160,7 @@
       }
       if (name === "suggest") return requestSuggestions();
       if (name === "fit") return fitToPages();
-      if (name === "open-analysis") return AD().openAnalysis(s.analysisId);
+      if (name === "open-analysis") return flushSave().then(() => AD().openAnalysisModal(s.analysisId));
       if (name === "use-for-application") {
         const current = (d.versions || []).find(v => v.is_current);
         if (hasUnsavedVersionChanges() && !window.confirm("Your latest edits are not saved as a version. Attach the last saved version (v" + (current?.version_number || "?") + ") to this application anyway?")) return;

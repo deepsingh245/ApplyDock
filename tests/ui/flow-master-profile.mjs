@@ -92,6 +92,18 @@ try {
   log("coverage:", await b.eval(`[...document.querySelectorAll(".requirement-card .coverage-chip")].map(el => el.textContent).join(" | ")`));
   log("potential:", await b.eval(`document.querySelector(".score-potential")?.textContent || "none"`));
   await b.shot("p3-analysis");
+  // Marking a recommendation "addressed" moves it out of the open list (and priority list); Reopen brings it back
+  const openBefore = await b.eval(`document.querySelectorAll(".requirements-list .requirement-card").length`);
+  await b.eval(`(() => { const s = document.querySelector('.requirement-card[data-requirement-coverage="unsupported"] [data-recommendation]'); s.value = "addressed"; s.dispatchEvent(new Event("change", {bubbles: true})); return true; })()`);
+  await b.waitFor(`document.querySelector(".addressed-requirements")`, 10000);
+  const addressedState = await b.eval(`({open: document.querySelectorAll(".requirements-list .requirement-card").length, addressed: document.querySelectorAll(".addressed-row").length,
+    inPriority: [...document.querySelectorAll(".priority-improvements article strong")].some(el => el.textContent.includes("Kubernetes"))})`);
+  log("addressed:", openBefore, "->", JSON.stringify(addressedState));
+  if (addressedState.open !== openBefore - 1 || addressedState.addressed !== 1 || addressedState.inPriority) throw new Error("Addressed requirement was not moved out of the open list");
+  await b.eval(`document.querySelector(".addressed-requirements").open = true; true`);
+  await b.click("[data-reopen]");
+  await b.waitFor(`!document.querySelector(".addressed-requirements") && document.querySelectorAll(".requirements-list .requirement-card").length === ${openBefore}`, 10000);
+  log("reopened");
   await b.eval(`document.querySelector('.requirement-card[data-requirement-coverage="profile_only"]').open = true; true`);
   await b.click('.requirement-card[data-requirement-coverage="profile_only"] [data-profile-item]');
   await b.waitFor(`document.querySelector(".pf-card.pf-highlight")`);
@@ -152,6 +164,44 @@ try {
   await b.click(`[data-suggestion="${profileCard}"] [data-sugg="accept"]`);
   await b.waitFor(`document.querySelector('[data-suggestion="${profileCard}"]')?.classList.contains("applied")`, 10000);
   log("project added to draft:", await b.eval(`[...document.querySelectorAll('[data-field="name"]')].some(el => el.value === "Auth service")`));
+  // Check score: re-scores the edits against this analysis without adding to the analysis history
+  const historyBefore = await b.eval(`(async () => { const e = window.ApplyDock.state().entries[0]; return (await window.ApplyDock.api("/api/entries/" + e.id + "/analyses")).analyses.length; })()`);
+  await b.click('[data-side="analysis"]');
+  await b.waitFor(`document.querySelector('[data-re="check-score"]')`, 10000);
+  await b.click('[data-re="check-score"]');
+  await b.waitFor(`document.querySelector(".re-score-check strong")`, 20000);
+  const historyAfter = await b.eval(`(async () => { const e = window.ApplyDock.state().entries[0]; return (await window.ApplyDock.api("/api/entries/" + e.id + "/analyses")).analyses.length; })()`);
+  log("score check:", await b.eval(`document.querySelector(".re-score-check").innerText.replace(/\s+/g, " ").slice(0, 160)`), "| history", historyBefore, "->", historyAfter);
+  if (historyAfter !== historyBefore) throw new Error("Check score added an analysis to the history");
+  const checked = await b.eval(`document.querySelector(".re-checked-what").textContent`);
+  log("checked:", checked);
+  if (!checked.includes("current draft (not saved as a version)") || !checked.includes("accepted suggestion")) throw new Error("Score check does not say it checked the draft");
+  await b.click('[data-re="check-score-full"]');
+  await b.waitFor(`document.querySelector(".re-score-check") && document.querySelector(".re-score-check").textContent.includes("Re-checked every requirement")`, 20000);
+  const historyFull = await b.eval(`(async () => { const e = window.ApplyDock.state().entries[0]; return (await window.ApplyDock.api("/api/entries/" + e.id + "/analyses")).analyses.length; })()`);
+  log("full re-check rows:", await b.eval(`document.querySelectorAll(".re-check-changes li").length`), "| history", historyFull);
+  if (historyFull !== historyBefore) throw new Error("Full re-check added an analysis to the history");
+  const toolbarCheck = await b.eval(`!!document.querySelector('.re-toolbar [data-re="check-score"]')`);
+  if (!toolbarCheck) throw new Error("Check score is missing from the editor toolbar");
+  await b.shot("p4c-score-check");
+  // Full analysis from the editor opens as a dialog; closing it returns to the editor (not the home page)
+  await b.click('[data-re="open-analysis"]');
+  await b.waitFor(`document.getElementById("analysis-dialog").open && document.querySelector("#analysis-dialog .analysis-hero")`, 15000);
+  const inDialog = await b.eval(`({view: window.ApplyDock.currentView(), inside: !!document.querySelector("#analysis-dialog #analysis-view"), editorVisible: !document.getElementById("resume-editor-view").hidden})`);
+  log("analysis dialog:", JSON.stringify(inDialog));
+  if (inDialog.view !== "resume-editor" || !inDialog.inside || !inDialog.editorVisible) throw new Error("Full analysis did not open as a dialog over the editor");
+  await b.shot("p4d-analysis-dialog");
+  await b.send("Input.dispatchKeyEvent", {type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27});
+  await b.send("Input.dispatchKeyEvent", {type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27});
+  await b.waitFor(`!document.getElementById("analysis-dialog").open`, 5000);
+  const afterClose = await b.eval(`({view: window.ApplyDock.currentView(), editorVisible: !document.getElementById("resume-editor-view").hidden,
+    restored: !!document.querySelector(".workspace-content > #analysis-view"), analysisHidden: document.getElementById("analysis-view").hidden})`);
+  log("after Esc:", JSON.stringify(afterClose));
+  if (afterClose.view !== "resume-editor" || !afterClose.editorVisible || !afterClose.restored || !afterClose.analysisHidden) throw new Error("Closing the analysis dialog did not return to the editor");
+  await b.click('[data-re="open-analysis"]');
+  await b.waitFor(`document.getElementById("analysis-dialog").open`, 10000);
+  await b.click("#analysis-dialog-close");
+  await b.waitFor(`!document.getElementById("analysis-dialog").open && !document.getElementById("resume-editor-view").hidden`, 5000);
   // Re-analyze the unsaved draft (no version is created)
   const versionsBefore = await b.eval(`document.querySelectorAll('[data-side="versions"]').length && window.ApplyDock.state().resumes.find(r => r.kind === "tailored").version_count`);
   await b.click('[data-re="analyze-draft"]');

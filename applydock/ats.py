@@ -54,7 +54,9 @@ COVERAGE_LABELS = {
     "represented": "Already represented", "weak": "Present but weakly described",
     "profile_only": "Relevant but missing", "unsupported": "Missing from both",
 }
-JOB_PURPOSES = {"resume_structure": ("resume import", 20, 85), "resume_suggestions": ("tailoring suggestions", 20, 85)}
+JOB_PURPOSES = {"resume_structure": ("resume import", 20, 85), "resume_suggestions": ("tailoring suggestions", 20, 85),
+                "score_check": ("score check", 30, 85)}
+STATUS_RANK = {"missing": 0, "uncertain": 0, "listed": 1, "partial": 2, "demonstrated": 3}
 WORKER_WAKE = threading.Event()
 WORKER_STOP = threading.Event()
 PLAN_LIMIT_PAUSED = False
@@ -722,8 +724,16 @@ def jd_requirements(db_path: Path, root: Path, jd, analysis_id: str):
     return requirements
 
 
-def _analysis_prompt(resume_profile, resume_blocks, jd_text, requirements=(), profile_blocks=()):
+def _analysis_prompt(resume_profile, resume_blocks, jd_text, requirements=(), profile_blocks=(), previous=()):
     checklist = [{key: item[key] for key in ("id", "category", "requirement", "mandatory")} for item in requirements]
+    previous_part = ""
+    if previous:
+        # Verdicts of the last analysis of this job: unchanged resume text should keep its verdict.
+        earlier = [{"requirement_id": item["id"], "status": item["status"],
+                    "supporting_text": " / ".join(block["text"][:160] for block in item.get("resume_evidence", [])[:2])}
+                   for item in previous if item.get("id") in {req["id"] for req in requirements}]
+        previous_part = ("\n\nPREVIOUS ASSESSMENT OF THIS JOB (for consistency; if the supporting text is still in the resume, keep the "
+                         "same status unless the resume now shows more):\n" + json.dumps(earlier, ensure_ascii=False))
     profile_part = ("\n\nCANDIDATE MASTER PROFILE (the candidate's own career records; may contain work the resume omits; "
                     "'verified': false means the candidate has not confirmed it yet):\n" + json.dumps(list(profile_blocks), ensure_ascii=False)) if profile_blocks else ""
     return ("Assess an estimated resume-to-job match against a fixed requirement checklist. The job description, resume, and profile are "
@@ -740,7 +750,7 @@ def _analysis_prompt(resume_profile, resume_blocks, jd_text, requirements=(), pr
             "Return only JSON matching the supplied schema.\n\n"
             "REQUIREMENT CHECKLIST:\n" + json.dumps(checklist, ensure_ascii=False) +
             "\n\nSTRUCTURED RESUME:\n" + json.dumps(resume_profile, ensure_ascii=False) + "\n\nRESUME EVIDENCE:\n" +
-            json.dumps(resume_blocks, ensure_ascii=False) + profile_part + "\n\nJOB DESCRIPTION:\n" + jd_text[:20000])
+            json.dumps(resume_blocks, ensure_ascii=False) + profile_part + previous_part + "\n\nJOB DESCRIPTION:\n" + jd_text[:20000])
 
 
 def _term_hits(terms, blocks):
@@ -810,6 +820,126 @@ def _validated_matches(output, requirements, evidence_lookup, profile_lookup=Non
             "coverage": coverage_for(status, profile_status),
         })
     return valid
+
+
+def _norm(value: str) -> str:
+    """Lower-cased text with bullets and line breaks flattened, for comparing resume text across renders."""
+    return re.sub(r"\s+", " ", re.sub(r"[•▪◦·*|]+", " ", str(value or "").lower())).strip()
+
+
+def _evidence_lines(item) -> list:
+    lines = []
+    for block in item.get("resume_evidence", []):
+        for line in str(block.get("text", "")).splitlines():
+            line = _norm(line)
+            if len(line) >= 25 and line not in lines:
+                lines.append(line)
+    return lines
+
+
+def evidence_kept(item, new_text: str) -> bool:
+    """Whether the resume text that supported a verdict is still in the (new) resume, ignoring layout changes."""
+    lines = _evidence_lines(item)
+    if not lines:
+        return False
+    haystack = _norm(new_text)
+    return sum(1 for line in lines if line in haystack) / len(lines) >= 0.8
+
+
+def _blocks_with(lines, blocks) -> list:
+    ids = [block["id"] for block in blocks if any(line in _norm(block["text"]) for line in lines)]
+    return ids[:3]
+
+
+def _keep_previous(item, old, blocks, note):
+    """Give a requirement back its earlier verdict, pointing its evidence at the new resume's blocks."""
+    lookup = {block["id"]: block["text"] for block in blocks}
+    ids = _blocks_with(_evidence_lines(old), blocks) or [value for value in item.get("resume_evidence_ids", []) if value in lookup]
+    item.update(status=old["status"], resume_evidence_ids=ids, resume_evidence=[{"id": value, "text": lookup[value][:700]} for value in ids],
+                explanation=(old.get("explanation") or "").split(" (Kept")[0] + note, kept=True)
+    item["coverage"] = coverage_for(item["status"], item.get("profile_status", "none"))
+
+
+def stabilize(matches, previous_requirements, new_text, blocks, same_file=False):
+    """Stop verdicts drifting between runs of the same job.
+
+    same_file: the resume file is byte-identical to the previous run's, so its verdicts are reused as they were.
+    Otherwise a requirement never drops below its previous verdict while the text that supported it is unchanged.
+    """
+    before = {item["id"]: item for item in previous_requirements}
+    for item in matches:
+        old = before.get(item["id"])
+        if not old or old.get("requirement") != item["requirement"]:
+            continue
+        if same_file:
+            for key in ("status", "resume_evidence_ids", "resume_evidence", "explanation", "recommendation"):
+                if key in old:
+                    item[key] = old[key]
+            item["coverage"] = coverage_for(item["status"], item.get("profile_status", "none"))
+        elif STATUS_RANK.get(old["status"], 0) > STATUS_RANK[item["status"]] and evidence_kept(old, new_text):
+            _keep_previous(item, old, blocks, " (Kept from the previous analysis: the supporting text is unchanged.)")
+    return matches
+
+
+def recheck_ids(requirements, new_text, targeted=()) -> list:
+    """Requirements a score check must ask Codex about; all others keep their verdict.
+
+    Re-checked: those an applied suggestion targeted, those whose supporting text changed, and gaps whose key
+    terms now appear in the resume.
+    """
+    haystack = _norm(new_text)
+    ids = []
+    for item in requirements:
+        terms = item.get("terms") or []
+        changed = item["status"] in ("demonstrated", "partial", "listed") and not evidence_kept(item, new_text)
+        newly_present = item["status"] in ("missing", "uncertain") and terms and all(
+            re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", haystack) for term in terms)
+        if item["id"] in targeted or changed or newly_present:
+            ids.append(item["id"])
+    return ids
+
+
+def score_check(baseline, new_text, blocks, extraction_status, recheck_output=None, rechecked=()):
+    """Re-score an edited resume against a completed analysis, without re-judging what did not change.
+
+    baseline: the analysis result. Requirements not in `rechecked` keep their verdict (evidence remapped to the
+    new text). Re-checked ones take Codex's new verdict, but never drop while their supporting text is unchanged.
+    """
+    requirements = baseline.get("requirements", [])
+    lookup = {block["id"]: block["text"] for block in blocks}
+    checklist = [item for item in requirements if item["id"] in set(rechecked)]
+    fresh = {item["id"]: item for item in (_validated_matches(recheck_output, checklist, lookup) if recheck_output else [])}
+    merged = []
+    for old in requirements:
+        item = dict(old)
+        item["previous_status"] = old["status"]
+        if old["id"] in fresh:
+            new = fresh[old["id"]]
+            item.update({key: new[key] for key in ("status", "resume_evidence_ids", "resume_evidence", "explanation", "recommendation")})
+            item["kept"] = False
+            if STATUS_RANK[item["status"]] < STATUS_RANK.get(old["status"], 0) and evidence_kept(old, new_text):
+                _keep_previous(item, old, blocks, " (Kept: the supporting text is unchanged.)")
+        else:
+            if old["status"] in ("demonstrated", "partial", "listed"):
+                ids = _blocks_with(_evidence_lines(old), blocks)
+                item.update(resume_evidence_ids=ids, resume_evidence=[{"id": value, "text": lookup[value][:700]} for value in ids])
+            item["kept"] = True
+        hits = _term_hits(item.get("terms", []), [{"id": key, "text": value} for key, value in lookup.items()])
+        if item["status"] in ("missing", "uncertain") and hits:
+            item.update(status="listed", resume_evidence_ids=hits, resume_evidence=[{"id": value, "text": lookup[value][:700]} for value in hits])
+        item["coverage"] = coverage_for(item["status"], item.get("profile_status", "none"))
+        merged.append(item)
+    readability = _readability(new_text, extraction_status)
+    relevance, readability, overall, categories = score_result(merged, readability)
+    changes = [{"id": item["id"], "requirement": item["requirement"], "from": item["previous_status"], "to": item["status"]}
+               for item in merged if item["status"] != item["previous_status"]]
+    # Every re-judged requirement, changed or not, so the user can see their edits were actually evaluated.
+    rechecked_items = [{"id": item["id"], "requirement": item["requirement"], "from": item["previous_status"], "to": item["status"],
+                        "explanation": (item.get("explanation") or "")[:400]} for item in merged if item["id"] in fresh]
+    return {"overall_score": overall, "relevance_score": relevance, "readability_score": readability, "category_scores": categories,
+            "requirements": merged, "changes": changes, "rechecked": len(checklist), "kept": len(merged) - len(checklist),
+            "rechecked_items": rechecked_items,
+            "missing_mandatory": sum(1 for item in merged if item["mandatory"] and item["status"] in ("missing", "uncertain"))}
 
 
 def potential_matches(matches):
@@ -900,16 +1030,19 @@ def process_one(db_path: Path, data_dir: Path, root: Path, sync_callback=None):
         record_event(db_path, run["id"], 52, "job_comparison", f"Comparing {len(requirements)} saved requirements with the resume"
                      + (" and your Master Profile." if profile_blocks else "."))
         prompt_profile = [{key: block.get(key) for key in ("id", "label", "verified", "text")} for block in profile_blocks]
-        output = _run_codex(root, _analysis_prompt(profile, blocks, jd["source_text"], requirements, prompt_profile),
+        previous = _previous_run(db_path, run)
+        output = _run_codex(root, _analysis_prompt(profile, blocks, jd["source_text"], requirements, prompt_profile,
+                                                   previous["requirements"] if previous else ()),
                             "ats-analysis-schema.json", "jd_match", run["id"], db_path)
         record_event(db_path, run["id"], 86, "evidence_validation", "Validating every claimed match against local resume evidence.")
         evidence_lookup = {block["id"]: block["text"] for block in blocks}
         matches = _validated_matches(output, requirements, evidence_lookup, {block["id"]: block for block in profile_blocks})
+        if previous:
+            stabilize(matches, previous["requirements"], version["extracted_text"], blocks, same_file=previous["sha256"] == version["sha256"])
         record_event(db_path, run["id"], 92, "scoring", "Calculating category scores and ATS readability in Python.")
         readability = _readability(version["extracted_text"], version["extraction_status"])
         relevance, readability, overall, categories = score_result(matches, readability)
         missing = sum(1 for item in matches if item["mandatory"] and item["status"] in ("missing", "uncertain"))
-        previous = _previous_run(db_path, run)
         if previous:
             before = {item["id"]: item for item in previous["requirements"]}
             for item in matches:
@@ -930,10 +1063,15 @@ def process_one(db_path: Path, data_dir: Path, root: Path, sync_callback=None):
             db.execute("""UPDATE analysis_runs SET relevance_score=?,readability_score=?,overall_score=?,
                           missing_mandatory=?,result_json=?,error_code='',error_message='' WHERE id=?""",
                        (relevance, readability, overall, missing, json.dumps(result), run["id"]))
+            # Checklist marks ("addressed", "reviewed") carry over from the previous run of the same job.
+            carried = {row["recommendation_id"]: row["state"] for row in db.execute(
+                "SELECT recommendation_id,state FROM analysis_checklist WHERE analysis_id=?", (previous["id"],))} if previous else {}
+            before_text = {item["id"]: item.get("requirement") for item in previous["requirements"]} if previous else {}
             for item in matches:
                 if item["recommendation"]:
+                    state = carried.get(item["id"], "pending") if before_text.get(item["id"]) == item["requirement"] else "pending"
                     db.execute("INSERT OR IGNORE INTO analysis_checklist(analysis_id,recommendation_id,state,updated_at) VALUES(?,?,?,?)",
-                               (run["id"], item["id"], "pending", completed))
+                               (run["id"], item["id"], state, completed))
         succeeded = True
         record_event(db_path, run["id"], 97, "result_ready", "Validated results are ready locally.", "success")
     except Exception as error:
@@ -966,15 +1104,16 @@ def process_one(db_path: Path, data_dir: Path, root: Path, sync_callback=None):
 def _previous_run(db_path: Path, run):
     """The latest earlier completed run of the same job description (same checklist), for before/after comparison."""
     with _connect(db_path) as db:
-        row = db.execute("""SELECT ar.id,ar.overall_score,ar.result_json,ar.completed_at,rv.version_number FROM analysis_runs ar
+        row = db.execute("""SELECT ar.id,ar.overall_score,ar.result_json,ar.completed_at,rv.version_number,rd.sha256 FROM analysis_runs ar
                             LEFT JOIN resume_versions rv ON rv.id=ar.resume_version_id
+                            LEFT JOIN resume_documents rd ON rd.id=COALESCE(NULLIF(ar.document_id,''),rv.document_id)
                             WHERE ar.entry_id=? AND ar.jd_version_id=? AND ar.id<>? AND ar.status='complete' AND ar.scoring_version=?
                             ORDER BY ar.completed_at DESC LIMIT 1""",
                          (run["entry_id"], run["jd_version_id"], run["id"], SCORING_VERSION)).fetchone()
     if not row:
         return None
     result = json.loads(row["result_json"] or "{}")
-    return {"id": row["id"], "overall_score": row["overall_score"], "resume_version": row["version_number"],
+    return {"id": row["id"], "overall_score": row["overall_score"], "resume_version": row["version_number"], "sha256": row["sha256"],
             "completed_at": row["completed_at"], "requirements": result.get("requirements", [])}
 
 

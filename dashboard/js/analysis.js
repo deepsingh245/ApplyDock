@@ -89,7 +89,11 @@ function renderAnalysis() {
     return '<div class="category-row"><div><strong>' + esc(label) + '</strong><span>' + esc(score.earned) + ' / ' + esc(score.possible) + ' points</span></div><div class="score-track"><i style="width:' + Math.max(0, Math.min(100, Number(score.score || 0))) + '%"></i></div><b>' + esc(score.score || 0) + '%</b></div>';
   }).join("");
   const statusRank = {missing: 0, uncertain: 0, listed: 1, partial: 2, demonstrated: 3};
-  const requirementHtml = requirements.length ? requirements.map(item => {
+  // Requirements you marked "addressed" leave the open list (and priority improvements); they stay reachable below.
+  const isAddressed = item => detail.checklist?.[item.id] === "addressed";
+  const openRequirements = requirements.filter(item => !isAddressed(item));
+  const addressedRequirements = requirements.filter(isAddressed);
+  const requirementCard = item => {
     const checklist = detail.checklist?.[item.id] || "pending";
     const evidence = item.resume_evidence || [];
     const filterStatus = item.status === "demonstrated" ? "matched" : ["partial", "listed"].includes(item.status) ? "partial" : "missing";
@@ -100,10 +104,14 @@ function renderAnalysis() {
       sources.map(source => '<p>' + esc(source.label) + (source.verified ? '' : ' <span class="sub-status warn">Unverified</span>') + ' <button class="text-button" type="button" data-profile-item="' + esc(source.item_id) + '">View source</button></p>').join("") + '</div>'
       : (item.coverage === "unsupported" ? '<p class="subtle">Neither your resume nor your Master Profile supports this. Do not add it unless it is true; if it is, add the evidence to your profile first.</p>' : '');
     return '<details class="requirement-card" data-requirement-status="' + filterStatus + '" data-requirement-coverage="' + esc(item.coverage || "") + '" data-requirement-text="' + esc(item.requirement).toLowerCase() + '"><summary><span class="requirement-dot ' + filterStatus + '"></span><span><strong>' + esc(item.requirement) + '</strong><small>' + esc(item.explanation || "Open to inspect evidence and recommendation.") + '</small></span><span class="requirement-chips">' + change + '<span class="match-status ' + esc(item.status) + '">' + esc(item.status) + '</span>' + (item.coverage ? '<span class="coverage-chip ' + esc(item.coverage) + '">' + esc(coverageLabel(item.coverage)) + '</span>' : '') + '</span><b aria-hidden="true">›</b></summary><div class="requirement-body"><div class="requirement-head">' + (item.mandatory ? '<span class="required-pill">Required</span>' : '<span class="preferred-pill">Preferred</span>') + '<span class="priority-pill">' + esc(item.priority) + ' priority</span></div>' + (evidence.length ? '<div class="evidence-list">' + evidence.map(block => '<blockquote><strong>' + esc(block.id) + '</strong>' + esc(block.text) + '</blockquote>').join("") + '</div>' : '<small>No supporting resume evidence</small>') + profileHtml + (item.recommendation ? '<div class="recommendation"><strong>Recommendation</strong><p>' + esc(item.recommendation) + '</p><label>Checklist state<select data-recommendation="' + esc(item.id) + '"><option value="pending"' + (checklist === "pending" ? " selected" : "") + '>Pending</option><option value="reviewed"' + (checklist === "reviewed" ? " selected" : "") + '>Reviewed</option><option value="addressed"' + (checklist === "addressed" ? " selected" : "") + '>Addressed</option></select></label></div>' : '') + '</div></details>';
-  }).join("") : '<div class="view-card"><p>No scorable requirements are available for this run.</p></div>';
+  };
+  const requirementHtml = openRequirements.length ? openRequirements.map(requirementCard).join("")
+    : '<div class="view-card"><p>' + (requirements.length ? "Everything is addressed. Reopen an item below if you want to work on it again." : "No scorable requirements are available for this run.") + '</p></div>';
+  const addressedHtml = addressedRequirements.length ? '<details class="addressed-requirements"><summary>Addressed (' + addressedRequirements.length + ') — hidden from the list above</summary><div class="addressed-list">' +
+    addressedRequirements.map(item => '<div class="addressed-row"><span class="match-status ' + esc(item.status) + '">' + esc(item.status) + '</span><span>' + esc(item.requirement) + '</span><button class="text-button" type="button" data-reopen="' + esc(item.id) + '">Reopen</button></div>').join("") + '</div></details>' : '';
   // Gaps the profile can fill come first: they are the changes that are both truthful and new to the resume.
   const coverageOrder = {profile_only: 0, weak: 1, unsupported: 2};
-  const priorityItems = requirements.filter(item => item.recommendation && item.status !== "demonstrated")
+  const priorityItems = openRequirements.filter(item => item.recommendation && item.status !== "demonstrated")
     .sort((a, b) => (coverageOrder[a.coverage] ?? 1) - (coverageOrder[b.coverage] ?? 1)).slice(0, 3);
   const priorityHtml = '<div class="view-card priority-improvements"><div class="card-heading"><h2>Priority improvements</h2><span class="sub-status">' + priorityItems.length + ' high impact</span></div>' + (priorityItems.length ? priorityItems.map(item => '<article><strong>' + esc(item.requirement) + '</strong>' + (item.coverage ? '<span class="coverage-chip ' + esc(item.coverage) + '">' + esc(coverageLabel(item.coverage)) + '</span>' : '') + '<p>' + esc(item.recommendation) + '</p></article>').join("") : '<p>No priority gaps were returned for this analysis.</p>') + '</div>';
   const historyHtml = analysisHistory.length ? analysisHistory.map(item => '<button type="button" data-analysis-history="' + esc(item.id) + '" class="history-row' + (item.id === detail.id ? ' active' : '') + '"><span>' + esc(item.label) + '</span><strong>' + (item.overall_score == null ? '—' : esc(item.overall_score) + '%') + '</strong><small>' + esc(dateLabel(item.completed_at || item.created_at)) + '</small></button>').join("") : '<p class="subtle">No prior analyses.</p>';
@@ -128,7 +136,7 @@ function renderAnalysis() {
     (potential == null ? '' : '<p class="score-potential">Adding the evidence already in your Master Profile could raise this to about ' + esc(Number(potential).toFixed(1)) + '.</p>') +
     (result.profile_used === false && result.scoring_version === "score-v2" ? '<p class="subtle">Add projects and experience under Settings → Master Profile so ApplyDock can find evidence your resume leaves out.</p>' : '') + '</div><div class="analysis-hero-actions"><button class="button primary" data-analysis-optimize type="button">Optimize resume for this job</button><button class="button secondary" data-analysis-rerun type="button">' + (profileChangedSince(detail) ? "Re-run with updated profile" : "Run analysis again") + '</button></div></div>' +
     (warnings.length ? '<div class="analysis-warnings">' + warnings.map(value => '<p>' + esc(value) + '</p>').join("") + '</div>' : '') +
-    '<div class="analysis-layout"><main><section class="view-card"><div class="card-heading"><h2>Score breakdown</h2><span class="sub-status">Scored locally</span></div><div class="category-list">' + categoryHtml + '<div class="category-row readability-row"><div><strong>ATS readability and structure</strong><span>5% of estimated match</span></div><b>' + (detail.readability_score == null ? '—' : esc(detail.readability_score) + '%') + '</b></div></div></section>' + comparisonHtml + '<section class="analysis-section"><div class="card-heading"><div><h2>Requirements explorer</h2><p>Inspect matched evidence and gaps in your resume.</p></div><span class="sub-status">' + requirements.length + ' requirements</span></div><div class="requirements-toolbar"><div class="requirement-filters"><button class="active" type="button" data-requirement-filter="all">All</button><button type="button" data-requirement-filter="missing">Missing</button><button type="button" data-requirement-filter="partial">Partial</button><button type="button" data-requirement-filter="matched">Matched</button>' + (coverage ? '<button type="button" data-requirement-filter="profile_only">In profile</button>' : '') + '</div><label><span class="sr-only">Search requirements</span><input id="requirements-search" type="search" placeholder="Search requirements"></label></div><div class="requirements-list">' + requirementHtml + '</div></section></main><aside class="analysis-history">' + priorityHtml + analysisConsoleHtml(detail, false) + '<div class="view-card"><div class="card-heading"><h2>Analysis history</h2><span class="sub-status">' + analysisHistory.length + '</span></div><div class="history-list">' + historyHtml + '</div></div><div class="view-card"><div class="card-heading"><h2>Resume versions</h2><span class="sub-status">' + analysisVersions.length + '</span></div><p>This run stays linked to version ' + esc(result.resume_version || "—") + '. Replacing a resume keeps earlier results for comparison.</p><div class="version-list">' + analysisVersions.map(version => '<div><strong>Version ' + esc(version.version_number) + (version.is_current ? ' · Current' : '') + '</strong><span>' + esc(version.original_filename) + '</span><small>' + esc(version.extraction_status) + ' · ' + esc(dateLabel(version.created_at)) + '</small></div>').join("") + '</div></div></aside></div>';
+    '<div class="analysis-layout"><main><section class="view-card"><div class="card-heading"><h2>Score breakdown</h2><span class="sub-status">Scored locally</span></div><div class="category-list">' + categoryHtml + '<div class="category-row readability-row"><div><strong>ATS readability and structure</strong><span>5% of estimated match</span></div><b>' + (detail.readability_score == null ? '—' : esc(detail.readability_score) + '%') + '</b></div></div></section>' + comparisonHtml + '<section class="analysis-section"><div class="card-heading"><div><h2>Requirements explorer</h2><p>Inspect matched evidence and gaps in your resume.</p></div><span class="sub-status">' + openRequirements.length + ' open' + (addressedRequirements.length ? ' · ' + addressedRequirements.length + ' addressed' : '') + '</span></div><div class="requirements-toolbar"><div class="requirement-filters"><button class="active" type="button" data-requirement-filter="all">All</button><button type="button" data-requirement-filter="missing">Missing</button><button type="button" data-requirement-filter="partial">Partial</button><button type="button" data-requirement-filter="matched">Matched</button>' + (coverage ? '<button type="button" data-requirement-filter="profile_only">In profile</button>' : '') + '</div><label><span class="sr-only">Search requirements</span><input id="requirements-search" type="search" placeholder="Search requirements"></label></div><div class="requirements-list">' + requirementHtml + '</div>' + addressedHtml + '</section></main><aside class="analysis-history">' + priorityHtml + analysisConsoleHtml(detail, false) + '<div class="view-card"><div class="card-heading"><h2>Analysis history</h2><span class="sub-status">' + analysisHistory.length + '</span></div><div class="history-list">' + historyHtml + '</div></div><div class="view-card"><div class="card-heading"><h2>Resume versions</h2><span class="sub-status">' + analysisVersions.length + '</span></div><p>This run stays linked to version ' + esc(result.resume_version || "—") + '. Replacing a resume keeps earlier results for comparison.</p><div class="version-list">' + analysisVersions.map(version => '<div><strong>Version ' + esc(version.version_number) + (version.is_current ? ' · Current' : '') + '</strong><span>' + esc(version.original_filename) + '</span><small>' + esc(version.extraction_status) + ' · ' + esc(dateLabel(version.created_at)) + '</small></div>').join("") + '</div></div></aside></div>';
   let requirementFilter = "all";
   const applyRequirementFilters = () => {
     const query = ($("requirements-search")?.value || "").trim().toLowerCase();
@@ -144,7 +152,14 @@ function renderAnalysis() {
   for (const select of $("analysis-content").querySelectorAll("[data-recommendation]")) select.addEventListener("change", async () => {
     try {
       const response = await api("/api/analyses/" + detail.id + "/recommendations/" + select.dataset.recommendation, "PATCH", {state: select.value});
-      analysisDetail = response.analysis; renderAnalysis(); notify("Recommendation checklist updated.");
+      analysisDetail = response.analysis; renderAnalysis();
+      notify(select.value === "addressed" ? "Marked as addressed — moved to the Addressed section." : "Recommendation checklist updated.");
+    } catch (error) { notify(error.message, true); }
+  });
+  for (const button of $("analysis-content").querySelectorAll("[data-reopen]")) button.addEventListener("click", async () => {
+    try {
+      const response = await api("/api/analyses/" + detail.id + "/recommendations/" + button.dataset.reopen, "PATCH", {state: "pending"});
+      analysisDetail = response.analysis; renderAnalysis(); notify("Reopened — it is back in the open list.");
     } catch (error) { notify(error.message, true); }
   });
   for (const button of $("analysis-content").querySelectorAll("[data-analysis-history]")) button.addEventListener("click", () => openAnalysis(button.dataset.analysisHistory));
@@ -152,6 +167,7 @@ function renderAnalysis() {
   $("analysis-content").querySelector("[data-analysis-rerun]")?.addEventListener("click", () => runAnalysis(entry));
   $("analysis-content").querySelector("[data-analysis-optimize]")?.addEventListener("click", () => {
     if (!entry) return notify("This analysis's application is no longer available.", true);
+    closeAnalysisModal();
     openResumeEditorForEntry({...entry, analysis: {...entry.analysis, id: detail.id}}, "optimize");
   });
   scrollAnalysisConsole();
@@ -176,7 +192,7 @@ async function openAnalysis(id, preserveView = false) {
       analysisVersions = versions.versions || [];
     } else analysisVersions = [];
     renderAnalysis();
-    if (!preserveView) showView("analysis");
+    if (!preserveView && !analysisInModal) showView("analysis");
   } catch (error) { notify(error.message, true); }
 }
 
@@ -189,4 +205,37 @@ async function runAnalysis(entry) {
     await openAnalysis(result.analysis.id);
     notify(result.cached ? "Loaded the unchanged analysis from ApplyDock's cache." : "Analysis queued using your ChatGPT Plus Codex allowance.");
   } catch (error) { notify(error.message, true); }
+}
+
+// From the resume editor, the full analysis opens in a large dialog so closing it returns to the editor.
+// The same #analysis-view is moved into the dialog while open and put back afterwards.
+let analysisHome = null;
+
+async function openAnalysisModal(id) {
+  const dialog = $("analysis-dialog");
+  const view = $("analysis-view");
+  if (!analysisInModal) {
+    analysisHome = document.createComment("analysis-view");
+    view.before(analysisHome);
+    $("analysis-dialog-body").append(view);
+    analysisInModal = true;
+  }
+  view.hidden = false;
+  if (!dialog.open) dialog.showModal();
+  dialog.append($("notice"));  // toasts must sit above the modal backdrop
+  await openAnalysis(id, true);
+  $("analysis-dialog-body").scrollTop = 0;
+}
+
+function closeAnalysisModal() {
+  if (!analysisInModal) return;
+  const dialog = $("analysis-dialog");
+  const view = $("analysis-view");
+  clearTimeout(analysisPollTimer);
+  analysisHome.replaceWith(view);
+  analysisHome = null;
+  analysisInModal = false;
+  document.body.append($("notice"));
+  view.hidden = currentView !== "analysis";
+  if (dialog.open) dialog.close();
 }

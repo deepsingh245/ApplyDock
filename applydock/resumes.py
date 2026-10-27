@@ -291,7 +291,7 @@ def delete_resume(resume_id):
             replacement = db.execute("SELECT id FROM resumes WHERE deleted_at='' AND kind='master' ORDER BY created_at LIMIT 1").fetchone()
             if replacement:
                 db.execute("UPDATE resumes SET is_default=1,updated_at=? WHERE id=?", (config.now_iso(), replacement["id"]))
-        resume_store.purge(db, resume_id)
+        resume_store.purge(db, resume_id, config.DATA)
         ats.purge_resume(db, config.DATA, resume_id, submissions.kept_document_ids(db))
     affected = linked_entry_ids(resume_id)
     for entry_id in affected:

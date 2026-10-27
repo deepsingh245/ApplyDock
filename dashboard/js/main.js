@@ -11,6 +11,7 @@ function showPair() {
 }
 
 function showView(name, scrollToTop = true) {
+  if (analysisInModal && name !== currentView) closeAnalysisModal();  // navigating elsewhere closes the analysis dialog (refreshes do not)
   if (dirty && name !== currentView && !window.confirm("Discard unsaved changes in this application?")) return;
   if (name !== "analysis") clearTimeout(analysisPollTimer);
   dirty = false;
@@ -179,6 +180,10 @@ document.addEventListener("keydown", event => {
 });
 
 $("notice").addEventListener("click", () => { $("notice").hidden = true; });
+
+$("analysis-dialog-close").addEventListener("click", closeAnalysisModal);
+$("analysis-dialog").addEventListener("close", closeAnalysisModal);  // Esc closes the dialog natively
+$("analysis-dialog").addEventListener("click", event => { if (event.target === $("analysis-dialog")) closeAnalysisModal(); });  // backdrop
 
 // Small screens show the list or one application at a time.
 for (const button of document.querySelectorAll("[data-mobile-back]")) button.addEventListener("click", () => {
@@ -356,7 +361,7 @@ window.addEventListener("applydock-open", async event => {
 });
 
 window.ApplyDock = {
-  api, notify, load, esc, showView, dateLabel, openAnalysis, openProfileItem, coverageLabel, profileChangedSince,
+  api, notify, load, esc, showView, dateLabel, openAnalysis, openAnalysisModal, openProfileItem, coverageLabel, profileChangedSince,
   state: () => state,
   currentView: () => currentView,
   selectEntry: id => { selectedId = id; render(true); },

@@ -43,6 +43,9 @@ let previousAnalysisDetail = null;
 
 let analysisPollTimer;
 
+// True while the analysis view is shown in the dialog over the resume editor instead of as a page.
+let analysisInModal = false;
+
 let selectedResumeId = "";
 
 let editorTab = "overview";

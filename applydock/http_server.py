@@ -459,6 +459,11 @@ def update_checklist(request, match, data):
     return {"analysis": ats.get_analysis(config.DB, match.group(1))}
 
 
+@route("POST", r"/api/analyses/([a-f0-9-]+)/score-check")
+def check_score(request, match, data):
+    return resume_workflows.check_score(match.group(1), str(data.get("resume_id", "")), data.get("expected_revision"), bool(data.get("full")))
+
+
 @route("POST", r"/api/analyses/([a-f0-9-]+)/suggestions")
 def queue_suggestions(request, match, data):
     return resume_workflows.queue_suggestions(match.group(1), str(data.get("resume_id", "")))

@@ -61,8 +61,8 @@ def fake_codex(root, prompt, schema, purpose, job_id, db_path):
             {"id": "J1", "category": "required_skills", "requirement": "React and TypeScript", "mandatory": True, "priority": "high", "terms": ["react"]},
             {"id": "J2", "category": "required_skills", "requirement": "OAuth authentication for web apps", "mandatory": True, "priority": "high", "terms": ["oauth"]},
             {"id": "J3", "category": "preferred_skills", "requirement": "Kubernetes operations", "mandatory": False, "priority": "low", "terms": ["kubernetes"]}]}
-    if purpose == "jd_match":
-        profile = re.search(r"CANDIDATE MASTER PROFILE[^\n]*\n(.*?)\n\nJOB DESCRIPTION", prompt, re.S)
+    if purpose in ("jd_match", "score_check"):
+        profile = re.search(r"CANDIDATE MASTER PROFILE[^\n]*\n(.*?)\n\n(?:PREVIOUS ASSESSMENT|JOB DESCRIPTION)", prompt, re.S)
         oauth = [block["id"] for block in (json.loads(profile.group(1)) if profile else []) if "oauth" in block["text"].lower()]
         return {"summary": "Strong React match; authentication only appears in your Master Profile.", "warnings": [], "assessments": [
             {"requirement_id": "J1", "status": "demonstrated", "resume_evidence_ids": ["R1"], "explanation": "React work is shown.", "recommendation": "",

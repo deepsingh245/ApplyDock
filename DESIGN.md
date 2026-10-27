@@ -54,6 +54,7 @@ The rules the dashboard and the extension follow. A quiet, dense work tool: the 
 | Coverage chip | `.coverage-chip.represented/.weak/.profile_only/.unsupported` | How a requirement is covered by resume and Master Profile; always labelled |
 | Link check | `a.link-check.success/.warn/.danger` | Last on-demand result per project link; the title holds the detail and time |
 | Profile card | `.pf-card`, `.pf-form` (fields from `PROFILE_FIELDS` in `profile.js`) | Settings → Master Profile; forms are generated, never hand-written per kind. Skills are compact cells (`.pf-skill-grid`); every other entry is a full-width card |
+| Analysis dialog | `dialog#analysis-dialog` (native modal) | Full analysis over the resume editor; the page's own back link is hidden; closing returns to the editor |
 | Submission card | `#submission-card` with `dl.kv` | The exact submitted file per application, with View/Download/Compare/History |
 | Toast | `#notice.notice` (`.error`) | Bottom-right (full width on phones), click to dismiss |
 

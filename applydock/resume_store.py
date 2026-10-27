@@ -26,6 +26,7 @@ from . import resume_model
 from . import resume_render
 
 # v2: suggestions can draw on Master Profile evidence (source_profile_id) and add a whole profile project.
+SCORE_CHECK_VERSION = "check-v1"
 SUGGESTION_VERSION = "suggest-v3"  # v3: may propose a summary when the resume has none
 JOB_WAKE = threading.Event()
 JOB_STOP = threading.Event()
@@ -333,6 +334,8 @@ def process_one_job(db_path: Path, data_dir: Path, root: Path) -> bool:
             result = _run_structure(db_path, root, job, payload)
         elif job["purpose"] == "resume_suggestions":
             result = _run_suggestions(db_path, root, job, payload)
+        elif job["purpose"] == "score_check":
+            result = _run_score_check(db_path, root, job, payload)
         else:
             raise RuntimeError("failed|Unknown job type.")
         with ats._connect(db_path) as db:
@@ -552,6 +555,33 @@ def _run_suggestions(db_path, root, job, payload):
     return {"count": len(suggestions), "notes": notes}
 
 
+def score_check_hash(analysis_id: str, document_sha: str, recheck: list, full: bool = False) -> str:
+    return hashlib.sha256("|".join([analysis_id, document_sha, SCORE_CHECK_VERSION, ats.MODEL, ",".join(sorted(recheck)), "full" if full else ""]).encode()).hexdigest()
+
+
+def _run_score_check(db_path, root, job, payload):
+    """Re-score the rendered draft against its analysis: only the listed requirements are sent to Codex."""
+    with ats._connect(db_path) as db:
+        run = db.execute("SELECT * FROM analysis_runs WHERE id=?", (job["analysis_id"],)).fetchone()
+        document = db.execute("SELECT * FROM resume_documents WHERE id=?", (job["document_id"],)).fetchone()
+        jd = db.execute("SELECT source_text FROM job_description_versions WHERE id=?", (run["jd_version_id"],)).fetchone() if run else None
+    if not run or not document:
+        raise RuntimeError("missing|The analysis or the checked resume no longer exists.")
+    baseline = json.loads(run["result_json"] or "{}")
+    blocks = json.loads(document["evidence_json"] or "[]")
+    recheck = payload.get("recheck", [])
+    output = None
+    if recheck:
+        checklist = [item for item in baseline.get("requirements", []) if item["id"] in set(recheck)]
+        output = ats._run_codex(root, ats._analysis_prompt({}, blocks, jd["source_text"] if jd else "", checklist, (), checklist),
+                                "ats-analysis-schema.json", "score_check", job["id"], db_path)
+    result = ats.score_check(baseline, document["extracted_text"], blocks, document["extraction_status"], output, recheck)
+    result.update(analysis_id=run["id"], baseline_score=run["overall_score"], document_sha=document["sha256"],
+                  content_hash=payload.get("content_hash", ""), checked_at=now_iso(), full=bool(payload.get("full")),
+                  applied_suggestions=payload.get("applied", 0), draft_revision=payload.get("revision"))
+    return result
+
+
 def public_suggestion(row, content=None) -> dict:
     item = {key: row[key] for key in ("id", "job_id", "analysis_id", "resume_id", "requirement_id", "requirement", "target_id", "field",
                                       "operation", "target_label", "original_text", "proposed_text", "reason", "claim_type", "status",
@@ -681,7 +711,9 @@ def set_suggestion_status(db, suggestion_id: str, status: str):
 
 # ---------------------------------------------------------------- cleanup
 
-def purge(db, resume_id: str):
+def purge(db, resume_id: str, data_dir: Path | None = None):
+    # Files rendered only for score checks belong to this resume; remove them unless something else uses them.
+    checked = [row[0] for row in db.execute("SELECT DISTINCT document_id FROM resume_ai_jobs WHERE resume_id=? AND purpose='score_check'", (resume_id,))]
     job_ids = [row[0] for row in db.execute("SELECT id FROM resume_ai_jobs WHERE resume_id=?", (resume_id,))]
     if job_ids:
         marks = ",".join("?" for _ in job_ids)
@@ -689,3 +721,14 @@ def purge(db, resume_id: str):
     db.execute("DELETE FROM resume_ai_jobs WHERE resume_id=?", (resume_id,))
     db.execute("DELETE FROM resume_suggestions WHERE resume_id=?", (resume_id,))
     db.execute("DELETE FROM resume_drafts WHERE resume_id=?", (resume_id,))
+    for document_id in checked:
+        used = db.execute("SELECT 1 FROM resume_versions WHERE document_id=? UNION SELECT 1 FROM analysis_runs WHERE document_id=? "
+                          "UNION SELECT 1 FROM resume_ai_jobs WHERE document_id=?", (document_id, document_id, document_id)).fetchone()
+        if used is None and db.execute("SELECT name FROM sqlite_master WHERE name='application_submissions'").fetchone():
+            used = db.execute("SELECT 1 FROM application_submissions WHERE document_id=?", (document_id,)).fetchone()
+        document = db.execute("SELECT stored_path FROM resume_documents WHERE id=?", (document_id,)).fetchone()
+        if used is None and document and data_dir is not None:
+            path = (data_dir / document["stored_path"]).resolve()
+            if path.is_relative_to((data_dir / "resumes").resolve()):
+                path.unlink(missing_ok=True)
+            db.execute("DELETE FROM resume_documents WHERE id=?", (document_id,))

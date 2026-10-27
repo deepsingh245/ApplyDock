@@ -117,6 +117,15 @@ The migration to `PRAGMA user_version=4` is additive. `backup_before_migration()
 - **Add a section:** empty sections are listed as chips under Personal information instead of sitting empty in the form; a chip
   opens that section. A section with a pending suggestion (an AI summary, an added project) is always shown.
 
+## Job match buttons
+
+**Check score** (score the unsaved draft, accepted suggestions included, against this analysis; no version and no history entry;
+also in the toolbar; the result says what was checked, lists each re-checked requirement with its reason, and offers **Re-check all
+requirements**) · **Suggest improvements / Refresh suggestions** ·
+**New analysis** (analyze the unsaved draft; added to history) · **Save version & new analysis**. **Open full analysis** shows the analysis page in a large dialog over the editor (`openAnalysisModal` moves `#analysis-view`
+into `#analysis-dialog`); ×, Esc, or a backdrop click returns to the editor. Opened from anywhere else it is a normal page. **Recommend from my profile**
+reuses the current analysis and only runs one when none exists. See [ats-analysis](ats-analysis.md#stable-verdicts-and-score-checks-2026-10-27).
+
 ## Design tab
 
 Cards are grouped into two independent columns (layout: template, page, margins, spacing, header · type: text, color, sections and entries) so short cards never leave gaps; Section order spans both. Sections are reordered by dragging a row (pointer events, so it also works on touch) or by focusing a row's handle and pressing ↑/↓; each move is one undo step.

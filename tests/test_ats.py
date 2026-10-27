@@ -141,6 +141,70 @@ class ATSAnalyzerTests(unittest.TestCase):
             checklist, {"R1": "Education", "R2": "Built a REST API for billing."})
         self.assertEqual((matches[0]["status"], matches[0]["resume_evidence_ids"]), ("listed", ["R2"]))
 
+    def _req(self, rid, status, text, terms=()):
+        return {"id": rid, "category": "required_skills", "requirement": "Requirement " + rid, "mandatory": True, "priority": "high",
+                "terms": list(terms), "status": status, "resume_evidence_ids": ["R1"] if text else [], "explanation": "",
+                "recommendation": "", "profile_status": "none", "profile_evidence_ids": [], "coverage": "represented",
+                "resume_evidence": [{"id": "R1", "text": text}] if text else []}
+
+    def test_a_verdict_never_drops_while_its_supporting_text_is_unchanged(self):
+        bullet = "Built reusable React components for internal dashboards used by four teams."
+        previous = [self._req("J1", "demonstrated", bullet), self._req("J2", "partial", "Wrote unit tests with Jest for the billing service.")]
+        new_text = "Experience\n• " + bullet + "\nAdded a brand new line about Kubernetes."  # J2's text was removed
+        blocks = [{"id": "R1", "text": new_text}]
+        matches = [dict(self._req("J1", "listed", ""), resume_evidence_ids=[]), dict(self._req("J2", "missing", ""))]
+        ats.stabilize(matches, previous, new_text, blocks)
+        self.assertEqual([item["status"] for item in matches], ["demonstrated", "missing"])
+        self.assertEqual(matches[0]["resume_evidence_ids"], ["R1"])
+        same = [dict(self._req("J1", "missing", "")), dict(self._req("J2", "listed", ""))]
+        ats.stabilize(same, previous, new_text, blocks, same_file=True)  # identical file: verdicts reused exactly
+        self.assertEqual([item["status"] for item in same], ["demonstrated", "partial"])
+
+    def test_score_check_rechecks_only_what_changed_and_never_drops_unchanged_text(self):
+        kept_line = "Designed REST APIs in Node.js for an order management system."
+        baseline = {"requirements": [
+            self._req("J1", "demonstrated", kept_line),
+            self._req("J2", "partial", "Some teamwork on releases and deployments every week."),
+            self._req("J3", "missing", "", terms=["kubernetes"])]}
+        new_text = kept_line + "\nRan Kubernetes clusters for staging environments."
+        blocks = [{"id": "R1", "text": new_text}]
+        ids = ats.recheck_ids(baseline["requirements"], new_text, targeted={"J1"})
+        self.assertEqual(ids, ["J1", "J2", "J3"])  # J1 targeted, J2's text changed, J3's term now present
+        self.assertEqual(ats.recheck_ids(baseline["requirements"], kept_line + "\nSome teamwork on releases and deployments every week."), [])
+        output = {"assessments": [
+            {"requirement_id": "J1", "status": "listed", "resume_evidence_ids": ["R1"], "explanation": "", "recommendation": "", "profile_status": "none", "profile_evidence_ids": []},
+            {"requirement_id": "J3", "status": "demonstrated", "resume_evidence_ids": ["R1"], "explanation": "", "recommendation": "", "profile_status": "none", "profile_evidence_ids": []}]}
+        result = ats.score_check(baseline, new_text, blocks, "ready", output, ["J1", "J3"])
+        statuses = {item["id"]: item["status"] for item in result["requirements"]}
+        self.assertEqual(statuses, {"J1": "demonstrated", "J2": "partial", "J3": "demonstrated"})  # J1 kept: its text is unchanged
+        self.assertEqual(result["changes"], [{"id": "J3", "requirement": "Requirement J3", "from": "missing", "to": "demonstrated"}])
+        self.assertEqual((result["rechecked"], result["kept"]), (2, 1))
+
+    def test_addressed_marks_carry_over_to_the_next_analysis_of_the_same_job(self):
+        self.add_version()
+        checklist = {"warnings": [], "requirements": [
+            {"id": "J1", "category": "required_skills", "requirement": "Python", "mandatory": True, "priority": "high", "terms": []},
+            {"id": "J2", "category": "experience", "requirement": "Kubernetes operations", "mandatory": True, "priority": "high", "terms": []}]}
+        assessments = {"summary": "", "warnings": [], "assessments": [
+            {"requirement_id": key, "status": "missing", "resume_evidence_ids": [], "explanation": "", "recommendation": "Do something about " + key,
+             "profile_status": "none", "profile_evidence_ids": []} for key in ("J1", "J2")]}
+        parse = {"summary": "", "skills": [], "experience": [], "projects": [], "education": [], "certifications": [], "keywords": []}
+        fake = lambda root, prompt, schema, purpose, *rest: {"resume_parse": parse, "jd_requirements": checklist}.get(purpose, assessments)  # noqa: E731
+        with patch.object(ats, "_run_codex", side_effect=fake):
+            first, _ = ats.queue_analysis(self.db_path, self.entry())
+            ats.process_one(self.db_path, self.data, self.data)
+            ats.update_checklist(self.db_path, first["id"], "J2", "addressed")
+            self.add_version("Experience Python services, SQL, cloud delivery and on-call operations for software teams.\n" * 14)
+            second, _ = ats.queue_analysis(self.db_path, self.entry())
+            ats.process_one(self.db_path, self.data, self.data)
+        self.assertEqual(ats.get_analysis(self.db_path, second["id"])["checklist"], {"J1": "pending", "J2": "addressed"})
+
+    def test_analysis_prompt_shows_previous_verdicts_for_consistency(self):
+        previous = [self._req("J1", "demonstrated", "Built React dashboards.")]
+        prompt = ats._analysis_prompt({}, [], "Job", [{"id": "J1", "category": "required_skills", "requirement": "React", "mandatory": True}], (), previous)
+        self.assertIn("PREVIOUS ASSESSMENT", prompt)
+        self.assertIn('"status": "demonstrated"', prompt)
+
     def test_categories_the_job_never_mentions_do_not_cap_the_score(self):
         matches = [{"category": "required_skills", "mandatory": True, "status": "demonstrated"},
                    {"category": "experience", "mandatory": False, "status": "demonstrated"}]

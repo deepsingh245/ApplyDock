@@ -161,11 +161,14 @@ def queue_suggestions(analysis_id, resume_id):
         cited = {value for item in (analysis.get("result") or {}).get("requirements", []) for value in item.get("profile_evidence_ids", [])}
         profile_blocks = [block for block in json.loads(analysis.get("profile_json") or "[]") if block["id"] in cited]
         verified_profile = profile.verified_corpus(db)
-        input_hash = resume_store.suggestions_job_hash(analysis_id, content, profile.evidence_hash(profile_blocks))
+        addressed_ids = sorted(key for key, value in (analysis.get("checklist") or {}).items() if value == "addressed")
+        input_hash = resume_store.suggestions_job_hash(analysis_id, content, profile.evidence_hash(profile_blocks) + "|" + ",".join(addressed_ids))
         reusable = db.execute("SELECT status FROM resume_ai_jobs WHERE purpose='resume_suggestions' AND input_hash=?", (input_hash,)).fetchone()
     if not reusable or reusable["status"] not in ("complete", "pending", "running"):
         require_codex()
-    payload = {"content": content, "requirements": (analysis.get("result") or {}).get("requirements", []),
+    # Requirements marked "addressed" in the analysis checklist are done: no more suggestions for them.
+    addressed = {key for key, value in (analysis.get("checklist") or {}).items() if value == "addressed"}
+    payload = {"content": content, "requirements": [item for item in (analysis.get("result") or {}).get("requirements", []) if item["id"] not in addressed],
                "jd_text": ats.canonical_jd(entry)[1], "profile_blocks": profile_blocks,
                "profile": "\n".join([config.SETTINGS.get("candidate_profile", ""), verified_profile])}
     with database.LOCK, database.connect() as db:
@@ -223,6 +226,45 @@ def add_from_profile(resume_id, key, expected_revision, confirm_unverified=False
         updated = resume_store._write_draft(db, resume_id, content, draft["base_version_id"], draft["revision"] + 1)
         entries = profile.entries_for_resume(db, updated["content"])
     return {"draft": updated, "entries": entries}
+
+
+def check_score(analysis_id, resume_id, expected_revision, full=False):
+    """Score the draft against an existing analysis without creating a new one (nothing is added to its history).
+
+    Requirements whose supporting text is unchanged keep their verdict; only those an applied suggestion
+    targeted, whose text changed, or whose key terms newly appear are re-checked with Codex.
+    full=True re-checks every requirement (still no version and no history entry).
+    """
+    analysis = ats.get_analysis(config.DB, analysis_id)
+    if not analysis or analysis["status"] != "complete":
+        raise ValueError("Run an analysis to completion before checking the score.")
+    entry = applications.get_entry(analysis["entry_id"])
+    if not entry or not resume_allowed_for_entry(entry, resume_id):
+        raise ValueError("Only this application's resume or its tailored copy can be checked against it.")
+    with database.connect() as db:
+        draft = resume_store._check_revision(db, resume_id, expected_revision)
+    if draft["needs_review"]:
+        raise ValueError("Review the imported content and confirm it before checking the score.")
+    pdf, _ = resume_store.render_content(resume_model.normalize(draft["content"]))
+    with database.LOCK, database.connect() as db:
+        document = ats.install_document(db, config.DATA, pdf, ".pdf", "application/pdf")
+        # Accepted suggestions count whichever analysis they came from: requirement ids are stable for a job description.
+        accepted = list(db.execute("""SELECT requirement_id FROM resume_suggestions WHERE resume_id=? AND status IN ('accepted','edited')""", (resume_id,)))
+        targeted = {row[0] for row in accepted if row[0]}
+    if document["extraction_status"] != "ready":
+        raise ValueError(document["extraction_error"] or "The rendered resume could not be read back.")
+    requirements = (analysis.get("result") or {}).get("requirements", [])
+    recheck = [item["id"] for item in requirements] if full else ats.recheck_ids(requirements, document["extracted_text"], targeted)
+    input_hash = resume_store.score_check_hash(analysis_id, document["sha256"], recheck, bool(full))
+    with database.connect() as db:
+        reusable = db.execute("SELECT status FROM resume_ai_jobs WHERE purpose='score_check' AND input_hash=?", (input_hash,)).fetchone()
+    if recheck and (not reusable or reusable["status"] not in ("complete", "pending", "running")):
+        require_codex()
+    with database.LOCK, database.connect() as db:
+        job, reused = resume_store.queue_job(db, "score_check", input_hash, {"recheck": recheck, "content_hash": draft["content_hash"], "full": bool(full),
+                                                                          "applied": len(accepted), "revision": draft["revision"]},
+                                             resume_id=resume_id, document_id=document["id"], analysis_id=analysis_id)
+    return {"job": job, "reused": reused, "recheck": len(recheck)}
 
 
 def candidate_version_allowed(entry, version_id):

@@ -324,6 +324,86 @@ class CareerWorkflowTests(unittest.TestCase):
         valid = resume_store.validated_suggestions(output, content, [], "Acme Engineer Built APIs.")
         self.assertEqual((len(valid), valid[0]["field"], valid[0]["original_text"]), (1, "summary", ""))
 
+    def test_check_score_rescores_the_draft_without_adding_an_analysis(self):
+        state = resume_workflows.editor_state(self.master["id"])
+        with database.connect() as db:
+            draft = resume_store.save_draft(db, self.master["id"], state["draft"]["content"], state["draft"]["revision"], reviewed=True)
+            text = db.execute("SELECT extracted_text FROM resume_documents ORDER BY created_at LIMIT 1").fetchone()[0]
+        line = next(value.strip() for value in text.splitlines() if len(value.strip()) > 40)
+        run, _ = ats.queue_analysis(config.DB, self.entry)
+        baseline = {"requirements": [
+            {"id": "J1", "category": "required_skills", "requirement": "Frontend", "mandatory": True, "priority": "high", "terms": [],
+             "status": "demonstrated", "resume_evidence_ids": ["R1"], "resume_evidence": [{"id": "R1", "text": line}], "explanation": "",
+             "recommendation": "", "profile_status": "none", "profile_evidence_ids": [], "coverage": "represented"},
+            {"id": "J2", "category": "required_skills", "requirement": "Kubernetes", "mandatory": True, "priority": "high", "terms": ["kubernetes"],
+             "status": "missing", "resume_evidence_ids": [], "resume_evidence": [], "explanation": "", "recommendation": "",
+             "profile_status": "none", "profile_evidence_ids": [], "coverage": "unsupported"}]}
+        with database.connect() as db:
+            db.execute("UPDATE analysis_runs SET status='complete',overall_score=55,result_json=? WHERE id=?", (json.dumps(baseline), run["id"]))
+            runs_before = db.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0]
+        # Nothing changed that matters: no Codex call, same verdicts.
+        with patch.object(ats, "_run_codex") as codex:
+            queued = call("POST", f"/api/analyses/{run['id']}/score-check", {"resume_id": self.master["id"], "expected_revision": draft["revision"]})
+            self.assertEqual(queued["code"], 200, queued)
+            resume_store.process_one_job(config.DB, config.DATA, config.ROOT)
+            codex.assert_not_called()
+        with database.connect() as db:
+            result = resume_store.get_job(db, queued["payload"]["job"]["id"])["result"]
+        self.assertEqual(([item["status"] for item in result["requirements"]], result["rechecked"], result["baseline_score"]), (["demonstrated", "missing"], 0, 55))
+        # A Kubernetes line appears: only J2 is sent to Codex; J1 keeps its verdict.
+        content = draft["content"]
+        content["work"][0]["highlights"].append({"text": "Ran Kubernetes clusters for staging environments."})
+        with database.connect() as db:
+            draft = resume_store.save_draft(db, self.master["id"], content, draft["revision"])
+        prompts = []
+        output = {"summary": "", "warnings": [], "assessments": [{"requirement_id": "J2", "status": "demonstrated", "resume_evidence_ids": ["R1"],
+                  "explanation": "", "recommendation": "", "profile_status": "none", "profile_evidence_ids": []}]}
+        with patch.object(resume_workflows, "require_codex"), patch.object(ats, "_run_codex", side_effect=lambda root, prompt, *rest: prompts.append(prompt) or output):
+            queued = resume_workflows.check_score(run["id"], self.master["id"], draft["revision"])
+            resume_store.process_one_job(config.DB, config.DATA, config.ROOT)
+        checklist = json.loads(prompts[0].split("REQUIREMENT CHECKLIST:\n", 1)[1].split("\n\n", 1)[0])
+        self.assertEqual([item["id"] for item in checklist], ["J2"])
+        with database.connect() as db:
+            result = resume_store.get_job(db, queued["job"]["id"])["result"]
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0], runs_before)  # no new analysis
+        self.assertEqual([item["status"] for item in result["requirements"]], ["demonstrated", "demonstrated"])
+        self.assertGreater(result["overall_score"], 55)
+        self.assertEqual([(item["id"], item["from"], item["to"]) for item in result["rechecked_items"]], [("J2", "missing", "demonstrated")])
+        self.assertEqual((result["full"], result["draft_revision"]), (False, draft["revision"]))
+        # Same draft again: the cached check is reused.
+        self.assertTrue(resume_workflows.check_score(run["id"], self.master["id"], draft["revision"])["reused"])
+        # "Re-check all requirements" sends every requirement, still without a new analysis.
+        prompts.clear()
+        full_output = {"summary": "", "warnings": [], "assessments": [{"requirement_id": key, "status": "demonstrated", "resume_evidence_ids": ["R1"],
+                       "explanation": "Shown.", "recommendation": "", "profile_status": "none", "profile_evidence_ids": []} for key in ("J1", "J2")]}
+        with patch.object(resume_workflows, "require_codex"), patch.object(ats, "_run_codex", side_effect=lambda root, prompt, *rest: prompts.append(prompt) or full_output):
+            queued = resume_workflows.check_score(run["id"], self.master["id"], draft["revision"], full=True)
+            resume_store.process_one_job(config.DB, config.DATA, config.ROOT)
+        checklist = json.loads(prompts[0].split("REQUIREMENT CHECKLIST:\n", 1)[1].split("\n\n", 1)[0])
+        self.assertEqual([item["id"] for item in checklist], ["J1", "J2"])
+        with database.connect() as db:
+            result = resume_store.get_job(db, queued["job"]["id"])["result"]
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM analysis_runs").fetchone()[0], runs_before)
+        self.assertEqual((result["full"], len(result["rechecked_items"])), (True, 2))
+
+    def test_suggestions_skip_requirements_marked_addressed(self):
+        state = resume_workflows.editor_state(self.master["id"])
+        with database.connect() as db:
+            resume_store.save_draft(db, self.master["id"], state["draft"]["content"], state["draft"]["revision"], reviewed=True)
+        run, _ = ats.queue_analysis(config.DB, self.entry)
+        requirements = [{"id": key, "category": "required_skills", "requirement": "Requirement " + key, "mandatory": True, "status": "missing",
+                         "recommendation": "Add " + key} for key in ("J1", "J2")]
+        with database.connect() as db:
+            db.execute("UPDATE analysis_runs SET status='complete',result_json=? WHERE id=?", (json.dumps({"requirements": requirements}), run["id"]))
+            for key in ("J1", "J2"):
+                db.execute("INSERT INTO analysis_checklist(analysis_id,recommendation_id,state,updated_at) VALUES(?,?,?,?)", (run["id"], key, "pending", "now"))
+        ats.update_checklist(config.DB, run["id"], "J2", "addressed")
+        with patch.object(resume_workflows, "require_codex"):
+            job = resume_workflows.queue_suggestions(run["id"], self.master["id"])["job"]
+        with database.connect() as db:
+            payload = json.loads(db.execute("SELECT input_json FROM resume_ai_jobs WHERE id=?", (job["id"],)).fetchone()[0])
+        self.assertEqual([item["id"] for item in payload["requirements"]], ["J1"])
+
     def test_recorded_submission_keeps_the_exact_file_after_edits_and_deletion(self):
         result = call("POST", f"/api/entries/{self.entry['id']}/submissions", {"channel": "external", "submitted_at": "2026-10-01"})
         self.assertEqual(result["code"], 200, result)
