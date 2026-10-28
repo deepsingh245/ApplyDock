@@ -1,0 +1,104 @@
+@import "tailwindcss";
+@import "./fonts.css";
+@import "./tokens.css";
+
+/* Theme switching is driven by tokens on [data-theme]; this variant exists for the rare rule that must differ. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* Tailwind's defaults are removed so only Ledger values exist: no raw palette colors, no text under 12px. */
+@theme {
+  --color-*: initial;
+  --font-*: initial;
+  --text-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+  --breakpoint-*: initial;
+
+  --font-sans: "Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Plex Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+
+  --text-xs: 12px;   /* minimum size: captions, chips, metadata */
+  --text-xs--line-height: 1.4;
+  --text-sm: 13px;   /* body and controls */
+  --text-sm--line-height: 1.45;
+  --text-md: 14px;   /* emphasized body, inputs on touch */
+  --text-md--line-height: 1.45;
+  --text-lg: 16px;   /* panel titles */
+  --text-lg--line-height: 1.35;
+  --text-xl: 20px;   /* view titles */
+  --text-xl--line-height: 1.3;
+  --text-2xl: 24px;  /* page titles, key figures */
+  --text-2xl--line-height: 1.2;
+
+  /* 4px grid: p-1 = 4px, p-4 = 16px, p-12 = 48px. */
+  --spacing: 4px;
+
+  --radius-sm: 4px;      /* controls */
+  --radius-md: 6px;      /* panels */
+  --radius-pill: 999px;  /* chips only */
+
+  /* Phones below md; md = tablet; lg = desktop; xl = the full three-pane workspace. */
+  --breakpoint-md: 761px;
+  --breakpoint-lg: 961px;
+  --breakpoint-xl: 1281px;
+  --breakpoint-2xl: 1600px;
+
+  --ease-ledger: cubic-bezier(.2, 0, 0, 1);
+}
+
+/* Colors resolve through the tokens at use time, so they follow [data-theme] without a dark: prefix. */
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --shadow-popover: var(--shadow-pop);
+  --shadow-focus: var(--focus-ring);
+  --shadow-none: none;
+}
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  :focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  ::selection { background: var(--accent-soft); color: var(--ink); }
+  a { color: var(--accent); text-underline-offset: 2px; }
+  a:hover { color: var(--accent-hover); }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  code, kbd, samp { font-family: var(--font-mono); }
+  [hidden] { display: none !important; }
+}
+
+@layer utilities {
+  /* Numbers in data views line up: scores, dates, counts. */
+  .tabular { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .scrollbar-none { scrollbar-width: none; }
+  .scrollbar-none::-webkit-scrollbar { display: none; }
+  .transition-ledger { transition-duration: var(--duration); transition-timing-function: var(--ease); }
+}

@@ -36,3 +36,10 @@ Thumbs.db
 graphify-out/
 # Browser test screenshots
 tests/ui/output/
+
+# Web app: dependencies, builds and test output (package-lock.json is committed).
+web/node_modules/
+web/dist/
+web/.builds/
+web/test-results/
+web/playwright-report/

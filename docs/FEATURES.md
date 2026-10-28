@@ -5,9 +5,9 @@ Status: **Done** = implemented and covered by tests · **Partial** = works with 
 | Feature | Description | Status | Docs | Key dependencies |
 |---|---|---|---|---|
 | Capture | Extension side panel extracts the current job/post; manual capture form in the dashboard | Done | [capture-and-extension](features/capture-and-extension.md) | `extension/`, `applications.capture` |
-| Applications workspace | Queue, filters, application editor tabs, stages, inspector | Done | [applications](features/applications.md) | `applications.py`, `dashboard/js/applications.js` |
+| Applications workspace | Queue, filters, application editor tabs, stages, inspector | Done | [applications](features/applications.md) | `applications.py`, `web/src/features/applications/` |
 | Resume library | Upload PDF/DOCX, versions, default, preview, delete | Done | [resume-library](features/resume-library.md) | `resumes.py`, `ats.install_document` |
-| Resume editor | Structured editing, live Typst PDF preview, design controls, versions, compare | Done | [resume-editor](features/resume-editor.md) | `resume_*.py`, `resume_workflows.py`, `dashboard/js/resume-editor.js`, `typst` |
+| Resume editor | Structured editing, live Typst PDF preview, design controls, versions, compare | Done | [resume-editor](features/resume-editor.md) | `resume_*.py`, `resume_workflows.py`, `web/src/features/resume-editor/`, `typst` |
 | Resume import | PDF/DOCX text → structured sections (local parser; optional Codex) | Done | [resume-editor](features/resume-editor.md#key-decisions) | `resume_import.py`, `pypdf` |
 | Tailored resumes | Per-application copies of a master; pinned versions | Done | [resume-editor](features/resume-editor.md) | `resume_store.create_tailored`, `entries.resume_version_id` |
 | AI suggestions | Targeted edits from analysis gaps; accept/reject/revert; fact guard | Done | [resume-editor](features/resume-editor.md) | `resume_store`, Codex CLI |

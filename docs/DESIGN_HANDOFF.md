@@ -55,5 +55,5 @@ This note covers the state of the UI after the October 2026 "Ledger" redesign: w
 ## Verifying a change
 
 - `py -3 scripts/check.py --ui` runs both browser flows; they rely on ids and `data-*` attributes (`data-editor-tab`, `data-re`, `data-side`, `data-left`, `data-layout`, `data-entry-resume`, `data-mobile-back`).
-- Screenshots are written to `tests/ui/output/`.
+- Screenshots are written to `web/test-results/visual/` by `web/e2e/visual.spec.ts`.
 - When you change a color, recheck contrast for `--ink-3` on `--surface-2` in both themes. That pairing has the least headroom.

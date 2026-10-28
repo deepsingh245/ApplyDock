@@ -5,6 +5,7 @@ Seeds one master resume and one application with a completed analysis. Never tou
 """
 import base64
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -114,20 +115,22 @@ def serve_extension_for_tests():
     """
     from applydock import http_server
     root = (REPO / "extension").resolve()
-    original = http_server.dashboard_file
 
-    def dashboard_or_extension_file(url_path):
+    def extension_file(url_path):
         if url_path.startswith("/__extension/"):
             candidate = (root / url_path[len("/__extension/"):]).resolve()
             return candidate if candidate.is_relative_to(root) and candidate.is_file() and candidate.suffix in http_server.STATIC_TYPES else None
-        return original(url_path)
-    http_server.dashboard_file = dashboard_or_extension_file
+        return None
+    http_server.extra_static_file = extension_file
 
 
 def main():
     data_dir, port = Path(sys.argv[1]), int(sys.argv[2])
     config.set_data_dir(data_dir)
     config.PORT = port
+    # Lets several web builds be tested side by side (npx vite build --outDir ...); defaults to web/dist.
+    if os.environ.get("APPLYDOCK_WEB_DIST"):
+        config.WEB_DIST = Path(os.environ["APPLYDOCK_WEB_DIST"]).resolve()
     config.DATA.mkdir(parents=True, exist_ok=True)
     config.SETTINGS.update({"pairing_key": "sandbox-key", "notion_data_source_id": "", "smtp": {},
                             "candidate_profile": "Frontend engineer. React, TypeScript, accessibility, testing with Jest."})

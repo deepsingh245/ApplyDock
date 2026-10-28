@@ -18,8 +18,8 @@ User-facing steps are in [USER_GUIDE → Resume editor](../USER_GUIDE.md#resume-
 | `applydock/resume_store.py` | Drafts (revisioned), editor versions, tailored copies, AI job queue and worker, suggestions |
 | `applydock/resume_workflows.py` | HTTP-facing orchestration: `editor_state`, `import_draft`, `reset_draft`, `tailor_resume`, `queue_suggestions`, `save_editor_version` |
 | `applydock/resume_templates/` | `_common.typ` layout, `ats-classic.typ` and `compact.typ` presets, bundled fonts |
-| `dashboard/js/resume-editor.js` | Editor UI: Content/Design tabs, preview, versions, compare, job match, suggestion cards, autosave, undo/redo |
-| `tests/test_resume_*.py`, `tests/ui/flow-*.mjs` | Model, import, render and workflow tests; browser flows |
+| `web/src/features/resume-editor/` | Editor UI: `store.ts` (content, undo/redo), `saver.ts` (autosave, conflicts), `usePreview.ts`, `ContentPanel`, `DesignPanel`, `SidePanel` (preview, versions, compare, job match, from profile), `SuggestionCard` |
+| `tests/test_resume_*.py`, `web/src/features/resume-editor/store.test.ts`, `web/e2e/resume-editor.spec.ts` | Model, import, render and workflow tests; editor store; browser flows |
 
 ## Key decisions
 

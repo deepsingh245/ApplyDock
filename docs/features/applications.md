@@ -8,8 +8,8 @@
 |---|---|
 | `applydock/applications.py` | `entries()`, `public_entry()` (adds resume, version, readiness and analysis summary), `update_entry()` (editing and approval rules), stages |
 | `applydock/http_server.py` | `/api/state`, `/api/capture`, `PATCH`/`DELETE /api/entries/{id}`, `/api/entries/{id}/pin-resume` |
-| `dashboard/js/applications.js` | `renderList`, `renderEditor`, `setEditorTab`, `renderInspector`, `performAction`, `saveForm`, resume-editor entry points |
-| `dashboard/js/main.js` | Loads `/api/state`, `render()`, `showView()`, event wiring |
+| `web/src/features/applications/` | `ApplicationsPage` (workspace, URL state, unsaved-changes guard), `QueueList` + `filtering.ts`, `EntryEditor` (tabs), `Inspector` (`nextActions`), `SubmissionCard`, `useEntryActions`, `CreateApplicationPage`, `actions.ts` (run analysis, open the resume editor) |
+| `web/src/api/state.ts`, `web/src/app/` | `/api/state` query, pairing gate, top bar, extension deep links |
 
 ## Business rules (in `update_entry`)
 

@@ -1,11 +1,11 @@
 # Architecture
 
-ApplyDock is a single-user, local application: one Python process (the "helper") serves a JSON API and the dashboard on `127.0.0.1:8765`, stores everything in SQLite plus content-addressed files, and runs three background threads. A Chrome extension and the dashboard are its only clients.
+ApplyDock is a single-user, local application. One Python process, the "helper", serves a JSON API and the built web app on `127.0.0.1:8765`. It stores everything in SQLite plus content-addressed files, and runs three background threads. A Chrome extension and the web app are its only clients. Node.js is only a build tool: nothing Node runs at runtime.
 
 ```mermaid
 flowchart LR
   ext[Chrome extension<br/>extension/] -- X-Local-Key --> api
-  web[Dashboard<br/>dashboard/] -- X-Local-Key --> api
+  web[Web app, React<br/>web/ → web/dist] -- X-Local-Key --> api
   subgraph helper[Python helper - applydock/]
     api[http_server.py<br/>route table] --> domain[applications / resumes /<br/>resume_workflows]
     domain --> db[(SQLite + data/resumes)]
@@ -44,20 +44,19 @@ applydock/                Python helper (package)
   app.py                  startup: settings, migration, workers, server
   schemas/                Codex structured-output JSON schemas
   resume_templates/       Typst templates + bundled Carlito fonts (OFL)
-dashboard/                web workspace (no build step)
-  index.html, tokens.css, style.css   design tokens + one stylesheet (rules in DESIGN.md)
-  fonts/                  self-hosted IBM Plex Sans/Mono (OFL)
-  js/core.js              shared state, api(), esc(), notify(), formatters — loads first
-  js/applications.js      queue, application editor tabs, inspector/delivery actions
-  js/resume-library.js    resume library view
-  js/analysis.js          ATS analysis view
-  js/settings.js          settings + theme
-  js/profile.js           Settings → Master Profile (forms generated from PROFILE_FIELDS)
-  js/main.js              view switching, load(), event wiring, startup — loads after features
-  js/resume-editor.js     resume editor (self-contained; uses window.ApplyDock)
+web/                      React web app (TypeScript, Vite); built into web/dist, which the helper serves
+  src/main.tsx            providers; imports bridge/extension.ts first
+  src/app/                router, AppShell (pairing gate), TopBar, extension deep-link handler, dev-only /kit gallery
+  src/api/                payload types, TanStack Query client/keys, per-domain hooks (analyses, drafts, profile, resumes, settings)
+  src/bridge/extension.ts applydock-paired / applydock-open listeners, registered before the first render
+  src/components/ui/      design-system primitives (Radix + Tailwind, see DESIGN.md)
+  src/features/           applications, analysis, resume-library, resume-editor, profile, settings — one folder per screen
+  src/lib/                api client (sole holder of the pairing key), domain rules, formatting, theme
+  src/styles/             tokens.css (Ledger colors) + globals.css (@theme scales)
+  e2e/                    Playwright specs against tests/ui/sandbox.py (incl. the extension side panel and design rules)
 extension/                Chrome MV3 side panel (own copy of its UI code)
-tests/                    unittest suites, tests/ui browser flows, fixtures
-scripts/check.py          runs every check
+tests/                    unittest suites, tests/ui/sandbox.py (seeded helper for browser tests), fixtures
+scripts/check.py          runs every check (Python, extension, web check + build, Playwright with --ui)
 docs/                     this documentation
 ```
 
@@ -81,7 +80,13 @@ config, events, resume_model           (no ApplyDock imports)
 ## Request flow
 
 1. `Handler.do_GET` and `do_POST`/`PATCH`/`DELETE` call `dispatch_get` or `dispatch_mutation`.
-2. Public GETs are handled first: `/`, the stylesheets, `/js/*.js`, `/fonts/*.woff2`, the Gmail OAuth callback, and resume file links that carry their own `?access=` token.
+2. Public GETs are handled first:
+   - the Gmail OAuth callback;
+   - resume file links that carry their own `?access=` token;
+   - the web app (`http_server.web_file`):
+     - files under `web/dist` with an allowed suffix (`.js .css .woff2 .svg .png .ico`);
+     - `index.html` for any other path outside `/api/` and `/oauth/`, because the app routes on the client;
+     - `/app/...` (the preview URL used during the migration) redirects to `/...`.
 3. Everything else passes `authorized()`: the Host must be the loopback host and port, the Origin (if present) must be the dashboard or a Chrome extension, and `X-Local-Key` must match the pairing key (compared in constant time).
 4. The route is looked up in `ROUTES`. Mutations read the JSON body (12 MB maximum) before routing, as before; DELETE routes take no body.
 5. The handler returns a dict (sent as 200 JSON) or a `FileResponse`. Exceptions become JSON errors: `NotFound` gives 404, `ConflictError` gives 409 (with the current draft), `ValueError`/`KeyError` give 400, and anything else gives 500.
@@ -120,14 +125,20 @@ Codex runs as a sandboxed, read-only subprocess with prompts on stdin. Output is
 - **Local only:** the server binds to `127.0.0.1`. The pairing key is required for every API route.
 - **Resume links:** `?access=` tokens are scoped. The current-file token rotates when the file changes; per-version tokens never rotate but only open that version.
 - **Secrets:** Notion token, SMTP password and Gmail client secret/refresh token are DPAPI-encrypted. `/api/state` never returns them.
-- **Static files:** only `.js`/`.css`/`.woff2` under `dashboard/` (plus `/`) are served, fonts with an immutable cache and everything else `no-store`; path traversal is rejected (tested).
-- **HTML rendering:** the dashboard builds HTML strings and escapes every interpolated value with `esc()`.
-- **Deferred:** a Content-Security-Policy on the dashboard. See [TECH_DEBT.md](TECH_DEBT.md).
+- **Static files:** only allowed suffixes inside `web/dist` are served. Path traversal is rejected (tested). Content-hashed files under `assets/` get an immutable cache; the page and everything else get `no-store`.
+- **Content-Security-Policy:** the page is sent with:
+  - `script-src 'self'`, so the build has no inline scripts;
+  - `frame-src` limited to `self`, `blob:` (PDF previews) and the helper origins;
+  - `frame-ancestors 'none'`, `object-src 'none'` and `base-uri 'none'`.
+- **HTML rendering:** React escapes all text, and `dangerouslySetInnerHTML` is a lint error.
 - **AI isolation:** AI never sends email or applies edits on its own. Approvals and suggestion acceptance are explicit user actions.
 
 ## Design constraints
 
-- **No build step** and no npm runtime dependencies. The dashboard uses classic `defer` scripts that share top-level declarations, in the order listed in `index.html`.
+- **The web app is built, not run, by Node.**
+  - `start.cmd` runs `npm --prefix web run build`, and the helper serves `web/dist`.
+  - Dependencies are pinned exactly in `web/package-lock.json`.
+  - Without a build, the helper answers `/` with a page explaining how to build.
 - **Two Python runtime dependencies** (`pypdf`, `typst`). Use the standard library otherwise.
 - **Windows-first:** DPAPI and `start.cmd`. Other platforms work for development, except secret storage.
 - **Single user, single process.** `database.LOCK` serializes multi-step writes.
@@ -140,8 +151,9 @@ Codex runs as a sandboxed, read-only subprocess with prompts on stdin. Output is
 | `ats.py`, `resume_*.py` at the root | `applydock/` |
 | `*-schema.json` at the root | `applydock/schemas/` |
 | `resume_templates/` | `applydock/resume_templates/` |
-| `dashboard/app.js` | `dashboard/js/{core,applications,resume-library,analysis,settings,main}.js` |
-| `dashboard/resume-editor.js` | `dashboard/js/resume-editor.js` |
+| `dashboard/app.js` | `dashboard/js/{core,applications,resume-library,analysis,settings,main}.js`, then (2026-10-28) the React app in `web/` (see [WEB_MIGRATION.md](WEB_MIGRATION.md)) |
+| `dashboard/resume-editor.js` | `web/src/features/resume-editor/` |
+| `tests/ui/*.mjs` (CDP driver) | `web/e2e/*.spec.ts` (Playwright) |
 | `server.CONFIG_DATA` | `config.SETTINGS` |
 | `server.sync_entry(...)` calls in domain code | `events.application_changed(...)` |
 | Planning docs at the root | `docs/archive/` |

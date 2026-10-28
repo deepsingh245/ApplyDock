@@ -8,7 +8,7 @@
 |---|---|
 | `applydock/resumes.py` | Upload validation, `create_resume`, `update_resume` (rename, default, replace file), `restore_version`, `delete_resume`, `resume_file_for_entry`, access links |
 | `applydock/ats.py` | `install_document` (content-addressed storage plus text extraction), `add_resume_version`, `current_version`, `effective_version`, `list_versions` |
-| `dashboard/js/resume-library.js` | Library table, preview and details form |
+| `web/src/features/resume-library/` | Library table, preview and details form (`/resumes`, `/resumes/:id`) |
 
 ## Model
 

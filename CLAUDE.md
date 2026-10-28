@@ -1,12 +1,18 @@
 # ApplyDock — guidance for AI coding agents
 
-Personal, local-first job-application app: Python helper (`applydock/`) + plain-JS dashboard (`dashboard/`) + Chrome MV3 extension (`extension/`). Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module map and [docs/FEATURES.md](docs/FEATURES.md) to find a feature's doc before opening code.
+Personal, local-first job-application app: Python helper (`applydock/`) + React web app (`web/`, served by the helper from `web/dist`) + Chrome MV3 extension (`extension/`). Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module map and [docs/FEATURES.md](docs/FEATURES.md) to find a feature's doc before opening code.
 
 ## Commands
 
-- Run the app: `start.cmd` or `py -3 server.py`. Use `APPLYDOCK_DATA_DIR` and `APPLYDOCK_PORT` to run against other data.
+- Run the app: `start.cmd` (builds `web/` and then starts the helper) or `py -3 server.py`. Use `APPLYDOCK_DATA_DIR` and `APPLYDOCK_PORT` to run against other data.
+- Web app (in `web/`, Node 22+):
+  - `npm ci` once;
+  - `npm run dev` gives Vite on :5173, proxying `/api` to the helper;
+  - `npm run check` runs types, ESLint and Vitest;
+  - `npm run build`;
+  - `npm run e2e` runs Playwright against `tests/ui/sandbox.py`.
 - All checks: `py -3 scripts/check.py`. Add `--ui` for the browser flows; it needs Chrome or Edge.
-- One test module: `py -3 -m unittest discover -s tests -p "test_resume_workflow.py"`.
+- One test module: `py -3 -m unittest discover -s tests -p "test_resume_workflow.py"`. One browser spec: `npm --prefix web run e2e -- e2e/applications.spec.ts` (after a build).
 - Lint: `py -3 -m ruff check .`
 
 ## Rules
@@ -21,12 +27,18 @@ Personal, local-first job-application app: Python helper (`applydock/`) + plain-
 - **New API endpoints:**
   - Add a `@route(...)` function in `applydock/http_server.py`.
   - Return a dict for a 200 response; raise `ValueError` for 400 or `NotFound` for 404.
-  - Keep URLs and payloads backward compatible with the dashboard and the extension.
-- **Dashboard:**
-  - Classic `defer` scripts that share globals, in the order listed in `index.html`: `core.js` first, `main.js` after the feature files.
-  - Escape every interpolated value with `esc()`.
-  - Follow [DESIGN.md](DESIGN.md): use the tokens in `dashboard/tokens.css` (never raw colors or sizes), reuse the existing classes (`.button`, `.view-card`, `.badge`, `.kv`, `.menu`, …), nothing under 12px, and keep text at AA contrast. Don't add a UI library without approval.
-  - The extension's `sidepanel.css` copies the tokens; change both together.
+  - Keep URLs and payloads backward compatible with the web app and the extension.
+- **Web app** (`web/`; conventions in [web/README.md](web/README.md)):
+  - React 19 + TypeScript (strict), Vite, Tailwind v4, shadcn-style primitives on Radix in `src/components/ui/`, TanStack Query, React Router 7, React Hook Form + Zod, Zustand (resume editor), dnd-kit.
+  - Each screen lives in `src/features/<feature>/`. Server state goes through TanStack Query (`src/api/`). `src/lib/api.ts` is the only code that knows the pairing key.
+  - Follow [DESIGN.md](DESIGN.md):
+    - token utilities only (`bg-surface`, `text-ink-2`, `text-xs` …); the default Tailwind palette and sizes are removed;
+    - compose `components/ui` instead of restyling it;
+    - nothing under 12px; AA contrast.
+  - Ask before adding a new runtime dependency. Pin exact versions (`npm install --save-exact`) and commit `package-lock.json`.
+  - No `dangerouslySetInnerHTML` (lint error). No `window.confirm/prompt`; use `useDialogs()`.
+  - Register `applydock-paired` / `applydock-open` listeners only in `src/bridge/extension.ts`; the extension depends on them.
+  - The extension's `sidepanel.css` copies the color tokens from `web/src/styles/tokens.css`; change both together.
 - **Schema changes:**
   - Additive only, with a new `PRAGMA user_version` step in `database.init_db` (the backup runs automatically).
   - Ask before any schema change.
@@ -46,8 +58,9 @@ Add or update tests with every behavior change:
 | `test_ats.py` | Analysis |
 | `test_resume_*.py` | Resume editor modules |
 | `test_career.py` | Master Profile, link checks, profile suggestions, submission history |
-| `test_http_smoke.py` | The real server over HTTP |
-| `tests/ui/flow-*.mjs` | Browser flows (`flow-extension.mjs` covers the side panel) |
+| `test_http_smoke.py` | The real server over HTTP, including static serving and the CSP |
+| `web/src/**/*.test.ts` | Web unit tests (Vitest): pure rules, the editor store |
+| `web/e2e/*.spec.ts` | Browser flows (Playwright). `extension.spec.ts` covers the side panel; `visual.spec.ts` covers the design rules on every screen |
 
 Run `py -3 scripts/check.py` before finishing.
 

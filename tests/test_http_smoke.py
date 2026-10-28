@@ -4,9 +4,11 @@ This is the "is the app actually running?" check: static dashboard files, authen
 and the main API flows, end to end through sockets rather than function calls.
 """
 import base64
+import http.client
 import json
 from pathlib import Path
 import re
+import tempfile
 import threading
 import unittest
 import urllib.error
@@ -58,24 +60,64 @@ class HttpSmokeTests(unittest.TestCase):
         status, _, payload = self.request(path, method, data, **kwargs)
         return status, json.loads(payload or b"{}")
 
-    def test_dashboard_and_every_referenced_asset_load(self):
-        status, headers, html = self.request("/", key="")
-        self.assertEqual(status, 200)
-        self.assertIn("text/html", headers["Content-Type"])
+    def fake_web_build(self):
+        # Tests must not depend on a real `npm run build`; a minimal dist/ with the same shape is enough.
+        dist = Path(self.enterContext(tempfile.TemporaryDirectory())) / "dist"
+        (dist / "assets").mkdir(parents=True)
+        (dist / "index.html").write_text('<!doctype html><script type="module" src="/assets/index-abc123.js"></script>'
+                                         '<link rel="stylesheet" href="/assets/index-def456.css">', encoding="utf-8")
+        (dist / "assets" / "index-abc123.js").write_text("console.log(1)", encoding="utf-8")
+        (dist / "assets" / "index-def456.css").write_text("body{}", encoding="utf-8")
+        (dist / "assets" / "plex-123.woff2").write_bytes(b"wOF2fake")
+        (dist / "assets" / "notes.txt").write_text("not served", encoding="utf-8")
+        (dist / "favicon.svg").write_text("<svg/>", encoding="utf-8")
+        patcher = patch.object(config, "WEB_DIST", dist)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_web_app_and_every_referenced_asset_load(self):
+        self.fake_web_build()
+        for route in ("/", "/applications/abc-123", "/settings/profile", "/resumes/abc/edit"):
+            status, headers, html = self.request(route, key="")
+            self.assertEqual(status, 200, route)
+            self.assertIn("text/html", headers["Content-Type"])
+            self.assertEqual(headers["Cache-Control"], "no-store")
+            self.assertIn("script-src 'self'", headers["Content-Security-Policy"])
+            self.assertIn("frame-ancestors 'none'", headers["Content-Security-Policy"])
         assets = re.findall(r'(?:src|href)="(/[^"?]+\.(?:js|css))', html.decode())
-        self.assertTrue(assets)
-        for asset in assets:
+        self.assertEqual(len(assets), 2)
+        for asset in assets + ["/assets/plex-123.woff2"]:
             status, headers, _ = self.request(asset, key="")
             self.assertEqual(status, 200, asset)
             self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
-        status, headers, font = self.request("/fonts/ibm-plex-sans-latin-400-normal.woff2", key="")
-        self.assertEqual((status, headers["Content-Type"]), (200, "font/woff2"))
-        self.assertTrue(font.startswith(b"wOF2"))
+            self.assertIn("immutable", headers["Cache-Control"])
+        status, headers, _ = self.request("/favicon.svg", key="")
+        self.assertEqual((status, headers["Content-Type"], headers["Cache-Control"]), (200, "image/svg+xml", "no-store"))
 
-    def test_files_outside_the_dashboard_are_never_served(self):
-        for path in ("/../server.py", "/js/../../server.py", "/%2e%2e/applydock/config.py", "/data/config.json", "/README.md", "/fonts/OFL.txt"):
+    def test_files_outside_the_build_are_never_served(self):
+        self.fake_web_build()
+        for path in ("/../server.py", "/assets/../../server.py", "/%2e%2e/applydock/config.py", "/data/config.json", "/README.md",
+                     "/assets/notes.txt", "/assets/missing.js", "/web/package.json"):
             status, _, _ = self.request(path, key="")
             self.assertIn(status, (401, 404), path)
+
+    def test_preview_urls_under_app_redirect_to_the_root(self):
+        self.fake_web_build()
+        connection = http.client.HTTPConnection("127.0.0.1", config.PORT, timeout=10)
+        self.addCleanup(connection.close)
+        for old, new in (("/app/", "/"), ("/app", "/"), ("/app/settings/profile", "/settings/profile")):
+            connection.request("GET", old)
+            response = connection.getresponse()
+            response.read()
+            self.assertEqual((response.status, response.getheader("Location")), (301, new), old)
+
+    def test_web_app_explains_a_missing_build(self):
+        patcher = patch.object(config, "WEB_DIST", Path(self.enterContext(tempfile.TemporaryDirectory())) / "dist")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        status, _, body = self.request("/", key="")
+        self.assertEqual(status, 503)
+        self.assertIn(b"npm --prefix web run build", body)
 
     def test_api_requires_pairing_key_host_and_origin(self):
         self.assertEqual(self.json("/api/state", key="")[0], 401)

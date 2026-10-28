@@ -19,7 +19,7 @@ import secrets
 ROOT = Path(__file__).resolve().parent.parent          # repository root (dashboard/, extension/)
 PACKAGE = Path(__file__).resolve().parent
 SCHEMA_DIR = PACKAGE / "schemas"                        # Codex structured-output schemas
-DASHBOARD_DIR = ROOT / "dashboard"
+WEB_DIST = ROOT / "web" / "dist"                        # built web app (npm --prefix web run build)
 # APPLYDOCK_DATA_DIR / APPLYDOCK_PORT let tests and sandboxes run without touching your real data.
 DATA = Path(os.environ.get("APPLYDOCK_DATA_DIR") or ROOT / "data")
 DB = DATA / "capture.sqlite3"

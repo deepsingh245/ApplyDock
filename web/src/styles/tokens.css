@@ -1,0 +1,78 @@
+/* ApplyDock design tokens ("Ledger"): color, shadow, motion and layout. Type, radius and spacing scales live in
+   globals.css @theme so Tailwind generates their utilities. Every text color meets WCAG AA (4.5:1) on every
+   surface in both themes; see DESIGN.md. tests/test_architecture.py keeps these hex values identical to
+   dashboard/tokens.css and extension/sidepanel.css. */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces: canvas (app background) < surface (panels, inputs) < surface-2 (hover, subtle fills). */
+  --canvas: #F6F5F1;
+  --surface: #FFFFFF;
+  --surface-2: #EFEDE7;
+  --surface-3: #E7E4DC;
+  --line: #E3DFD6;
+  --line-strong: #CFC9BC;
+
+  /* Text: ink (primary) > ink-2 (secondary) > ink-3 (tertiary; still AA). */
+  --ink: #1B1A17;
+  --ink-2: #55524A;
+  --ink-3: #6E6A60;
+
+  /* One accent, used for primary actions, selection and links. */
+  --accent: #0E6656;
+  --accent-hover: #0A5244;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #E1EFEA;
+
+  /* Status colors, each with a tinted background for chips and notes. */
+  --success: #256B43;
+  --success-soft: #E4F1E8;
+  --warn: #8A5300;
+  --warn-soft: #F7EBD3;
+  --danger: #B3261E;
+  --danger-soft: #F9E3E1;
+
+  --shadow-pop: 0 8px 24px rgba(27, 26, 23, .12), 0 1px 3px rgba(27, 26, 23, .08);
+  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+
+  /* Motion: short, functional transitions only. */
+  --duration-fast: 120ms;
+  --duration: 160ms;
+  --ease: cubic-bezier(.2, 0, 0, 1);
+
+  /* Layout. */
+  --topbar-h: 52px;
+  --list-w: 360px;
+  --context-w: 280px;
+  --control-h: 32px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: #121211;
+  --surface: #1A1A18;
+  --surface-2: #23221F;
+  --surface-3: #2B2A26;
+  --line: #2E2D29;
+  --line-strong: #3D3B36;
+  --ink: #EDEBE6;
+  --ink-2: #B8B5AC;
+  --ink-3: #9A968C;
+  --accent: #5CC4AE;
+  --accent-hover: #7AD3C0;
+  --accent-ink: #0B1F1A;
+  --accent-soft: #16332D;
+  --success: #6FC593;
+  --success-soft: #17301F;
+  --warn: #E2B15A;
+  --warn-soft: #33270F;
+  --danger: #F28B82;
+  --danger-soft: #3A1C1A;
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, .5), 0 1px 3px rgba(0, 0, 0, .4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --duration-fast: 0ms; --duration: 0ms; }
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0ms !important; scroll-behavior: auto !important; }
+}

@@ -25,7 +25,7 @@ See [docs/FEATURES.md](docs/FEATURES.md) for status and details.
 |---|---|
 | Helper / API | Python 3.12 standard-library HTTP server (`applydock/`) |
 | Storage | SQLite (`data/capture.sqlite3`), local files under `data/resumes/` |
-| Dashboard | Plain HTML/CSS/JavaScript with no build step (`dashboard/`) |
+| Web app | React 19 + TypeScript, Vite, Tailwind v4, Radix/shadcn primitives, TanStack Query (`web/`, built into `web/dist` and served by the helper) |
 | Extension | Chrome Manifest V3 side panel (`extension/`) |
 | PDF | `pypdf` (text extraction), `typst` (resume rendering) |
 | AI | Local Codex CLI signed in with ChatGPT Plus |
@@ -33,7 +33,7 @@ See [docs/FEATURES.md](docs/FEATURES.md) for status and details.
 
 ## Quick start
 
-Prerequisites: Windows, Python 3.12+, Chrome. Node.js is optional (for JS checks), and the Codex CLI is optional (for AI features).
+Prerequisites: Windows, Python 3.12+, Node.js 22+ (to build the web app; `start.cmd` builds it), Chrome. The Codex CLI is optional (for AI features).
 
 ```powershell
 py -3 -m pip install -r requirements.txt

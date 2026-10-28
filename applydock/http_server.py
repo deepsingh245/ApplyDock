@@ -1,4 +1,4 @@
-"""Local HTTP API and dashboard file server.
+"""Local HTTP API and web-app file server (serves the built React app from web/dist).
 
 Security model: the server binds to 127.0.0.1 only; every /api route requires the pairing key in
 `X-Local-Key` (constant-time compare) plus a matching Host and, when present, a dashboard or
@@ -24,7 +24,10 @@ from . import (ai_draft, applications, ats, career, config, database, delivery, 
 from .resume_store import ConflictError
 
 ROUTES = []   # (method, compiled pattern, handler)
-STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".woff2": "font/woff2"}
+STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".woff2": "font/woff2",
+                ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon"}
+LEGACY_WEB_PREFIX = "/app"
+WEB_ASSET_SUFFIXES = (".js", ".css", ".woff2", ".svg", ".png", ".ico")
 
 
 class NotFound(Exception):
@@ -142,30 +145,75 @@ def serve_public_get(request, path):
     if submission_match:
         serve_submission_file(request, submission_match.group(1), urllib.parse.parse_qs(path.query))
         return True
-    static_file = dashboard_file(path.path)
-    if static_file:
-        content = static_file.read_bytes()
+    if path.path == LEGACY_WEB_PREFIX or path.path.startswith(LEGACY_WEB_PREFIX + "/"):
+        # The web app was previewed under /app/ before it replaced the classic dashboard; keep those links working.
+        request.send_response(301)
+        request.send_header("Location", path.path[len(LEGACY_WEB_PREFIX):] or "/")
+        request.send_header("Content-Length", "0")
+        request.end_headers()
+        return True
+    extra = extra_static_file(path.path)
+    if extra:
+        content = extra.read_bytes()
         request.send_response(200)
-        request.send_header("Content-Type", STATIC_TYPES[static_file.suffix])
+        request.send_header("Content-Type", STATIC_TYPES[extra.suffix])
         request.send_header("Content-Length", str(len(content)))
-        # Fonts never change between releases; scripts and styles must always be fresh.
-        request.send_header("Cache-Control", "max-age=31536000, immutable" if static_file.suffix == ".woff2" else "no-store")
+        request.send_header("Cache-Control", "no-store")
         request.send_header("X-Content-Type-Options", "nosniff")
         request.end_headers()
         request.wfile.write(content)
         return True
-    return False
+    return serve_web_app(request, path.path)
 
 
-def dashboard_file(url_path):
-    """Map "/" and dashboard asset paths to files inside dashboard/, refusing anything outside it."""
-    if url_path == "/":
-        return config.DASHBOARD_DIR / "index.html"
-    if url_path.startswith("/api/") or Path(url_path).suffix not in (".js", ".css", ".woff2"):
+def extra_static_file(url_path):
+    """Hook for files served beside the web app. The helper serves none; the browser-test sandbox serves extension/ here."""
+    return None
+
+
+def web_csp():
+    # The built app has no inline scripts. Resume files are absolute 127.0.0.1/localhost URLs, and previews are blob: PDFs.
+    origins = " ".join(allowed_origins())
+    return ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; "
+            f"connect-src 'self'; frame-src 'self' blob: {origins}; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+
+
+def web_file(url_path):
+    """Map a URL to web/dist: a real asset file, or index.html for any client-side route. None when refused."""
+    if url_path.startswith(("/api/", "/oauth/")):
         return None
-    root = config.DASHBOARD_DIR.resolve()
-    candidate = (root / url_path.lstrip("/")).resolve()
+    root = config.WEB_DIST.resolve()
+    relative = url_path.lstrip("/")
+    suffix = Path(relative).suffix
+    if not suffix:
+        return root / "index.html"
+    if suffix not in WEB_ASSET_SUFFIXES:
+        return None
+    candidate = (root / relative).resolve()
     return candidate if candidate.is_relative_to(root) and candidate.is_file() else None
+
+
+def serve_web_app(request, url_path):
+    target = web_file(url_path)
+    if target is None:
+        return False
+    if target.suffix == ".html" and not target.is_file():
+        request.respond_html(503, "The ApplyDock web app is not built yet. Run: npm --prefix web ci && npm --prefix web run build", "ApplyDock web app")
+        return True
+    content = target.read_bytes()
+    request.send_response(200)
+    request.send_header("Content-Type", STATIC_TYPES[target.suffix])
+    request.send_header("Content-Length", str(len(content)))
+    # Vite puts a content hash in every file name under assets/, so those can be cached forever; the page must always be fresh.
+    hashed = target.parent.name == "assets" and target.suffix != ".html"
+    request.send_header("Cache-Control", "max-age=31536000, immutable" if hashed else "no-store")
+    request.send_header("X-Content-Type-Options", "nosniff")
+    if target.suffix == ".html":
+        request.send_header("Content-Security-Policy", web_csp())
+        request.send_header("Referrer-Policy", "no-referrer")
+    request.end_headers()
+    request.wfile.write(content)
+    return True
 
 
 def serve_current_resume_file(request, resume_id, query):
@@ -712,10 +760,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def respond_html(self, code, message):
-        content = ("<!doctype html><meta charset='utf-8'><title>Gmail connection</title>"
+    def respond_html(self, code, message, title="Gmail connection"):
+        content = (f"<!doctype html><meta charset='utf-8'><title>{html.escape(title)}</title>"
                    "<main style='font:16px system-ui;max-width:34rem;margin:4rem auto;line-height:1.5'>"
-                   "<h1>Gmail connection</h1><p>" + html.escape(message) +
+                   f"<h1>{html.escape(title)}</h1><p>" + html.escape(message) +
                    f"</p><p><a href='http://{config.HOST}:{config.PORT}/'>Return to the local dashboard</a>, or close this tab and return to the Applications sidebar.</p></main>").encode()
         self.send_response(code)
         self.send_header("Content-Type", "text/html; charset=utf-8")

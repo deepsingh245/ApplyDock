@@ -9,7 +9,7 @@
 | `applydock/ai_draft.py` | `generate_ai_draft`: Codex writes subject, body and notes from the job and your profile (not the resume) |
 | `applydock/gmail.py` | OAuth (PKCE, `gmail.compose` scope, loopback redirect), `gmail_message` (MIME with the pinned resume), `save_gmail_draft`, `mark_gmail_scheduled` |
 | `applydock/delivery.py` | SMTP settings check (`test_smtp_login`), `send_mail`, `process_due` (the 9 AM sender), `scheduler` |
-| `dashboard/js/applications.js` | Email tab and inspector actions (`performAction`) |
+| `web/src/features/applications/` | Email tab (`EntryEditor`) and inspector actions (`useEntryActions`) |
 
 ## Rules
 

@@ -79,11 +79,11 @@ class ArchitectureTests(unittest.TestCase):
             pick = lambda block: {name: value.upper() for name, value in re.findall(r"(--[a-z0-9-]+):\s*(#[0-9A-Fa-f]{3,6})", block)}
             return pick(light), pick(dark.split("}")[0])
         root = PACKAGE.parent
-        dashboard = colors((root / "dashboard" / "tokens.css").read_text(encoding="utf-8"))
+        web = colors((root / "web" / "src" / "styles" / "tokens.css").read_text(encoding="utf-8"))
         extension = colors((root / "extension" / "sidepanel.css").read_text(encoding="utf-8"))
         for index, theme in enumerate(("light", "dark")):
-            self.assertTrue(dashboard[index], theme)
-            self.assertEqual(extension[index], dashboard[index], f"{theme} tokens differ between tokens.css and sidepanel.css")
+            self.assertTrue(web[index], theme)
+            self.assertEqual(extension[index], web[index], f"{theme} tokens differ between web/src/styles/tokens.css and sidepanel.css")
 
 
 if __name__ == "__main__":

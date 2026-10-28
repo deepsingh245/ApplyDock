@@ -17,8 +17,8 @@
 | Workflows over HTTP | `applydock/career.py`; routes under `/api/profile*`, `/api/entries/{id}/submissions`, `/api/resumes/{id}/usage`, `/api/submissions/{id}/file` |
 | Profile-aware analysis | `ats.queue_analysis(profile_blocks=…)` and `_validated_matches`; see [ats-analysis](ats-analysis.md) |
 | Profile-sourced suggestions | `resume_store.validated_suggestions` / `accept_suggestion` (operation `add_project`, `source_profile_id`) |
-| UI | `dashboard/js/profile.js` (Settings → Master Profile), `analysis.js` (coverage), `resume-editor.js` (suggestion cards), `applications.js` (Submitted resume card, Applied filter), `resume-library.js` (usage) |
-| Tests | `tests/test_career.py`, `tests/test_ats.py`, `tests/ui/flow-master-profile.mjs` |
+| UI | `web/src/features/profile/` (Settings → Master Profile; forms from `fields.ts`), `features/analysis/` (coverage), `features/resume-editor/` (From profile, suggestion cards), `features/applications/` (Submitted resume card, Applied filter), `features/resume-library/` (usage) |
+| Tests | `tests/test_career.py`, `tests/test_ats.py`, `web/e2e/profile.spec.ts`, `web/e2e/settings.spec.ts` |
 
 ## Audit before this work (October 2026)
 

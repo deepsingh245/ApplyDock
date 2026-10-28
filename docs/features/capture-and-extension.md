@@ -27,10 +27,10 @@ estimated-match score and status chips, and settings cards collapsed behind **Co
   buttons are hidden once a submission is recorded; a Gmail draft or approval is never shown as submitted.
 - **Open analysis**, **Optimize resume**, **Mark as submitted**, and **Open Master Profile** open the dashboard on exactly that
   application or page: the panel pairs the tab and dispatches `applydock-open` with `{entryId, action}`
-  (`analysis | optimize | submission | profile`), handled in `dashboard/js/main.js`.
+  (`analysis | optimize | submission | profile`), handled by `web/src/bridge/extension.ts` (listeners registered before the first render) and `web/src/app/ExtensionOpenHandler.tsx`.
 - Remove from ApplyDock moved from every row into the opened item's details.
 
-Browser test: `tests/ui/flow-extension.mjs` loads the real `sidepanel.html` from the sandbox (`/__extension/`, test-only) with
+Browser test: `web/e2e/extension.spec.ts` loads the real `sidepanel.html` from the sandbox (`/__extension/`, test-only) with
 stubbed `chrome.*` APIs.
 
 ## Rules

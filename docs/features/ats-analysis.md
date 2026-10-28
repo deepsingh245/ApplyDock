@@ -9,7 +9,7 @@
 | `applydock/ats.py` | Text extraction, `queue_analysis`, `jd_requirements`, `process_one` (worker), `_run_codex`, `_validated_matches`, `score_result`, summaries and history |
 | `applydock/schemas/resume-analysis-schema.json`, `jd-requirements-schema.json`, `ats-analysis-schema.json` | Codex structured-output contracts |
 | `applydock/profile.py` → `evidence_blocks` | Master Profile evidence (`P1…`) sent with each run |
-| `dashboard/js/analysis.js` | Queue, live progress console, results, requirements explorer, history |
+| `web/src/features/analysis/` | `AnalysisView` (shared by the page and the dialog over the editor): queue, live progress log, results, requirements explorer, history |
 
 ## Flow
 

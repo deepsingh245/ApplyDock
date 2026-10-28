@@ -2,54 +2,50 @@
 
 Known items, highest priority first. Remove an entry when it is done.
 
-## 1. Content-Security-Policy for the dashboard — deferred (security)
+## 1. ~~Content-Security-Policy for the dashboard~~: resolved 2026-10-28
 
-**Status:** deliberately postponed (decision 2026-10-23). The dashboard page (`/`) is sent without a CSP. Only the Gmail OAuth result page and the DOCX preview set one.
-
-**Why it matters:** defence in depth against injected script. Every dynamic value is already escaped with `esc()` (`dashboard/js/core.js`), and the server only binds to `127.0.0.1`, so this is a hardening step, not a known hole.
-
-**Proposed policy** (in `http_server.serve_public_get` for the HTML response):
+The React web app is served with a CSP (`http_server.web_csp`):
 
 ```text
-default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;
-frame-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self';
+connect-src 'self'; frame-src 'self' blob: <helper origins>; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
 ```
 
-**Watch out for:**
-- **Inline styles:** progress bars and score tracks use `style="width:…"` in rendered HTML, so `style-src` needs `'unsafe-inline'` unless those move to classes or CSS variables.
-- **PDF previews:** the resume editor shows the generated PDF and the original upload in `blob:` iframes, so `frame-src` needs `blob:`.
-- **Testing:** run `node tests/ui/run.mjs` afterwards; it exercises the preview, compare and download flows.
+`test_http_smoke.py` checks the header, and every Playwright flow fails on a console error, which includes CSP violations.
 
-## 2. OAuth client-secret file in the repository folder — user action
+`style-src` keeps `'unsafe-inline'` because React sets a few computed widths (meters) and Radix positions popovers with inline styles.
+
+## 2. OAuth client-secret file in the repository folder: user action
 
 `client_secret_*.json` sits in the repo root. It is git-ignored and not tracked, and the app already stores the client in `data/config.json`. Move or delete the file so a `git add -f` can't publish it.
 
-## 3. ~~Two stacked CSS layers~~ — resolved 2026-10
+## 3. Retire the classic dashboard files
 
-Resolved by the "Ledger" redesign: one `tokens.css` and one ordered `style.css` (see [DESIGN.md](../DESIGN.md)). `extension/sidepanel.css` holds a hand-copied set of the color tokens; `test_architecture.py` fails if they drift from `dashboard/tokens.css`. Other remaining UI items are listed in [DESIGN_HANDOFF.md](DESIGN_HANDOFF.md).
+Since 2026-10-28 the helper no longer serves `dashboard/`, and its CDP browser flows (`tests/ui/cdp.mjs`, `run.mjs`, `flow-*.mjs`) have been replaced by `web/e2e/`. Nothing runs either of them any more.
+
+The files are kept only until the user confirms they can go. Some of them had uncommitted edits when the switch happened. `tests/ui/sandbox.py` stays: Playwright uses it.
 
 ## 4a. Master Profile follow-ups
 
-Deliberately left out of the first version (see [features/master-profile.md](features/master-profile.md#not-done-yet)): recurring link monitoring, confirming Gmail sends (needs the `gmail.readonly` scope), and profile suggestions that add a whole new job entry. The local resume reader can import a technology line as a project; Codex import avoids it.
+These were deliberately left out of the first version (see [features/master-profile.md](features/master-profile.md#not-done-yet)):
+- recurring link monitoring;
+- confirming Gmail sends, which needs the `gmail.readonly` scope;
+- profile suggestions that add a whole new job entry.
 
-## 4. Extension duplicates dashboard code
+The local resume reader can import a technology line as a project; Codex import avoids that.
 
-`extension/sidepanel.js` re-implements about 15 helpers that also exist in `dashboard/js/core.js` (`api`, `resumeOptions`, stage helpers, formatters). An MV3 extension can only load its own packaged files, so sharing them needs a copy step or a build step. Its CSS (`sidepanel.css`) has hard-coded colors instead of the dashboard tokens.
+## 4. Extension duplicates web-app code
 
-## 5. Dashboard scripts share globals instead of ES modules
+`extension/sidepanel.js` re-implements about 15 helpers that the web app also has in `web/src/lib/`: the API client, resume choices, stage helpers and formatters. An MV3 extension can only load its own packaged files.
 
-The 2026-10 refactor split `app.js` into feature files as classic `defer` scripts that share top-level `let` and `function` declarations. That changed no behavior, but the dependencies are implicit (documented in each file header). Converting to `type="module"` with explicit imports needs shared state such as `state`, `selectedId` and `dirty` to move into an exported object.
+With Vite already in the repo, the clean fix is a second build entry that bundles the side panel from shared TypeScript modules. `extension/sidepanel.css` keeps a copy of the color tokens, and `test_architecture.py` fails if they drift from `web/src/styles/tokens.css`.
 
 ## 6. Large single files that are still cohesive
 
-`applydock/ats.py` (about 900 lines) and `dashboard/js/resume-editor.js` (about 1,000 lines, with clear section headers) are each one feature. Split them along their existing sections when they next change significantly: Codex runner versus analysis queue; editor core, design panel and suggestions.
+`applydock/ats.py` is about 900 lines but is one feature. Split it along its existing sections (Codex runner versus analysis queue) when it next changes significantly.
 
 ## 7. Tooling gaps
 
-- **Formatting:** `ruff format` isn't enforced. It would rewrite nearly every line, so do it as a separate commit.
-- **Type hints:** sparse in the older modules; add them where code is touched.
-- **CI:** none. `py -3 scripts/check.py` is the single local gate.
-
-## 8. HTML built from strings
-
-Views render with template strings and `innerHTML`. That's fine at this size, but there is no component abstraction, so repeated markup (buttons, cards, badges) is duplicated across feature files. This is a design-phase decision.
+- **Python formatting:** `ruff format` isn't enforced. It would rewrite nearly every line, so do it as a separate commit. The web app is formatted by Prettier (`npm --prefix web run format`).
+- **Type hints:** sparse in the older Python modules. Add them where code is touched. The web app is strict TypeScript.
+- **CI:** none. `py -3 scripts/check.py --ui` is the single local gate.
