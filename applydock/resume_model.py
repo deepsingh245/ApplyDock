@@ -31,7 +31,8 @@ LIMITS = {
 }
 ITEM_FIELDS = {
     "profiles": ("network", "url"),
-    "work": ("name", "position", "location", "startDate", "endDate", "summary"),
+    # subheading: an optional line under the title (team, product, focus); printed only when filled.
+    "work": ("name", "position", "subheading", "location", "startDate", "endDate", "summary"),
     "projects": ("name", "url", "startDate", "endDate", "description"),
     "skills": ("name",),
     "education": ("institution", "area", "studyType", "startDate", "endDate", "score"),
@@ -231,6 +232,11 @@ def with_design(content: dict, design) -> dict:
     meta = dict((content or {}).get("meta") or {})
     meta.update({key: design[key] for key in DESIGN_KEYS if design.get(key) is not None})
     return normalize({**(content or {}), "meta": meta}, strict=False)
+
+
+def normalize_design(design) -> dict:
+    """A design with every value checked and clamped, exactly as it would be stored on a resume."""
+    return design_of(with_design(empty_resume(), design))
 
 
 def normalize_layout(raw, template: str) -> dict:

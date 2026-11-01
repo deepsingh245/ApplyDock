@@ -3,18 +3,77 @@ from __future__ import annotations
 
 import json
 
-from . import applications, ats, config, database, profile, resume_import, resume_model, resume_render, resume_store, resumes
+from . import applications, ats, config, database, events, profile, resume_import, resume_model, resume_render, resume_store, resumes
 
 
 # ---------------------------------------------------------------- design carry-over
-# The design last edited in the editor (any resume) is kept in settings. New resumes (tailored copies and fresh
-# imports) start from it; existing drafts and saved versions never change because of it.
+# New resumes (tailored copies and fresh imports) start from one design; existing drafts and saved versions never
+# change because of it. Which design: the user's chosen default (Settings â†’ Resume design), or, when they prefer,
+# the design they last edited in the editor (any resume). Both live in settings.
 LAST_DESIGN_KEY = "last_resume_design"
+DESIGN_PREFERENCE_KEY = "resume_design_preference"   # {"mode": "default" | "last", "design": {...} | None, "updated_at"}
 
 
 def last_design():
     saved = config.SETTINGS.get(LAST_DESIGN_KEY)
     return saved.get("design") if isinstance(saved, dict) and isinstance(saved.get("design"), dict) else None
+
+
+def design_preference():
+    saved = config.SETTINGS.get(DESIGN_PREFERENCE_KEY)
+    saved = saved if isinstance(saved, dict) else {}
+    design = saved.get("design") if isinstance(saved.get("design"), dict) else None
+    mode = saved.get("mode") if saved.get("mode") in ("default", "last") else ("default" if design else "last")
+    return {"mode": mode, "design": design, "updated_at": saved.get("updated_at", "")}
+
+
+def new_resume_design():
+    """The design a new resume starts with, or None to keep the source's own design."""
+    preference = design_preference()
+    if preference["mode"] == "default" and preference["design"]:
+        return preference["design"]
+    return last_design()
+
+
+def design_settings():
+    """Everything Settings â†’ Resume design shows: the preference, both candidate designs, and the editor's option lists."""
+    preference = design_preference()
+    return {
+        "mode": preference["mode"], "default": preference["design"], "default_updated_at": preference["updated_at"],
+        "last": last_design(), "last_updated_at": (config.SETTINGS.get(LAST_DESIGN_KEY) or {}).get("updated_at", ""),
+        "effective": new_resume_design(),
+        "factory": resume_model.design_of(resume_model.empty_resume()),
+        "options": {"presets": resume_model.LAYOUT_PRESETS, "ranges": resume_model.LAYOUT_RANGES, "choices": resume_model.LAYOUT_CHOICES,
+                    "accents": resume_model.ACCENTS, "papers": resume_model.PAPERS,
+                    "templates": [{"id": key, **{k: v for k, v in value.items() if k != "file"}} for key, value in resume_render.TEMPLATES.items()],
+                    "section_titles": resume_model.DEFAULT_TITLES},
+    }
+
+
+def update_design_settings(mode=None, design=None, from_resume_id=""):
+    """Set the default design (given directly, or copied from a resume's draft) and/or which design new resumes use."""
+    preference = design_preference()
+    if from_resume_id:
+        with database.connect() as db:
+            draft = resume_store.get_draft(db, from_resume_id)
+        if not draft:
+            raise ValueError("Open that resume in the editor first.")
+        design = resume_model.design_of(draft["content"])
+    if design is not None:
+        if not isinstance(design, dict):
+            raise ValueError("A design must be an object.")
+        preference["design"] = resume_model.normalize_design(design)
+    if mode is not None:
+        if mode not in ("default", "last"):
+            raise ValueError("Choose the default design or the last design you edited.")
+        if mode == "default" and not preference["design"]:
+            raise ValueError("Save a default design first.")
+        preference["mode"] = mode
+    elif design is not None:
+        preference["mode"] = "default"
+    config.SETTINGS[DESIGN_PREFERENCE_KEY] = {"mode": preference["mode"], "design": preference["design"], "updated_at": ats.now_iso()}
+    config.save_config(config.SETTINGS)
+    return design_settings()
 
 
 def remember_design(content, resume_id=""):
@@ -35,8 +94,30 @@ def save_draft(resume_id, content, expected_revision, reviewed=False):
     return draft
 
 
+def follow_tailored(entry_id, resume_id):
+    """Make an application use the tailored copy made for it, following that copy's newest saved version.
+
+    Without this the application kept following the master, so its score and "Run analysis again" ignored every
+    saved fix in the tailored copy. An application pinned to an exact file (approval, "Use for application") keeps
+    it: what gets attached never changes silently. Locked (sending, sent, Gmail-scheduled) applications never change.
+    Returns True when the application changed.
+    """
+    entry = applications.get_entry(entry_id) if entry_id else None
+    resume = resumes.get_resume(resume_id)
+    if not entry or not resume or resume["kind"] != "tailored" or resume["entry_id"] != entry_id or entry["resume_id"] == resume_id:
+        return False
+    if entry["resume_version_id"] or entry["status"] in ("sending", "sent") or entry["delivery_mode"] == "gmail_scheduled":
+        return False
+    applications.update_entry(entry_id, {"resume_id": resume_id})
+    events.application_changed(entry_id)
+    return True
+
+
 def save_editor_version(resume_id, expected_revision, label=""):
-    """Render the draft, validate it, and store it as a new current version of this resume."""
+    """Render the draft, validate it, and store it as a new current version of this resume.
+
+    An unpinned application that a tailored copy belongs to then follows this new version (follow_tailored).
+    """
     resume = resumes.get_resume(resume_id)
     if not resume:
         raise ValueError("Resume not found.")
@@ -54,9 +135,10 @@ def save_editor_version(resume_id, expected_revision, label=""):
         changed = resumes.activate_version(db, resume_id, version, document)
         db.execute("UPDATE resume_drafts SET base_version_id=? WHERE resume_id=?", (version["id"], resume_id))
     resumes.after_current_changed(resume_id, changed)
+    followed = follow_tailored(resume["entry_id"], resume_id)
     return {"resume": resumes.get_resume(resume_id), "version_id": version["id"], "version_number": version["version_number"],
             "created": created, "unchanged": not created and not changed, "validation": report,
-            "sha256": document["sha256"]}
+            "sha256": document["sha256"], "application_follows": followed}
 
 
 def editor_state(resume_id):
@@ -65,7 +147,7 @@ def editor_state(resume_id):
     if not resume:
         raise ValueError("Resume not found.")
     with database.LOCK, database.connect() as db:
-        draft = resume_store.open_draft(db, resume_id, design=last_design())
+        draft = resume_store.open_draft(db, resume_id, design=new_resume_design())
         version = ats.current_version(db, resume_id)
         document = db.execute("SELECT structured_status,extraction_status,extraction_error FROM resume_documents WHERE id=?",
                               (version["document_id"],)).fetchone() if version else None
@@ -156,18 +238,23 @@ def tailor_resume(entry_id, base_resume_id):
         raise ValueError("Choose an available master resume to tailor.")
     if base["kind"] != "master":
         if base["entry_id"] == entry_id:
-            return base, False
+            follow_tailored(entry_id, base["id"])
+            return resumes.get_resume(base["id"]), False
         raise ValueError("Choose a master resume to tailor.")
     with database.connect() as db:
         existing = resume_store.tailored_for(db, entry_id, base["id"])
-        if existing:
-            return resumes.get_resume(existing["id"]), False
-        content, base_version_id = resume_store.base_content(db, base["id"])
-    # The master's text, in the design the user last worked on (which may come from another resume).
-    content = resume_model.with_design(content, last_design())
+        if not existing:
+            content, base_version_id = resume_store.base_content(db, base["id"])
+    if existing:
+        # Tailoring for this job means this job uses the tailored copy, also for copies made before that rule.
+        follow_tailored(entry_id, existing["id"])
+        return resumes.get_resume(existing["id"]), False
+    # The master's text in the design new resumes start with (the default design, or the last one edited).
+    content = resume_model.with_design(content, new_resume_design())
     pdf, report = resume_store.render_content(content)
     with database.LOCK, database.connect() as db:
         resume_id, created = resume_store.create_tailored(db, config.DATA, entry, base, pdf, report, content, base_version_id)
+    follow_tailored(entry_id, resume_id)
     return resumes.get_resume(resume_id), created
 
 

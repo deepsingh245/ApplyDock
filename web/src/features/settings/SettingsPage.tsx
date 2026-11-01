@@ -3,12 +3,13 @@ import { BackButton, Page, PageHeading } from "@/components/ui/misc";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { isProfileSection } from "@/features/profile/fields";
 import { MasterProfile } from "@/features/profile/MasterProfile";
+import { ResumeDesignSettings } from "@/features/resume-design/ResumeDesignSettings";
 import { Connections } from "./Connections";
 
-const TABS = ["connections", "profile"] as const;
+const TABS = ["connections", "profile", "design"] as const;
 type SettingsTab = (typeof TABS)[number];
 
-/** /settings/connections, /settings/profile[/section][?item=<id>] — the tab and section live in the URL. */
+/** /settings/connections, /settings/profile[/section][?item=<id>], /settings/design — the tab and section live in the URL. */
 export default function SettingsPage() {
   const navigate = useNavigate();
   const { tab, section } = useParams();
@@ -28,12 +29,18 @@ export default function SettingsPage() {
           <TabsTrigger value="profile" data-settings-tab="profile">
             Master Profile
           </TabsTrigger>
+          <TabsTrigger value="design" data-settings-tab="design">
+            Resume design
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="connections">
           <Connections />
         </TabsContent>
         <TabsContent value="profile">
           <MasterProfile section={profileSection} />
+        </TabsContent>
+        <TabsContent value="design">
+          <ResumeDesignSettings />
         </TabsContent>
       </Tabs>
     </Page>

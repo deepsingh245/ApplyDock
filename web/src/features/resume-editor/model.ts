@@ -24,7 +24,15 @@ export interface FieldSpec {
 const f = (name: string, label: string, placeholder = "", kind: FieldKind = "text"): FieldSpec => ({ name, label, placeholder, kind });
 
 export const ITEM_FIELDS: Record<ListSection, FieldSpec[]> = {
-  work: [f("position", "Job title"), f("name", "Company"), f("location", "Location"), f("startDate", "Start", "Mar 2022"), f("endDate", "End", "Present"), f("summary", "Role summary", "", "textarea")],
+  work: [
+    f("position", "Job title"),
+    f("name", "Company"),
+    f("subheading", "Subheading (optional)", "Team, product or focus, e.g. Payments platform team"),
+    f("location", "Location"),
+    f("startDate", "Start", "Mar 2022"),
+    f("endDate", "End", "Present"),
+    f("summary", "Role summary", "", "textarea"),
+  ],
   projects: [f("name", "Project name"), f("url", "Link", "https://"), f("startDate", "Start"), f("endDate", "End"), f("description", "Description", "", "textarea"), f("keywords", "Technologies", "React, Node.js", "keywords")],
   skills: [f("name", "Group", "Languages"), f("keywords", "Skills", "TypeScript, React, SQL", "keywords")],
   education: [f("institution", "Institution"), f("studyType", "Degree", "B.S."), f("area", "Field of study"), f("startDate", "Start"), f("endDate", "End"), f("score", "Grade or honors"), f("courses", "Relevant courses", "", "keywords")],
@@ -54,7 +62,7 @@ export function newItem(section: ListSection): Item {
   const id = newId(PREFIX[section]);
   switch (section) {
     case "work":
-      return { id, position: "", name: "", location: "", startDate: "", endDate: "", summary: "", highlights: [{ id: newId("h"), text: "" }] };
+      return { id, position: "", name: "", subheading: "", location: "", startDate: "", endDate: "", summary: "", highlights: [{ id: newId("h"), text: "" }] };
     case "projects":
       return { id, name: "", url: "", startDate: "", endDate: "", description: "", highlights: [], keywords: [] };
     case "skills":
@@ -115,9 +123,6 @@ export function itemFilled(item: Item) {
   return Object.entries(item).some(([key, value]) => key !== "id" && (Array.isArray(value) ? value.length : value));
 }
 
-export const UNITS: Record<string, string> = { font_size: "pt", name_size: "pt", heading_size: "pt", margin_x: "mm", margin_y: "mm", line_height: "", section_gap: "em", entry_gap: "em", bullet_gap: "em" };
-export const STEPS: Record<string, number> = { font_size: 0.25, name_size: 0.5, heading_size: 0.25, margin_x: 0.5, margin_y: 0.5, line_height: 0.05, section_gap: 0.05, entry_gap: 0.05, bullet_gap: 0.05 };
-export const FONT_LABELS: Record<string, string> = { Carlito: "Sans · Carlito", "Libertinus Serif": "Serif · Libertinus", "New Computer Modern": "Classic · Computer Modern" };
 
 export const PROFILE_GROUPS: [string, string][] = [
   ["personal", "Summary and headline"],

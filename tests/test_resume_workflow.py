@@ -188,6 +188,66 @@ class ResumeWorkflowTests(unittest.TestCase):
         upload = resumes.create_resume({"filename": "second.pdf", "display_name": "Backend master", "content": base64.b64encode(self.upload_pdf).decode()})
         self.assertEqual(resume_model.design_of(resume_workflows.editor_state(upload["id"])["draft"]["content"]), edited)
 
+    def test_unpinned_application_follows_its_tailored_copy_so_analysis_scores_the_latest_save(self):
+        self.reviewed_master_version()
+        entry = self.entry()
+        self.assertEqual(entry["resume_id"], self.master["id"])
+        tailored, _ = resume_workflows.tailor_resume(entry["id"], self.master["id"])
+        entry = applications.get_entry(entry["id"])
+        self.assertEqual((entry["resume_id"], entry["resume_version_id"]), (tailored["id"], ""))
+        draft = self.draft(tailored["id"])
+        changed = json.loads(json.dumps(draft["content"]))
+        changed["basics"]["label"] = "Frontend Engineer (performance)"
+        with database.connect() as db:
+            resume_store.save_draft(db, tailored["id"], changed, draft["revision"])
+        saved = resume_workflows.save_editor_version(tailored["id"], draft["revision"] + 1)
+        self.assertEqual(saved["version_number"], 2)
+        # Saved PDFs are named "<name as written> - <company>"; the master keeps "<name> - Resume".
+        self.assertEqual(saved["resume"]["original_filename"], "Jordan Rivera - Initech.pdf")
+        self.assertEqual(resumes.get_resume(self.master["id"])["original_filename"], "Jordan Rivera - Resume.pdf")
+        self.assertEqual(resume_store.safe_filename("Jordan Rivera", "AT&T / Labs?"), "Jordan Rivera - AT&T Labs.pdf")
+        entry = applications.get_entry(entry["id"])
+        self.assertEqual((entry["resume_version"]["id"], entry["resume_version"]["is_current"]), (saved["version_id"], True))
+        # "Run analysis again" on the application (no explicit version) scores that newest save.
+        run, _ = ats.queue_analysis(config.DB, entry)
+        self.assertEqual(run["resume_version_id"], saved["version_id"])
+
+    def test_an_application_that_kept_the_master_switches_when_its_tailored_copy_is_opened(self):
+        self.reviewed_master_version()
+        entry = self.entry()
+        with patch.object(resume_workflows, "follow_tailored", return_value=False):
+            tailored, _ = resume_workflows.tailor_resume(entry["id"], self.master["id"])  # made before the rule existed
+        self.assertEqual(applications.get_entry(entry["id"])["resume_id"], self.master["id"])
+        resume_workflows.tailor_resume(entry["id"], self.master["id"])
+        self.assertEqual(applications.get_entry(entry["id"])["resume_id"], tailored["id"])
+
+    def test_default_design_setting_decides_what_new_tailored_resumes_look_like(self):
+        self.reviewed_master_version()
+        settings = resume_workflows.design_settings()
+        self.assertEqual((settings["mode"], settings["default"], settings["effective"]), ("last", None, None))
+        with self.assertRaisesRegex(ValueError, "Save a default design first"):
+            resume_workflows.update_design_settings(mode="default")
+        chosen = {**settings["factory"], "template": "compact", "page_limit": 1,
+                  "layout": {**resume_model.LAYOUT_PRESETS["compact"], "accent": "#7a1f2b", "font_size": 99}}
+        settings = resume_workflows.update_design_settings(design=chosen)
+        self.assertEqual(settings["mode"], "default")
+        self.assertEqual(settings["default"]["layout"]["font_size"], resume_model.LAYOUT_RANGES["font_size"][1])  # clamped
+        # A later design edit elsewhere does not override the chosen default...
+        resume_workflows.remember_design({**self.draft(self.master["id"])["content"]})
+        first, _ = resume_workflows.tailor_resume(self.entry()["id"], self.master["id"])
+        meta = self.draft(first["id"])["content"]["meta"]
+        self.assertEqual((meta["template"], meta["layout"]["accent"], meta["page_limit"]), ("compact", "#7a1f2b", 1))
+        # ...until the user switches back to "the last design I edited".
+        resume_workflows.update_design_settings(mode="last")
+        second, _ = resume_workflows.tailor_resume(self.entry("https://jobs.lever.co/example/frontend-2")["id"], self.master["id"])
+        self.assertEqual(resume_model.design_of(self.draft(second["id"])["content"]), resume_workflows.last_design())
+        # The default can also be copied from a resume, and it survives a restart (stored in config.json).
+        settings = resume_workflows.update_design_settings(from_resume_id=first["id"])
+        self.assertEqual((settings["mode"], settings["default"]), ("default", resume_model.design_of(self.draft(first["id"])["content"])))
+        self.assertEqual(json.loads(config.CONFIG.read_text(encoding="utf-8"))["resume_design_preference"]["mode"], "default")
+        self.assertEqual(call("GET", "/api/resume-design")["payload"]["effective"], settings["default"])
+        self.assertEqual(call("PATCH", "/api/resume-design", {"mode": "sideways"})["code"], 400)
+
     def test_pinned_version_is_exactly_what_gmail_attaches(self):
         self.reviewed_master_version()
         entry = self.entry(recipient="hiring@example.com", subject="Application", body="Hello")
@@ -209,7 +269,7 @@ class ResumeWorkflowTests(unittest.TestCase):
         attachment = message.get_payload()[1]
         attached = attachment.get_payload(decode=True)
         self.assertEqual(hashlib.sha256(attached).hexdigest(), pinned_version["sha256"])
-        self.assertEqual(attachment.get_filename(), "Jordan Rivera - Resume.pdf")
+        self.assertEqual(attachment.get_filename(), "Jordan Rivera - Initech.pdf")
         entry = applications.get_entry(entry["id"])
         self.assertEqual(entry["attachment_sha256"], pinned_version["sha256"])
         self.assertEqual(entry["gmail_dirty"], 0)

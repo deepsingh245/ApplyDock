@@ -26,6 +26,7 @@ export const keys = {
   profile: ["profile"] as const,
   draft: (resumeId: string) => ["draft", resumeId] as const,
   job: (id: string) => ["job", id] as const,
+  resumeDesign: ["resume-design"] as const,
 };
 
 export function useAppState(options: { refetchInterval?: number | false | (() => number | false) } = {}) {

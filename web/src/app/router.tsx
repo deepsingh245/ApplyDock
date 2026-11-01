@@ -1,4 +1,4 @@
-﻿import { lazy } from "react";
+import { lazy } from "react";
 import { createBrowserRouter, Navigate, useLocation } from "react-router";
 import { BackButton, EmptyState, Page } from "@/components/ui/misc";
 import { AppShell } from "./AppShell";

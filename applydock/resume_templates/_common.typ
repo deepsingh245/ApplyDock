@@ -24,6 +24,9 @@
       if entry.dates != "" { linebreak(); text(style: "italic", entry.dates) }
     })
   }
+  if entry.subheading != "" {
+    block(above: 0.15em, below: 0.3em, text(style: "italic", entry.subheading))
+  }
   if entry.url != "" {
     let link-fill = if s.accent_links { rgb(s.accent) } else { rgb("#111111") }
     block(above: 0.2em, below: 0.3em, text(fill: link-fill, link(entry.url)[#entry.url_text]))

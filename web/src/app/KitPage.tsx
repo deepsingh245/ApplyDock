@@ -1,4 +1,4 @@
-﻿// Dev-only gallery of every shared component in both themes (npm run dev â†’ /app/kit). Not in production builds.
+// Dev-only gallery of every shared component in both themes (npm run dev â†’ /app/kit). Not in production builds.
 import { MoreHorizontalIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { Button, IconButton } from "@/components/ui/button";

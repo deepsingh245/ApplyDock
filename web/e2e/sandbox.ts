@@ -1,4 +1,4 @@
-﻿// Starts tests/ui/sandbox.py: the real helper on temporary data with a fake Codex and a seeded master resume
+// Starts tests/ui/sandbox.py: the real helper on temporary data with a fake Codex and a seeded master resume
 // plus one analyzed application (Initech). Never touches the real data/ folder.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";

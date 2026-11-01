@@ -194,9 +194,25 @@ def replace_draft_content(db, resume_id: str, content, expected_revision, source
 
 # ---------------------------------------------------------------- versions
 
-def safe_filename(name: str) -> str:
-    stem = re.sub(r"[^\w .,'()-]+", "", name or "", flags=re.UNICODE).strip(" .") or "Resume"
-    return f"{stem[:80]} - Resume.pdf"
+def _filename_part(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^\w .,'&()-]+", "", value or "", flags=re.UNICODE)).strip(" .")
+
+
+def safe_filename(name: str, company: str = "") -> str:
+    """The saved PDF's name: the person's name as written, then the company it is for ("Jordan Rivera - Initech.pdf").
+
+    Without a company (a master resume) it is "<name> - Resume.pdf". Only characters unsafe in file names are dropped.
+    """
+    stem = _filename_part(name) or "Resume"
+    target = _filename_part(company)[:60] or "Resume"
+    return f"{stem[:80]} - {target}.pdf"
+
+
+def company_for(db, resume_id: str) -> str:
+    """The company of the application a tailored resume belongs to ("" for masters)."""
+    row = db.execute("""SELECT e.company FROM resumes r JOIN entries e ON e.id=r.entry_id
+                        WHERE r.id=? AND r.kind='tailored'""", (resume_id,)).fetchone()
+    return row["company"] if row else ""
 
 
 def render_content(content: dict):
@@ -208,7 +224,7 @@ def render_content(content: dict):
 def store_rendered_version(db, data_dir: Path, resume_id: str, content: dict, pdf: bytes, report: dict,
                            source: str, parent_version_id: str = "", label: str = ""):
     """Install a rendered PDF as an immutable version of this resume. Returns (version, document, created)."""
-    filename = safe_filename(content["basics"].get("name", ""))
+    filename = safe_filename(content["basics"].get("name", ""), company_for(db, resume_id))
     version, document, created = ats.add_resume_version(db, data_dir, resume_id, filename, ".pdf", "application/pdf", pdf)
     if created:
         db.execute("""UPDATE resume_versions SET content_json=?,template_id=?,parent_version_id=?,source=?,validation_json=?,
@@ -261,7 +277,7 @@ def create_tailored(db, data_dir: Path, entry: dict, base_resume: dict, pdf: byt
     stamp = now_iso()
     target = (entry.get("company") or entry.get("title") or "Application").strip()
     name = f"{base_resume['name']} — {target}"[:120]
-    filename = safe_filename(content["basics"].get("name", ""))
+    filename = safe_filename(content["basics"].get("name", ""), entry.get("company", ""))
     try:
         db.execute("""INSERT INTO resumes(id,name,category,stored_path,original_filename,mime_type,size_bytes,access_token,is_default,
                       created_at,updated_at,kind,parent_resume_id,entry_id) VALUES(?,?,?,?,?,?,?,?,0,?,?,'tailored',?,?)""",

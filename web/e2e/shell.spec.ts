@@ -1,4 +1,4 @@
-﻿import { expect, sandboxBase, setupSandbox, test } from "./fixtures";
+import { expect, sandboxBase, setupSandbox, test } from "./fixtures";
 import { SANDBOX_KEY } from "./sandbox";
 
 setupSandbox();

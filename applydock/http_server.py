@@ -628,6 +628,17 @@ def save_editor_version(request, match, data):
     return resume_workflows.save_editor_version(match.group(1), data.get("expected_revision"), data.get("label", ""))
 
 
+@route("GET", r"/api/resume-design")
+def get_resume_design(request, match, data):
+    return resume_workflows.design_settings()
+
+
+@route("PATCH", r"/api/resume-design")
+def update_resume_design(request, match, data):
+    return resume_workflows.update_design_settings(mode=data.get("mode"), design=data.get("design"),
+                                                   from_resume_id=str(data.get("from_resume_id") or ""))
+
+
 @route("GET", r"/api/resume-jobs/([a-f0-9-]+)")
 def get_job(request, match, data):
     with database.connect() as db:

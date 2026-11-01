@@ -172,16 +172,20 @@ export function useEditorController({ resumeId, entryId, entry, data, saver }: {
 
     const saveVersion = async (analyze = false) => {
       await flush();
-      const result = await api<{ version_id: string; version_number: number; unchanged: boolean; validation: Validation }>(`/api/resumes/${resumeId}/versions/from-draft`, "POST", {
-        expected_revision: editor().revision,
-      });
+      const result = await api<{ version_id: string; version_number: number; unchanged: boolean; validation: Validation; application_follows?: boolean }>(
+        `/api/resumes/${resumeId}/versions/from-draft`,
+        "POST",
+        { expected_revision: editor().revision },
+      );
       editor().set({ validation: result.validation });
       await refreshData();
+      if (result.application_follows) await reloadState();
       const warnings = result.validation.warnings.length;
       notify(
-        result.unchanged
+        (result.unchanged
           ? `No changes since version ${result.version_number}.`
-          : `Saved version ${result.version_number}.${warnings ? ` ${warnings} PDF check warning(s) — see Preview.` : " PDF checks passed."}`,
+          : `Saved version ${result.version_number}.${warnings ? ` ${warnings} PDF check warning(s) — see Preview.` : " PDF checks passed."}`) +
+          (result.application_follows ? " The application now uses this tailored resume." : ""),
         warnings > 0,
       );
       if (analyze && entry) {

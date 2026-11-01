@@ -126,22 +126,58 @@ requirements**) · **Suggest improvements / Refresh suggestions** ·
 into `#analysis-dialog`); ×, Esc, or a backdrop click returns to the editor. Opened from anywhere else it is a normal page. **Recommend from my profile**
 reuses the current analysis and only runs one when none exists. See [ats-analysis](ats-analysis.md#stable-verdicts-and-score-checks-2026-10-27).
 
+## Saved file name
+
+The PDF file name is set when a version is saved (`resume_store.safe_filename`). It is the name from the resume exactly as written, then the company:
+- a tailored copy gets its application's company, e.g. `Jordan Rivera - Initech.pdf`;
+- a master gets `Jordan Rivera - Resume.pdf`.
+
+Downloads, the resume library and Gmail and email attachments all use this name. Only characters that aren't allowed in file names are dropped. Earlier saved versions keep the name they were saved with.
+
+## Experience subheading
+
+Each experience entry has an optional **Subheading** (`work[].subheading`): a line for the team, product or focus. It is printed in italics under the job title and company, and left out when empty.
+
 ## Design tab
 
 Cards are grouped into two independent columns (layout: template, page, margins, spacing, header · type: text, color, sections and entries) so short cards never leave gaps; Section order spans both. Sections are reordered by dragging a row (pointer events, so it also works on touch) or by focusing a row's handle and pressing ↑/↓; each move is one undo step.
 
-### Design carry-over
+### Design for new resumes (default design)
 
-A resume's *design* is its `meta` without the text: template, paper, page limit, layout values, section order and section titles (`resume_model.DESIGN_KEYS`). The rules:
+A resume's *design* is its `meta` without the text: template, paper, page limit, layout values, section order and section titles (`resume_model.DESIGN_KEYS`). The controls are one shared component, `web/src/features/resume-design/DesignControls.tsx`, used by the editor's Design tab and by **Settings → Resume design** (`/settings/design`).
 
-- **Saved resumes keep their own design.** Drafts and saved versions are never restyled after the fact. Re-importing a resume's file replaces its text but keeps its design.
-- **The last design edit is remembered.** When a draft save (`PATCH /api/resumes/{id}/draft`, via `resume_workflows.save_draft`) changes the design, that design is stored as `last_resume_design` in `data/config.json`. Saves that only change text leave it alone.
-- **New resumes start from it:**
-  - a new tailored copy is the master's text in the last design (`tailor_resume`);
-  - a newly uploaded resume opened for the first time is its imported text in the last design (`open_draft(..., design=)`).
-- **No edit yet:** until a design has been edited, new tailored copies keep the master's design, as before.
+**Saved resumes keep their own design.**
+- Drafts and saved versions are never restyled after the fact.
+- Re-importing a resume's file replaces its text but keeps its design.
 
-The Design tab says this in a note at the top. Tests: `test_resume_workflow.py` (`test_new_resumes_start_from_the_last_edited_design…`) and the last design test in `web/e2e/resume-editor.spec.ts`.
+**New resumes start from one design**, chosen in Settings → Resume design (`resume_workflows.new_resume_design`). There are two modes:
+
+| Mode | What new resumes get |
+|---|---|
+| **Use my default design** | The saved default design. You edit it in Settings with a live PDF preview of one of your resumes, or the editor's **Make this my default design** copies the open resume's design. |
+| **Follow the last design I edited** | The last design changed in any resume. A draft save that changes the design records it as `last_resume_design`; saves that only change text don't. If no design has been edited yet, new tailored copies keep the master's design. |
+
+Saving a default design switches the mode to "default". The mode and the default are stored as `resume_design_preference` in `data/config.json` (no schema change).
+
+**Where it applies:**
+- a new tailored copy is the master's text in that design (`tailor_resume`);
+- a newly uploaded resume, opened for the first time, is its imported text in that design (`open_draft(..., design=)`).
+
+**API:**
+- `GET /api/resume-design` returns the mode, the default, the last design, the effective design, the factory design and the option lists.
+- `PATCH /api/resume-design` accepts `{mode?, design?, from_resume_id?}`. Designs are validated and clamped (`resume_model.normalize_design`). Choosing `mode: "default"` without a saved default is a 400.
+
+**Tests:**
+- `test_resume_workflow.py`: `test_new_resumes_start_from_the_last_edited_design…` and `test_default_design_setting_decides…`.
+- `web/e2e/resume-design.spec.ts`.
+
+### The application follows its tailored copy
+
+Creating (or reopening) a tailored copy for an application makes it the application's resume, following the copy's newest saved version (`resume_workflows.follow_tailored`). Before this, applications kept following the master. So after **Save version & new analysis**, the application's score, *View analysis*, *Run analysis again* and the Job match on reopening all still showed the master's result.
+
+An application pinned to an exact file (approval, *Use for application*) keeps that file, because what gets attached never changes silently. Sending, sent and Gmail-scheduled applications never change.
+
+Tests: `test_unpinned_application_follows_its_tailored_copy…` and `test_an_application_that_kept_the_master_switches…`.
 
 ## Not done yet (candidates for later)
 

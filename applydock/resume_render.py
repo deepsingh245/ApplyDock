@@ -144,11 +144,11 @@ def fit_to_pages(content: dict, limit: int) -> dict:
 
 
 def _entry(section: str, item: dict) -> dict:
-    entry = {"title": "", "subtitle": "", "location": item.get("location", ""), "dates": "", "url": "", "url_text": "",
+    entry = {"title": "", "subtitle": "", "subheading": "", "location": item.get("location", ""), "dates": "", "url": "", "url_text": "",
              "summary": "", "bullets": [child["text"] for child in item.get("highlights", []) if child["text"]], "keywords": ""}
     if section == "work":
         entry.update(title=item["position"] or item["name"], subtitle=item["name"] if item["position"] else "",
-                     dates=_dates(item["startDate"], item["endDate"]), summary=item["summary"])
+                     subheading=item.get("subheading", ""), dates=_dates(item["startDate"], item["endDate"]), summary=item["summary"])
     elif section == "projects":
         entry.update(title=item["name"], dates=_dates(item["startDate"], item["endDate"]), summary=item["description"],
                      keywords=", ".join(item["keywords"]))

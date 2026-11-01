@@ -236,7 +236,7 @@ test("a design change carries over to the next tailored resume, while saved resu
   const masterTemplate = (await api<Draft>(`/api/resumes/${ids.masterId}/draft`)).draft.content.meta.template;
   await open(`/resumes/${ids.tailoredId}/edit?entry=${ids.entryId}`);
   await app.getByRole("tab", { name: "Design" }).click();
-  await expect(app.getByTestId("design-carry-over")).toContainText("new tailored resumes");
+  await expect(app.getByTestId("design-carry-over")).toContainText("New tailored resumes start from the last design you edited");
   const other = masterTemplate === "compact" ? "ats-classic" : "compact";
   await app.locator(`[data-preset="${other}"]`).click();
   await expect(app.locator(`[data-preset="${other}"]`)).toHaveAttribute("aria-pressed", "true");

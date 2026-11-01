@@ -17,6 +17,7 @@ async function screens(api: <T>(path: string) => Promise<T>) {
     { name: "analysis", path: `/analysis/${entry.analysis.id}` },
     { name: "settings", path: "/settings/connections" },
     { name: "profile", path: "/settings/profile" },
+    { name: "resume-design", path: "/settings/design" },
     { name: "library", path: `/resumes/${state.resumes[0]!.id}` },
     { name: "editor", path: `/resumes/${state.resumes[0]!.id}/edit?entry=${entry.id}&analysis=${entry.analysis.id}` },
   ];
