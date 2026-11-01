@@ -512,8 +512,10 @@ function extractPage() {
     }
   }
   const selected = clean(window.getSelection()?.toString());
-  const kind = /\/feed\/update\/|\/posts?\//i.test(location.pathname) ? "post" : "job";
-  const postRoot = kind === "post" ? document.querySelector('[data-test-id="main-feed-activity-card"], .feed-shared-update-v2, article') : null;
+  // A post opened over a list (LinkedIn shows it in a dialog) is captured as that post, wherever the page is.
+  const openPost = linkedIn ? document.querySelector('[role="dialog"] .feed-shared-update-v2, [role="dialog"] [data-urn*="activity"]') : null;
+  const kind = openPost || /\/feed\/update\/|\/posts?\//i.test(location.pathname) ? "post" : "job";
+  const postRoot = kind === "post" ? openPost || document.querySelector('[data-test-id="main-feed-activity-card"], .feed-shared-update-v2, article') : null;
   const postContent = kind === "post" ? (postRoot?.querySelector('.update-components-text, .feed-shared-update-v2__description-wrapper, .attributed-text-segment-list__content, .feed-shared-text') || postRoot) : null;
   const postText = String(postContent?.innerText || postContent?.textContent || "").trim();
   const description = first([
@@ -528,7 +530,31 @@ function extractPage() {
   ]);
   const descriptionHtml = clean(job?.description);
   const plainDescription = descriptionHtml ? clean(new DOMParser().parseFromString(descriptionHtml, "text/html").body.textContent) : "";
-  const excerpt = (selected || (kind === "post" ? postText : "") || plainDescription || description || meta("og:description", "property")).slice(0, 8000);
+  // LinkedIn job views, including the split view (a list on the left, the open job on the right): read the open job's
+  // pane. LinkedIn renames its classes often, so the "About the job" heading it always shows is the fallback anchor.
+  // This comes before JSON-LD, which on LinkedIn can still describe the job the page first loaded, not the one open.
+  const aboutTheJob = () => {
+    for (const heading of document.querySelectorAll("h1, h2, h3, h4, strong, span")) {
+      if (!/^about the job$/i.test(clean(heading.textContent))) continue;
+      let box = heading.parentElement;
+      for (let depth = 0; box && depth < 6; depth += 1, box = box.parentElement) {
+        const text = clean(box.innerText || box.textContent).replace(/^about the job\s*/i, "");
+        if (text.length > 120) return text;
+      }
+    }
+    return "";
+  };
+  const linkedInDescription = linkedIn && kind === "job" ? (first([
+    ".jobs-search__job-details--container .jobs-description__content",
+    ".jobs-details .jobs-description__content",
+    "#job-details",
+    ".jobs-description-content__text",
+    ".jobs-description__container",
+    ".job-details-about-the-job-module__description",
+    ".jobs-description__content",
+    ".jobs-box__html-content"
+  ]) || aboutTheJob()) : "";
+  const excerpt = (selected || (kind === "post" ? postText : "") || linkedInDescription || plainDescription || description || meta("og:description", "property")).slice(0, 8000);
   const post_details = kind === "post" ? (postText || selected).split(/\n+/).map(clean).filter(line =>
     /\b(?:apply|email|send|resume|cv|deadline|location|remote|hybrid|onsite|experience|salary|dm|contact)\b/i.test(line)
   ).slice(0, 12).join("\n").slice(0, 4000) : "";

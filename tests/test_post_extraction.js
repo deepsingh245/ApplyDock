@@ -43,3 +43,36 @@ assert.deepEqual(Array.from(result.contact_emails), ["jobs@example.com", "team@e
 assert.match(result.post_details, /Remote in India/);
 assert.match(result.excerpt, /team@example.com/);
 console.log("LinkedIn post extraction passed");
+
+// Split view: a list of jobs with one open on the right. The page's JSON-LD still describes the job it first loaded,
+// and no known description class matches; the open job's "About the job" section must be what is captured.
+const jd = "We are looking for a Senior Frontend Engineer to build our React and TypeScript design system. You will own performance and accessibility across the product.";
+const aboutSection = {innerText: "About the job\n" + jd, textContent: "About the job " + jd, parentElement: null};
+const heading = {textContent: "About the job", parentElement: aboutSection};
+const staleLd = {textContent: JSON.stringify({"@type": "JobPosting", title: "Old job", description: "<p>Stale description of another job.</p>", hiringOrganization: {name: "Other"}})};
+const splitDocument = {
+  title: "Senior Frontend Engineer | Initech | LinkedIn",
+  querySelector: selector => {
+    if (selector === ".job-details-jobs-unified-top-card__job-title") return {innerText: "Senior Frontend Engineer"};
+    if (selector === ".job-details-jobs-unified-top-card__company-name") return {innerText: "Initech"};
+    if (selector === "article") return {innerText: "A card from the job list"};
+    return null;
+  },
+  querySelectorAll: selector => {
+    if (selector.startsWith("script")) return [staleLd];
+    if (selector === "h1, h2, h3, h4, strong, span") return [{textContent: "Jobs"}, heading];
+    return [];
+  }
+};
+const split = vm.runInNewContext(source.slice(start, end) + "\nextractPage();", {
+  document: splitDocument,
+  location: {hostname: "www.linkedin.com", pathname: "/jobs/search/", href: "https://www.linkedin.com/jobs/search/?currentJobId=4012345678", search: "?currentJobId=4012345678"},
+  window: {getSelection: () => ({toString: () => ""})},
+  DOMParser: class { parseFromString(html) { return {body: {textContent: html.replace(/<[^>]+>/g, " ")}}; } },
+  URLSearchParams,
+  URL
+});
+assert.equal(split.kind, "job");
+assert.equal(split.url, "https://www.linkedin.com/jobs/view/4012345678/");
+assert.equal(split.excerpt, jd);
+console.log("LinkedIn split-view job extraction passed");

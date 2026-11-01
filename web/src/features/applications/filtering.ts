@@ -16,6 +16,9 @@ export interface ListOptions {
 
 export const DEFAULT_LIST: ListOptions = { filter: "all", analysis: "all", score: "all", sort: "newest", query: "" };
 
+/** The filter the Applications screen opens with: what still needs checking comes first. */
+export const DEFAULT_FILTER: ListFilter = "review";
+
 const FAILED = new Set(["failed", "plan_limit", "insufficient_jd", "extraction_limited"]);
 const lower = (value: unknown) => String(value ?? "").trim().toLowerCase();
 

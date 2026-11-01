@@ -13,6 +13,12 @@ test("opens the first application that needs action in a full-width three-pane w
   await expect(app.locator("#editor-progress .step")).toHaveCount(5);
   await expect(app.locator("#active-count")).toHaveText("1");
   await expect(app.getByTestId("email-preview")).toContainText("Application: Senior Frontend Engineer");
+  // The list opens on Review (new captures need review), not All.
+  await expect(app.getByTestId("filters").locator('[data-value="review"]')).toHaveAttribute("data-state", "on");
+  await expect(app).not.toHaveURL(/filter=/);
+  await expect(app.locator("#entry-list .queue-item")).toHaveCount(1);
+  await app.getByTestId("filters").locator('[data-value="all"]').click();
+  await expect(app).toHaveURL(/filter=all/);
 });
 
 test("the email preview follows the form, and edits save", async ({ app }) => {
@@ -100,12 +106,14 @@ test("adds a job and opens it", async ({ app }) => {
   await app.getByRole("button", { name: "Save" }).click();
   await expect(app.locator("#editor-title")).toHaveText("Platform Engineer");
   await expect(app).toHaveURL(/\/applications\/[a-f0-9-]+$/);
+  await app.getByTestId("filters").locator('[data-value="all"]').click();
   await expect(app.locator("#entry-list .queue-item")).toHaveCount(2);
 });
 
 test("search with the / shortcut and filter by score", async ({ app }) => {
   // The shortcut belongs to the (lazily loaded) Applications screen; wait for it before typing.
   await expect(app.locator("#entry-list")).toBeVisible();
+  await app.getByTestId("filters").locator('[data-value="all"]').click();
   await app.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await app.keyboard.press("/");
   await expect(app.locator("#search-input")).toBeFocused();

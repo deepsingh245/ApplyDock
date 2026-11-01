@@ -12,7 +12,13 @@
 | `extension/background.js` | Opens the side panel; context-menu capture |
 | `extension/sidepanel.js` | Page extraction (`extractPage`: JSON-LD JobPosting, site selectors, selection, mailto/apply links), capture form, entries list, settings, resume library |
 | `applydock/applications.py` | `capture()`, `canonical_url()`, `public_https_url()`, `platform_for_host()`, contact email detection |
-| `tests/test_post_extraction.js` | Runs `extractPage` against a LinkedIn post fixture |
+| `tests/test_post_extraction.js` | Runs `extractPage` against a LinkedIn post fixture and a LinkedIn split-view job (stale JSON-LD, only an "About the job" section) |
+
+**LinkedIn job text:** on LinkedIn job views, including the split view where a list sits on the left and the open job on the right (`/jobs/search/?currentJobId=…`, `/jobs/collections/…`), the description is read from the open job's pane in this order:
+1. known description classes;
+2. failing those, the text under the **"About the job"** heading, which survives LinkedIn's frequent class renames.
+
+This comes before JSON-LD, which on LinkedIn's single-page navigation can still describe the first job loaded. A post opened in a LinkedIn dialog over a list is captured as that post. Selected text always wins over everything else.
 
 ## Side panel design and behavior (0.8.0)
 

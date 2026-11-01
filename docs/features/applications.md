@@ -2,6 +2,8 @@
 
 **What it does:** the main dashboard view. It has a filterable queue of captured applications, an editor split into tabs (Overview, Job details, Resume, Email, ATS Analysis), and an inspector with delivery and AI actions.
 
+**List filters:** the list opens on **Review**: applications that still need checking, or that failed to send (`DEFAULT_FILTER` in `filtering.ts`). Another filter is kept in the URL (`?filter=all`) until you go back to Applications from the brand. Rejected applications appear only under **Rejected**.
+
 ## Files
 
 | File | Role |

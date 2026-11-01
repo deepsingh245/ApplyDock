@@ -13,7 +13,7 @@ import { cn } from "@/lib/cn";
 import { activeEntries, isRejected, needsAction } from "@/lib/domain";
 import { useOpenResumeEditor } from "./actions";
 import { EntryEditor, MobileBack, type EditorTab } from "./EntryEditor";
-import { DEFAULT_LIST, type ListOptions } from "./filtering";
+import { DEFAULT_FILTER, DEFAULT_LIST, type ListOptions } from "./filtering";
 import { FIELD_TAB, toForm, type EntryForm } from "./form";
 import { Inspector } from "./Inspector";
 import { QueueList } from "./QueueList";
@@ -190,7 +190,7 @@ function InspectorPane({ children }: { children: ReactNode }) {
 
 function readOptions(params: URLSearchParams): Omit<ListOptions, "query"> {
   return {
-    filter: (params.get("filter") as ListOptions["filter"]) || DEFAULT_LIST.filter,
+    filter: (params.get("filter") as ListOptions["filter"]) || DEFAULT_FILTER,
     analysis: (params.get("analysis") as ListOptions["analysis"]) || DEFAULT_LIST.analysis,
     score: (params.get("score") as ListOptions["score"]) || DEFAULT_LIST.score,
     sort: (params.get("sort") as ListOptions["sort"]) || DEFAULT_LIST.sort,
@@ -228,7 +228,7 @@ export default function ApplicationsPage() {
       (current) => {
         const copy = new URLSearchParams(current);
         for (const [key, value] of Object.entries(rest)) {
-          if (value === DEFAULT_LIST[key as keyof ListOptions]) copy.delete(key);
+          if (value === (key === "filter" ? DEFAULT_FILTER : DEFAULT_LIST[key as keyof ListOptions])) copy.delete(key);
           else copy.set(key, String(value));
         }
         return copy;
