@@ -144,6 +144,50 @@ class ResumeWorkflowTests(unittest.TestCase):
         second, _ = resume_workflows.tailor_resume(other["id"], self.master["id"])
         self.assertNotEqual(second["id"], tailored["id"])
 
+    def test_new_resumes_start_from_the_last_edited_design_and_saved_ones_keep_theirs(self):
+        self.reviewed_master_version()
+        master_design = resume_model.design_of(self.draft(self.master["id"])["content"])
+        first, _ = resume_workflows.tailor_resume(self.entry()["id"], self.master["id"])
+        self.assertEqual(resume_model.design_of(self.draft(first["id"])["content"]), master_design)
+        self.assertIsNone(resume_workflows.last_design())
+
+        # A design edit in one tailored resume becomes the design for new resumes (and is persisted).
+        draft = self.draft(first["id"])
+        content = json.loads(json.dumps(draft["content"]))
+        content["meta"]["template"] = "compact"
+        content["meta"]["layout"] = {**resume_model.LAYOUT_PRESETS["compact"], "accent": "#0f766e", "font_size": 10}
+        content["meta"]["section_order"] = ["skills", *[s for s in content["meta"]["section_order"] if s != "skills"]]
+        self.assertEqual(call("PATCH", f"/api/resumes/{first['id']}/draft", {"content": content, "expected_revision": draft["revision"]})["code"], 200)
+        edited = resume_model.design_of(self.draft(first["id"])["content"])
+        self.assertEqual(resume_workflows.last_design(), edited)
+        self.assertEqual(json.loads(config.CONFIG.read_text(encoding="utf-8"))["last_resume_design"]["design"], edited)
+
+        # A text-only edit elsewhere does not replace it.
+        master = self.draft(self.master["id"])
+        text_only = json.loads(json.dumps(master["content"]))
+        text_only["basics"]["label"] = "Staff Frontend Engineer"
+        self.assertEqual(call("PATCH", f"/api/resumes/{self.master['id']}/draft", {"content": text_only, "expected_revision": master["revision"]})["code"], 200)
+        self.assertEqual(resume_workflows.last_design(), edited)
+
+        # The next tailored copy: the master's text in the last design. Existing resumes keep their own design.
+        second, _ = resume_workflows.tailor_resume(self.entry("https://jobs.lever.co/example/frontend-2")["id"], self.master["id"])
+        second_content = self.draft(second["id"])["content"]
+        self.assertEqual(resume_model.design_of(second_content), edited)
+        self.assertEqual(second_content["work"], self.draft(self.master["id"])["content"]["work"])
+        self.assertEqual(resume_model.design_of(self.draft(self.master["id"])["content"]), master_design)
+        with database.connect() as db:
+            saved = json.loads(db.execute("SELECT content_json FROM resume_versions WHERE id=?", (second["current_version_id"],)).fetchone()["content_json"])
+        self.assertEqual(saved["meta"]["template"], "compact")
+
+        # Re-importing a resume replaces its text but keeps its own design.
+        master = self.draft(self.master["id"])
+        reimported = resume_workflows.import_draft(self.master["id"], "heuristic", master["revision"])["draft"]
+        self.assertEqual(resume_model.design_of(reimported["content"]), master_design)
+
+        # A newly uploaded resume opens in the last design.
+        upload = resumes.create_resume({"filename": "second.pdf", "display_name": "Backend master", "content": base64.b64encode(self.upload_pdf).decode()})
+        self.assertEqual(resume_model.design_of(resume_workflows.editor_state(upload["id"])["draft"]["content"]), edited)
+
     def test_pinned_version_is_exactly_what_gmail_attaches(self):
         self.reviewed_master_version()
         entry = self.entry(recipient="hiring@example.com", subject="Application", body="Hello")

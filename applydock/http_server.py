@@ -579,10 +579,8 @@ def get_editor_state(request, match, data):
 
 @route("PATCH", r"/api/resumes/([a-f0-9-]+)/draft")
 def save_draft(request, match, data):
-    with database.LOCK, database.connect() as db:
-        draft = resume_store.save_draft(db, match.group(1), data.get("content"), data.get("expected_revision"),
-                                        reviewed=data.get("reviewed") is True)
-    return {"draft": draft}
+    return {"draft": resume_workflows.save_draft(match.group(1), data.get("content"), data.get("expected_revision"),
+                                                 reviewed=data.get("reviewed") is True)}
 
 
 @route("POST", r"/api/resumes/([a-f0-9-]+)/draft/import")

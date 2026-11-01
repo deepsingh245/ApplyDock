@@ -148,12 +148,18 @@ def _write_draft(db, resume_id, content, base_version_id, revision, import_sourc
     return get_draft(db, resume_id)
 
 
-def open_draft(db, resume_id: str) -> dict:
-    """Return the working draft, creating it from the best available source on first open."""
+def open_draft(db, resume_id: str, design=None) -> dict:
+    """Return the working draft, creating it from the best available source on first open.
+
+    design (optional) is applied only when the content comes from an import, i.e. the resume has no saved design yet;
+    a saved editor version keeps its own design.
+    """
     draft = get_draft(db, resume_id)
     if draft:
         return draft
     content, source, warnings, base = seed_content(db, resume_id)
+    if design and source != "version":
+        content = resume_model.with_design(content, design)
     return _write_draft(db, resume_id, content, base, 1, source, warnings, needs_review=source in ("heuristic", "codex", "empty"))
 
 

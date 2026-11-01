@@ -74,7 +74,8 @@ test("complete analysis: coverage, filters, addressed and reopen, sources, histo
   // Profile evidence links to the Master Profile item.
   await app.locator('[data-requirement-coverage="profile_only"] summary').click();
   await app.locator('[data-requirement-coverage="profile_only"]').getByRole("link", { name: "View source" }).click();
-  await expect(app).toHaveURL(/\/settings\/profile\?item=/);
+  // The settings page then moves to the item's section (/settings/profile/projects?item=…); either moment is fine.
+  await expect(app).toHaveURL(/\/settings\/profile(\/[a-z]+)?\?item=/);
 
   await open(`/analysis/${analysisId}`);
   await app.getByRole("button", { name: "Applications" }).click();

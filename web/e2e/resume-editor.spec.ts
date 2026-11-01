@@ -231,6 +231,26 @@ test("From profile: add and undo, Add a section, recommend from profile, indepen
   expect(scroll.page).toBe(0);
 });
 
+test("a design change carries over to the next tailored resume, while saved resumes keep their own", async ({ app, api, open }) => {
+  type Draft = { draft: { content: { meta: { template: string; layout: Record<string, unknown> } } } };
+  const masterTemplate = (await api<Draft>(`/api/resumes/${ids.masterId}/draft`)).draft.content.meta.template;
+  await open(`/resumes/${ids.tailoredId}/edit?entry=${ids.entryId}`);
+  await app.getByRole("tab", { name: "Design" }).click();
+  await expect(app.getByTestId("design-carry-over")).toContainText("new tailored resumes");
+  const other = masterTemplate === "compact" ? "ats-classic" : "compact";
+  await app.locator(`[data-preset="${other}"]`).click();
+  await expect(app.locator(`[data-preset="${other}"]`)).toHaveAttribute("aria-pressed", "true");
+  await app.locator('[data-layout-choice="accent"][data-value="#0f766e"]').click();
+  await expect(saveStatus(app)).toHaveText("All changes saved");
+
+  const captured = await api<{ entry: { id: string } }>("/api/capture", "POST", { url: "https://jobs.lever.co/globex/frontend-9", title: "Frontend Engineer", company: "Globex" });
+  const tailored = await api<{ resume: { id: string } }>(`/api/entries/${captured.entry.id}/tailor`, "POST", { base_resume_id: ids.masterId });
+  const meta = (await api<Draft>(`/api/resumes/${tailored.resume.id}/draft`)).draft.content.meta;
+  expect(meta.template).toBe(other);
+  expect(meta.layout.accent).toBe("#0f766e");
+  expect((await api<Draft>(`/api/resumes/${ids.masterId}/draft`)).draft.content.meta.template).toBe(masterTemplate);
+});
+
 test("back returns to the application the editor was opened from", async ({ app, open }) => {
   await open(`/resumes/${ids.tailoredId}/edit?entry=${ids.entryId}`);
   await app.getByRole("button", { name: "Back to application" }).click();

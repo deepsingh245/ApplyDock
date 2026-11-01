@@ -5,6 +5,7 @@ import { GripVerticalIcon } from "lucide-react";
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { CheckLine, Select } from "@/components/ui/field";
+import { Note } from "@/components/ui/note";
 import { cn } from "@/lib/cn";
 import { useCtl } from "./controller";
 import { FONT_LABELS, sectionEmpty, sectionTitle, STEPS, UNITS } from "./model";
@@ -176,6 +177,9 @@ export function DesignPanel() {
   const accent = String(layout.accent ?? "");
   return (
     <div className="grid gap-3 lg:grid-cols-2" data-testid="design-panel" id="re-design">
+      <Note tone="neutral" className="lg:col-span-2" data-testid="design-carry-over">
+        This resume keeps its own design. Your latest design change is also where new tailored resumes and new uploads start.
+      </Note>
       <div className="grid content-start gap-3">
         <Card title="Template">
           <div className="grid gap-2 md:grid-cols-2">

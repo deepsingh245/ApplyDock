@@ -6,6 +6,35 @@ import json
 from . import applications, ats, config, database, profile, resume_import, resume_model, resume_render, resume_store, resumes
 
 
+# ---------------------------------------------------------------- design carry-over
+# The design last edited in the editor (any resume) is kept in settings. New resumes (tailored copies and fresh
+# imports) start from it; existing drafts and saved versions never change because of it.
+LAST_DESIGN_KEY = "last_resume_design"
+
+
+def last_design():
+    saved = config.SETTINGS.get(LAST_DESIGN_KEY)
+    return saved.get("design") if isinstance(saved, dict) and isinstance(saved.get("design"), dict) else None
+
+
+def remember_design(content, resume_id=""):
+    design = resume_model.design_of(content)
+    if design == last_design():
+        return
+    config.SETTINGS[LAST_DESIGN_KEY] = {"design": design, "resume_id": resume_id, "updated_at": ats.now_iso()}
+    config.save_config(config.SETTINGS)
+
+
+def save_draft(resume_id, content, expected_revision, reviewed=False):
+    """Autosave the editor draft. A change to the design (not just the text) becomes the design for new resumes."""
+    with database.LOCK, database.connect() as db:
+        before = resume_store.get_draft(db, resume_id)
+        draft = resume_store.save_draft(db, resume_id, content, expected_revision, reviewed=reviewed)
+    if before and resume_model.design_of(draft["content"]) != resume_model.design_of(before["content"]):
+        remember_design(draft["content"], resume_id)
+    return draft
+
+
 def save_editor_version(resume_id, expected_revision, label=""):
     """Render the draft, validate it, and store it as a new current version of this resume."""
     resume = resumes.get_resume(resume_id)
@@ -36,7 +65,7 @@ def editor_state(resume_id):
     if not resume:
         raise ValueError("Resume not found.")
     with database.LOCK, database.connect() as db:
-        draft = resume_store.open_draft(db, resume_id)
+        draft = resume_store.open_draft(db, resume_id, design=last_design())
         version = ats.current_version(db, resume_id)
         document = db.execute("SELECT structured_status,extraction_status,extraction_error FROM resume_documents WHERE id=?",
                               (version["document_id"],)).fetchone() if version else None
@@ -76,20 +105,23 @@ def import_draft(resume_id, mode, expected_revision):
     if not resumes.get_resume(resume_id):
         raise ValueError("Resume not found.")
     with database.LOCK, database.connect() as db:
-        resume_store._check_revision(db, resume_id, expected_revision)
+        draft = resume_store._check_revision(db, resume_id, expected_revision)
+        # Re-importing replaces the text, not the look this resume already has.
+        design = resume_model.design_of(draft["content"])
         version = ats.current_version(db, resume_id)
         if not version:
             raise ValueError("This resume has no available file.")
         document = db.execute("SELECT * FROM resume_documents WHERE id=?", (version["document_id"],)).fetchone()
         if mode == "heuristic":
             content, warnings = resume_import.heuristic_parse(document["extracted_text"])
-            return {"draft": resume_store.replace_draft_content(db, resume_id, content, expected_revision, "heuristic", warnings, version["id"])}
+            return {"draft": resume_store.replace_draft_content(db, resume_id, resume_model.with_design(content, design), expected_revision,
+                                                                "heuristic", warnings, version["id"])}
         if mode != "codex":
             raise ValueError("Choose a local or Codex import.")
         if document["structured_status"] == "complete" and document["structured_version"] == resume_import.STRUCTURE_VERSION:
             cached = json.loads(document["structured_json"])
-            return {"draft": resume_store.replace_draft_content(db, resume_id, cached["content"], expected_revision, "codex",
-                                                                cached.get("warnings", []), version["id"])}
+            return {"draft": resume_store.replace_draft_content(db, resume_id, resume_model.with_design(cached["content"], design), expected_revision,
+                                                                "codex", cached.get("warnings", []), version["id"])}
         if document["extraction_status"] != "ready":
             raise ValueError(document["extraction_error"] or "Not enough text was extracted for an AI import. Enter the content manually.")
     require_codex()
@@ -131,6 +163,8 @@ def tailor_resume(entry_id, base_resume_id):
         if existing:
             return resumes.get_resume(existing["id"]), False
         content, base_version_id = resume_store.base_content(db, base["id"])
+    # The master's text, in the design the user last worked on (which may come from another resume).
+    content = resume_model.with_design(content, last_design())
     pdf, report = resume_store.render_content(content)
     with database.LOCK, database.connect() as db:
         resume_id, created = resume_store.create_tailored(db, config.DATA, entry, base, pdf, report, content, base_version_id)

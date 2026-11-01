@@ -130,6 +130,19 @@ reuses the current analysis and only runs one when none exists. See [ats-analysi
 
 Cards are grouped into two independent columns (layout: template, page, margins, spacing, header · type: text, color, sections and entries) so short cards never leave gaps; Section order spans both. Sections are reordered by dragging a row (pointer events, so it also works on touch) or by focusing a row's handle and pressing ↑/↓; each move is one undo step.
 
+### Design carry-over
+
+A resume's *design* is its `meta` without the text: template, paper, page limit, layout values, section order and section titles (`resume_model.DESIGN_KEYS`). The rules:
+
+- **Saved resumes keep their own design.** Drafts and saved versions are never restyled after the fact. Re-importing a resume's file replaces its text but keeps its design.
+- **The last design edit is remembered.** When a draft save (`PATCH /api/resumes/{id}/draft`, via `resume_workflows.save_draft`) changes the design, that design is stored as `last_resume_design` in `data/config.json`. Saves that only change text leave it alone.
+- **New resumes start from it:**
+  - a new tailored copy is the master's text in the last design (`tailor_resume`);
+  - a newly uploaded resume opened for the first time is its imported text in the last design (`open_draft(..., design=)`).
+- **No edit yet:** until a design has been edited, new tailored copies keep the master's design, as before.
+
+The Design tab says this in a note at the top. Tests: `test_resume_workflow.py` (`test_new_resumes_start_from_the_last_edited_design…`) and the last design test in `web/e2e/resume-editor.spec.ts`.
+
 ## Not done yet (candidates for later)
 
 - Evidence bank UI (verified achievements library). `corpus_for()` is the hook.
