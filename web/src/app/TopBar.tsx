@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from "lucide-react";
+import { MessageSquareTextIcon, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from "lucide-react";
 import { Link, NavLink, useMatches } from "react-router";
 import { useAppState, useReloadState } from "@/api/state";
 import { IconButton } from "@/components/ui/button";
@@ -65,6 +65,20 @@ export function TopBar() {
       </div>
       <div className="topbar-actions flex items-center gap-1 pr-3">
         <ConnectionState />
+        <NavLink
+          to="/outreach"
+          aria-label="Outreach"
+          title="Outreach"
+          className={({ isActive }) =>
+            cn(
+              "inline-flex items-center gap-1 rounded-sm px-2 py-1 text-xs font-medium text-ink-2 hover:bg-surface-2 hover:text-ink",
+              isActive && "bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent",
+            )
+          }
+        >
+          <MessageSquareTextIcon aria-hidden className="size-4" />
+          <span className="hidden sm:inline">Outreach</span>
+        </NavLink>
         <IconButton label="Refresh from Notion" onClick={() => sync.mutate()} disabled={!data || sync.isPending} className="ml-2">
           <RefreshCwIcon className={cn(sync.isPending && "animate-spin")} aria-hidden />
         </IconButton>

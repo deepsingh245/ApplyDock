@@ -1,7 +1,7 @@
 // Payload shapes returned by the local helper (applydock/http_server.py). Fields the UI does not read are omitted;
 // the index signatures keep unknown extras type-safe instead of pretending they do not exist.
 
-export type ApplyMethod = "unknown" | "email" | "external_form";
+export type ApplyMethod = "unknown" | "email" | "whatsapp" | "external_form";
 export type EntryStatus = "draft" | "approved" | "sending" | "sent" | "failed" | "gmail_draft" | "gmail_schedule_pending" | "gmail_scheduled" | string;
 
 export interface ResumeVersionRef {

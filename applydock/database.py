@@ -4,6 +4,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 import datetime as dt
+import importlib
 import json
 import secrets
 import sqlite3
@@ -122,6 +123,10 @@ def init_db():
         if version < 6:
             # v6 lets an analysis score an unsaved editor draft (analysis_runs.document_id / draft_resume_id).
             db.execute("PRAGMA user_version=6")
+        if version < 7:
+            outreach = importlib.import_module("applydock.outreach")
+            outreach.init_schema(db)
+            db.execute("PRAGMA user_version=7")
         ats.refresh_failed_extractions(db, config.DATA)
         if not db.execute("SELECT 1 FROM resumes WHERE deleted_at='' AND is_default=1 LIMIT 1").fetchone():
             first_resume = db.execute("SELECT id FROM resumes WHERE deleted_at='' AND kind='master' ORDER BY created_at LIMIT 1").fetchone()
@@ -140,7 +145,7 @@ def init_db():
                         AND (needs_review<>0 OR status='approved')""", (stamp,))
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def backup_before_migration():

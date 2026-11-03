@@ -20,6 +20,7 @@ Status: **Done** = implemented and covered by tests · **Partial** = works with 
 | AI email draft | Codex writes subject/body from the job + your profile | Done | [email-delivery](features/email-delivery.md) | `ai_draft.py` |
 | Gmail drafts | OAuth, draft create/update with exact resume, "prepare schedule" | Done | [email-delivery](features/email-delivery.md) | `gmail.py` |
 | Local 9 AM sender | Approve → SMTP send at 9:00 local time | Done (needs PC on) | [email-delivery](features/email-delivery.md) | `delivery.py` |
+| WhatsApp outreach scheduler | HR/recruiter contacts, templates, and assisted scheduling with explicit user confirmation | Partial | [whatsapp-outreach](features/whatsapp-outreach.md) | `outreach.py`, `applications.py` |
 | Notion sync | Two-way field sync, stage options, trash reconciliation | Done | [notion-sync](features/notion-sync.md) | `notion.py` |
 | Dashboard Content-Security-Policy | CSP header for the dashboard page | Deferred | [TECH_DEBT](TECH_DEBT.md) | — |
 | Shared extension/dashboard code | Remove duplicated helpers between extension and dashboard | Deferred | [TECH_DEBT](TECH_DEBT.md) | — |

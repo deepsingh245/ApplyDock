@@ -17,10 +17,11 @@ import http.server
 import json
 from pathlib import Path
 import re
+import traceback
 import urllib.parse
 
-from . import (ai_draft, applications, ats, career, config, database, delivery, events, gmail, notion, resume_model,
-               resume_render, resume_store, resume_workflows, resumes, submissions)
+from . import (ai_draft, applications, ats, career, config, database, delivery, events, gmail, notion, outreach,
+               resume_model, resume_render, resume_store, resume_workflows, resumes, submissions)
 from .resume_store import ConflictError
 
 ROUTES = []   # (method, compiled pattern, handler)
@@ -77,6 +78,7 @@ def send_result(request, result):
 
 
 def handle_errors(request, call):
+    outreach_import = urllib.parse.urlsplit(request.path).path == "/api/outreach/contacts/import"
     try:
         send_result(request, call())
     except NotFound as error:
@@ -84,8 +86,13 @@ def handle_errors(request, call):
     except ConflictError as error:
         request.respond(409, {"error": str(error), "draft": error.draft})
     except (ValueError, KeyError) as error:
+        if outreach_import:
+            print(f"[ApplyDock outreach import] request rejected: {type(error).__name__}: {error}", flush=True)
         request.respond(400, {"error": str(error)})
     except Exception as error:
+        if outreach_import:
+            print(f"[ApplyDock outreach import] unexpected backend error: {type(error).__name__}: {error}", flush=True)
+            traceback.print_exc()
         request.respond(500, {"error": str(error)})
 
 
@@ -399,6 +406,83 @@ def sync_all(request, match, data):
     for entry in applications.entries():
         notion.sync_entry(entry["id"])
     return {"entries": applications.entries(), "reconciliation": reconciliation}
+
+
+# ---------------------------------------------------------------- outreach / WhatsApp-assisted scheduling
+
+@route("GET", r"/api/outreach/overview")
+def get_outreach_overview(request, match, data):
+    return outreach.overview()
+
+
+@route("GET", r"/api/outreach/contacts")
+def list_human_contacts(request, match, data):
+    return {"contacts": outreach.list_contacts()}
+
+
+@route("POST", r"/api/outreach/contacts")
+def create_human_contact(request, match, data):
+    return {"contact": outreach.create_contact(data)}
+
+
+@route("PATCH", r"/api/outreach/contacts/([a-f0-9-]+)")
+def update_human_contact(request, match, data):
+    return {"contact": outreach.update_contact(match.group(1), data)}
+
+
+@route("DELETE", r"/api/outreach/contacts/([a-f0-9-]+)")
+def delete_human_contact(request, match, data):
+    if not outreach.delete_contact(match.group(1)):
+        raise ValueError("Contact not found.")
+    return {"ok": True}
+
+
+@route("POST", r"/api/outreach/contacts/import")
+def import_human_contacts(request, match, data):
+    return outreach.import_contacts_csv(data.get("csv") if isinstance(data, dict) else str(data or ""))
+
+
+@route("GET", r"/api/outreach/contacts/export")
+def export_human_contacts(request, match, data):
+    return {"csv": outreach.export_contacts_csv()}
+
+
+@route("GET", r"/api/outreach/templates")
+def list_templates(request, match, data):
+    return {"templates": outreach.list_templates()}
+
+
+@route("POST", r"/api/outreach/templates")
+def create_template(request, match, data):
+    return {"template": outreach.create_template(data)}
+
+
+@route("PATCH", r"/api/outreach/templates/([a-f0-9-]+)")
+def update_template(request, match, data):
+    return {"template": outreach.update_template(match.group(1), data)}
+
+
+@route("DELETE", r"/api/outreach/templates/([a-f0-9-]+)")
+def delete_template(request, match, data):
+    if not outreach.delete_template(match.group(1)):
+        raise ValueError("Template not found.")
+    return {"ok": True}
+
+
+@route("GET", r"/api/outreach/schedules")
+def list_outreach_schedules(request, match, data):
+    return {"schedules": outreach.list_schedules()}
+
+
+@route("POST", r"/api/outreach/schedules")
+def schedule_outreach(request, match, data):
+    return {"schedule": outreach.schedule_message(data)}
+
+
+@route("PATCH", r"/api/outreach/schedules/([a-f0-9-]+)")
+def finish_outreach(request, match, data):
+    result = str((data or {}).get("result") or "sent").strip().lower()
+    return {"schedule": outreach.mark_schedule_result(match.group(1), result, (data or {}).get("notes", ""), (data or {}).get("status"))}
 
 
 # ---------------------------------------------------------------- applications

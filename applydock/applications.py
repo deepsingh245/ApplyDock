@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-from . import ats, config, database, resumes, submissions
+from . import ats, config, database, outreach, resumes, submissions
 
 
 def public_https_url(value):
@@ -86,10 +86,11 @@ def public_entry(row):
     resume = resumes.get_resume(entry.get("resume_id", ""), include_deleted=True)
     entry["resume"] = resume
     entry["resume_status"] = "Resume Selected" if resume and resume["available"] else "Resume Missing"
-    entry["readiness_status"] = "Ready to Send" if (
-        entry.get("apply_method") == "email" and resume and resume["available"] and
-        all(entry.get(key) for key in ("recipient", "subject", "body"))
-    ) else entry["resume_status"]
+    if entry.get("apply_method") in ("email", "whatsapp") and resume and resume["available"]:
+        required = ("recipient", "body") if entry.get("apply_method") == "whatsapp" else ("recipient", "subject", "body")
+        entry["readiness_status"] = "Ready to Send" if all(entry.get(key) for key in required) else entry["resume_status"]
+    else:
+        entry["readiness_status"] = entry["resume_status"]
     entry["resume_version"] = None
     if resume and resume["available"]:
         with database.connect() as db:
@@ -166,7 +167,7 @@ def capture(data):
     post_details = str(data.get("post_details") or "").strip()[:4000]
     emails = contact_emails(data.get("contact_emails") or [], excerpt, post_details)
     method = str(data.get("apply_method") or "unknown").strip().lower()
-    if method not in ("unknown", "email", "external_form"):
+    if method not in ("unknown", "email", "whatsapp", "external_form"):
         raise ValueError("Choose a valid application method.")
     apply_url = str(data.get("apply_url") or "").strip()
     if apply_url:
@@ -176,7 +177,9 @@ def capture(data):
         recipient = emails[0]
     if kind == "post" and method == "unknown" and recipient:
         method = "email"
-    if recipient and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):
+    if recipient and method == "whatsapp":
+        recipient = outreach.normalize_phone(recipient)
+    elif recipient and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", recipient):
         raise ValueError("Enter a valid recipient email.")
     emails = contact_emails(emails, recipient)
     resume_id = str(data.get("resume_id") or resumes.default_resume_id()).strip()
@@ -236,7 +239,7 @@ def update_entry(entry_id, data):
         fields["needs_review"] = int(bool(data["needs_review"]))
     if "application_stage" in fields and stage_is_after_apply(fields["application_stage"]):
         fields["needs_review"] = 0
-    if "apply_method" in fields and fields["apply_method"] not in ("unknown", "email", "external_form"):
+    if "apply_method" in fields and fields["apply_method"] not in ("unknown", "email", "whatsapp", "external_form"):
         raise ValueError("Choose a valid application method.")
     if entry["gmail_draft_id"] and fields.get("apply_method", "email") != "email":
         raise ValueError("This item already has a Gmail draft. Keep Email selected and manage that draft in Gmail.")
@@ -244,8 +247,11 @@ def update_entry(entry_id, data):
         public_https_url(fields["apply_url"])
     if "title" in fields and not fields["title"]:
         raise ValueError("Title is required.")
-    if "recipient" in fields and fields["recipient"] and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", fields["recipient"]):
-        raise ValueError("Enter a valid recipient email.")
+    if "recipient" in fields and fields["recipient"]:
+        if fields.get("apply_method", entry["apply_method"]) == "whatsapp":
+            fields["recipient"] = outreach.normalize_phone(fields["recipient"])
+        elif not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", fields["recipient"]):
+            raise ValueError("Enter a valid recipient email.")
     if "send_at" in fields:
         try: dt.datetime.fromisoformat(fields["send_at"]).astimezone(dt.timezone.utc)
         except Exception: raise ValueError("Invalid send time.") from None
@@ -287,10 +293,15 @@ def update_entry(entry_id, data):
     if data.get("approved") is True:
         if entry["gmail_draft_id"]:
             raise ValueError("This item has a Gmail draft. Check Gmail before using the local sender.")
-        if merged["apply_method"] != "email":
+        if merged["apply_method"] not in ("email", "whatsapp"):
             raise ValueError("Only email applications can be scheduled. Choose Email as the application method.")
-        if not all(merged[k] for k in ("recipient", "subject", "body", "send_at", "resume_id")):
-            raise ValueError("Recipient, subject, body, send time, and resume are required before approval.")
+        if merged["apply_method"] == "whatsapp":
+            required = ("recipient", "body", "send_at", "resume_id")
+            if not all(merged[k] for k in required):
+                raise ValueError("Recipient, body, send time, and resume are required before approval.")
+        else:
+            if not all(merged[k] for k in ("recipient", "subject", "body", "send_at", "resume_id")):
+                raise ValueError("Recipient, subject, body, send time, and resume are required before approval.")
         _, _, approved_version = resumes.resume_file_for_entry(merged)
         fields["resume_version_id"] = approved_version["id"]  # approval locks the exact file that will be sent
         if not config.SETTINGS.get("smtp_verified"):

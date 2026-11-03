@@ -8,6 +8,7 @@ const CreateApplicationPage = lazy(() => import("@/features/applications/CreateA
 const AnalysisPage = lazy(() => import("@/features/analysis/AnalysisPage"));
 const ResumeLibraryPage = lazy(() => import("@/features/resume-library/ResumeLibraryPage"));
 const ResumeEditorPage = lazy(() => import("@/features/resume-editor/ResumeEditorPage"));
+const OutreachPage = lazy(() => import("@/features/outreach/OutreachPage"));
 const SettingsPage = lazy(() => import("@/features/settings/SettingsPage"));
 // Only referenced in dev, so production builds drop the kit entirely.
 const devRoutes = import.meta.env.DEV ? [{ path: "kit", Component: lazy(() => import("./KitPage")), handle: { title: "Component kit" } }] : [];
@@ -34,6 +35,7 @@ export const router = createBrowserRouter(
         { index: true, element: <ApplicationsPage />, handle: { title: "Applications" } },
         { path: "applications/new", element: <CreateApplicationPage />, handle: { title: "Add a job" } },
         { path: "applications/:entryId", element: <ApplicationsPage />, handle: { title: "Applications" } },
+        { path: "outreach", element: <OutreachPage />, handle: { title: "Outreach" } },
         { path: "analysis/:analysisId", element: <AnalysisPage />, handle: { title: "ATS Analysis" } },
         { path: "resumes", element: <ResumeLibraryPage />, handle: { title: "Resume Library" } },
         { path: "resumes/:resumeId", element: <ResumeLibraryPage />, handle: { title: "Resume Library" } },
