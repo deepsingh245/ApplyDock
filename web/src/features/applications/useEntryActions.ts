@@ -87,7 +87,7 @@ export function useEntryActions(entry: Entry | null, form: UseFormReturn<EntryFo
         try {
           await api(`/api/entries/${id}`, "DELETE");
           form.reset();
-          navigate("/");
+          navigate("/applications");
           await reload();
           notify("Removed locally. The Notion page was not changed.");
         } catch (error) {

@@ -85,3 +85,6 @@ export function formatDate(value: string) {
   if (!value || Number.isNaN(date.getTime())) return "Not set";
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(date);
 }
+
+/** Parked for later: the extension sender is built but switched off (OUTREACH_SENDER_ENABLED in extension/background.js). */
+export const EXTENSION_SENDING = false;

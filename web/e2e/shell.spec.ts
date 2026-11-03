@@ -17,14 +17,17 @@ test("asks for the pairing key, rejects a wrong one, and remembers a right one",
   await expect(page.getByTestId("connection-state")).toHaveText("Local helper connected");
 });
 
-test("top bar: brand goes home, gear is the last action and opens Settings", async ({ app }) => {
+test("top bar: Applications opens the workspace, brand goes home, gear is the last action and opens Settings", async ({ app }) => {
   const actions = app.locator(".topbar-actions > *");
   await expect(actions.last()).toHaveAttribute("id", "settings-button");
   await app.locator("#settings-button").click();
   await expect(app).toHaveURL(/:\d+\/settings\/connections$/);
   await expect(app.locator("#settings-button")).toHaveAttribute("aria-current", "page");
   await app.locator("#applications-button").click();
+  await expect(app).toHaveURL(/:\d+\/applications$/);
+  await app.locator("#home-button").click();
   await expect(app).toHaveURL(/:\d+\/$/);
+  await expect(app.getByTestId("feature-outreach")).toBeVisible();
 });
 
 test("theme toggle persists the explicit choice", async ({ app }) => {

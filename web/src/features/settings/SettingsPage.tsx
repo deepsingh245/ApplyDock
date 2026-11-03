@@ -19,7 +19,7 @@ export default function SettingsPage() {
 
   return (
     <Page id="settings-view">
-      <BackButton onClick={() => navigate("/")}>Applications</BackButton>
+      <BackButton onClick={() => navigate("/applications")}>Applications</BackButton>
       <PageHeading className="mt-2" title="Settings" description="Connections and your career profile stay with this local helper." />
       <Tabs value={tab} onValueChange={(value) => navigate(`/settings/${value}`)}>
         <TabsList aria-label="Settings sections" className="mb-4">

@@ -76,7 +76,7 @@ export default function CreateApplicationPage() {
 
   return (
     <Page id="create-view">
-      <BackButton onClick={() => navigate("/")}>Applications</BackButton>
+      <BackButton onClick={() => navigate("/applications")}>Applications</BackButton>
       <PageHeading className="mt-2" title="Add a job or hiring post" description="Paste a specific posting. Check the details before saving." />
       <Card>
         <form id="create-form" noValidate onSubmit={submit} className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">

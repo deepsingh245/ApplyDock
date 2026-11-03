@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { MessageSquareTextIcon, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from "lucide-react";
+import { FileTextIcon, MessageSquareTextIcon, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from "lucide-react";
 import { Link, NavLink, useMatches } from "react-router";
 import { useAppState, useReloadState } from "@/api/state";
 import { IconButton } from "@/components/ui/button";
@@ -37,7 +37,7 @@ export function TopBar() {
   const reload = useReloadState();
   const { data } = useAppState();
   const matches = useMatches();
-  const title = [...matches].reverse().map((match) => (match.handle as { title?: string } | undefined)?.title).find(Boolean) ?? "Applications";
+  const title = [...matches].reverse().map((match) => (match.handle as { title?: string } | undefined)?.title).find(Boolean) ?? "Home";
   const sync = useMutation({
     mutationFn: () => api<Reconciliation>("/api/sync", "POST"),
     onSuccess: async (result) => {
@@ -51,8 +51,8 @@ export function TopBar() {
     <header className="grid h-(--topbar-h) shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center border-b border-line bg-surface">
       <Link
         to="/"
-        id="applications-button"
-        aria-label="ApplyDock — applications"
+        id="home-button"
+        aria-label="ApplyDock home"
         className="flex h-full items-center gap-2.5 border-r border-line px-4 text-ink no-underline hover:bg-surface-2 hover:text-ink md:w-(--list-w)"
       >
         <span className="inline-flex size-6 items-center justify-center rounded-sm bg-ink text-xs font-semibold text-canvas" aria-hidden>
@@ -65,6 +65,21 @@ export function TopBar() {
       </div>
       <div className="topbar-actions flex items-center gap-1 pr-3">
         <ConnectionState />
+        <NavLink
+          to="/applications"
+          id="applications-button"
+          aria-label="Applications"
+          title="Applications"
+          className={({ isActive }) =>
+            cn(
+              "inline-flex items-center gap-1 rounded-sm px-2 py-1 text-xs font-medium text-ink-2 hover:bg-surface-2 hover:text-ink",
+              isActive && "bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent",
+            )
+          }
+        >
+          <FileTextIcon aria-hidden className="size-4" />
+          <span className="hidden sm:inline">Applications</span>
+        </NavLink>
         <NavLink
           to="/outreach"
           aria-label="Outreach"

@@ -249,7 +249,7 @@ export default function ApplicationsPage() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "/" || (document.activeElement && ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName))) return;
       event.preventDefault();
-      if (detailOpen && window.matchMedia("(max-width: 760px)").matches) navigate("/");
+      if (detailOpen && window.matchMedia("(max-width: 760px)").matches) navigate("/applications");
       searchRef.current?.focus();
     };
     document.addEventListener("keydown", onKey);
@@ -259,7 +259,7 @@ export default function ApplicationsPage() {
   if (!state) return null;
   if (entryId && !entries.some((entry) => entry.id === entryId))
     return (
-      <EmptyState title="Application not found" actions={<Button onClick={() => navigate("/")}>Back to applications</Button>}>
+      <EmptyState title="Application not found" actions={<Button onClick={() => navigate("/applications")}>Back to applications</Button>}>
         It may have been removed from ApplyDock.
       </EmptyState>
     );
@@ -274,7 +274,7 @@ export default function ApplicationsPage() {
       </div>
       <section aria-label="Application editor" className={cn("editor-surface min-h-0 overflow-y-auto pb-6 xl:contents", !detailOpen && "max-md:hidden")}>
         {selected ? (
-          <Workspace key={selected.id} entry={selected} mobileBack={<MobileBack onClick={() => navigate("/")} />} />
+          <Workspace key={selected.id} entry={selected} mobileBack={<MobileBack onClick={() => navigate("/applications")} />} />
         ) : (
           <>
             <EditorPane>

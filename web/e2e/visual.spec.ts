@@ -12,6 +12,8 @@ async function screens(api: <T>(path: string) => Promise<T>) {
   const state = await api<{ entries: { id: string; analysis: { id?: string } }[]; resumes: { id: string }[] }>("/api/state");
   const entry = state.entries[0]!;
   return [
+    { name: "home", path: "/" },
+    { name: "outreach", path: "/outreach" },
     { name: "applications", path: `/applications/${entry.id}` },
     { name: "create", path: "/applications/new" },
     { name: "analysis", path: `/analysis/${entry.analysis.id}` },
@@ -40,7 +42,7 @@ async function smallText(page: Page) {
 
 for (const theme of ["light", "dark"] as const) {
   test(`every screen follows the design rules (${theme})`, async ({ app, open, api }) => {
-    test.setTimeout(240_000);
+    test.setTimeout(480_000);
     await app.emulateMedia({ colorScheme: theme });
     await app.evaluate((value) => localStorage.setItem("applydock-theme", value), theme);
     for (const screen of await screens(api)) {

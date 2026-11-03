@@ -2,6 +2,8 @@
 
 **Goal:** WhatsApp outreach to HR contacts. ApplyDock prepares and schedules. At the due time the Chrome extension opens the chat in the user's own WhatsApp Web, attaches the pinned resume with the message as caption and, **only for messages the user opted into auto-send**, presses Send and verifies delivery. Otherwise the user presses Send and confirms. "Opened" never means "sent".
 
+**Status: extension sender parked, switched off by default.**
+
 **Requirement change (decision 10):** the original brief forbade hidden auto-sending; the user later asked for it and chose the extension route ("one-click send").
 
 **Stack:** existing Python helper + SQLite (`applydock/`), React app (`web/`). No new dependencies, no paid services.

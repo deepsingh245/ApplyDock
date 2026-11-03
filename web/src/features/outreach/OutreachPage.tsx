@@ -79,7 +79,7 @@ export default function OutreachPage() {
     <Page>
       <PageHeading
         title="Outreach"
-        description="Keep recruiter contacts, prepare WhatsApp messages and queue them. At the due time the ApplyDock extension can open the chat and attach the resume for you, and send it if you opted in. Otherwise you press Send and confirm here."
+        description="Keep recruiter contacts, prepare WhatsApp messages and queue them. ApplyDock reminds you at the due time. You open the chat, attach the resume, press Send, then confirm here."
         actions={<Button onClick={exportContacts}><DownloadIcon aria-hidden />Export contacts</Button>}
       />
 
@@ -134,7 +134,7 @@ export default function OutreachPage() {
               )}
             </Card>
           </div>
-          <Note tone="info" className="max-w-[72ch]">Nothing is marked Sent unless you confirm it or the extension sees WhatsApp deliver it. Extension sending needs Chrome open with the ApplyDock extension and WhatsApp Web logged in; messages missed by more than 30 minutes are left for you to decide on.</Note>
+          <Note tone="info" className="max-w-[72ch]">Opening WhatsApp only prefills the message. Nothing is marked Sent until you confirm it in the Queue tab.</Note>
         </TabsContent>
 
         <TabsContent value="contacts"><ContactsPanel contacts={contactList} refresh={refresh} /></TabsContent>

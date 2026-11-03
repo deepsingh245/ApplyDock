@@ -42,7 +42,7 @@ export const test = base.extend<Fixtures>({
         /* not the app document */
       }
     }, SANDBOX_KEY);
-    await open("/");
+    await open("/applications");
     await expect(page.getByTestId("connection-state")).toHaveText("Local helper connected");
     await use(page);
   },

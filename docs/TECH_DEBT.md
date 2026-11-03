@@ -49,3 +49,7 @@ With Vite already in the repo, the clean fix is a second build entry that bundle
 - **Python formatting:** `ruff format` isn't enforced. It would rewrite nearly every line, so do it as a separate commit. The web app is formatted by Prettier (`npm --prefix web run format`).
 - **Type hints:** sparse in the older Python modules. Add them where code is touched. The web app is strict TypeScript.
 - **CI:** none. `py -3 scripts/check.py --ui` is the single local gate.
+
+## WhatsApp extension sender (parked)
+
+Built but switched off: `OUTREACH_SENDER_ENABLED` in `extension/background.js` and `EXTENSION_SENDING` in `web/src/features/outreach/types.ts`. Before enabling: run it supervised against a real WhatsApp Web session (selectors in `extension/whatsapp.js` are untested), and accept that automated sending breaks WhatsApp's terms. Details: `docs/whatsapp-outreach/DECISIONS.md` (10, 11).

@@ -7,6 +7,7 @@ import { CheckLine, Field, FieldGrid, Input, Select, Textarea } from "@/componen
 import { Count, EmptyState } from "@/components/ui/misc";
 import { Note } from "@/components/ui/note";
 import { Pill } from "@/components/ui/pill";
+import { EXTENSION_SENDING } from "./types";
 import { notify } from "@/components/ui/toaster";
 import { api, errorMessage } from "@/lib/api";
 
@@ -74,7 +75,7 @@ export function ScheduleWizard({ contacts, templates, resumes, onDone }: {
     interval_minutes: mode === "fixed" ? Number(interval) : undefined,
     manual_times: mode === "manual" ? manualTimes.split(/[,\s]+/).filter(Boolean) : undefined,
     max_per_window: maxPerWindow ? Number(maxPerWindow) : undefined,
-    skip_weekends: skipWeekends, auto_send: autoSend, timezone: "Asia/Kolkata",
+    skip_weekends: skipWeekends, auto_send: EXTENSION_SENDING && autoSend, timezone: "Asia/Kolkata",
   };
 
   const preview = useMutation({
@@ -165,7 +166,7 @@ export function ScheduleWizard({ contacts, templates, resumes, onDone }: {
             {mode === "manual" ? <Field label="Times (HH:MM, comma separated)" help="Each must fall inside the window; one time per recipient, in order."><Input value={manualTimes} onChange={(event) => { setManualTimes(event.target.value); setRows(null); }} placeholder="09:05, 09:20, 09:45" /></Field> : null}
             <Field label="Max messages in this window (optional)"><Input type="number" min={1} value={maxPerWindow} onChange={(event) => { setMaxPerWindow(event.target.value); setRows(null); }} /></Field>
             <CheckLine checked={skipWeekends} onChange={(event) => { setSkipWeekends(event.target.checked); setRows(null); }}>Working days only</CheckLine>
-            <CheckLine checked={autoSend} onChange={(event) => setAutoSend(event.target.checked)}>Send for me with the ApplyDock extension</CheckLine>
+            {EXTENSION_SENDING ? <CheckLine checked={autoSend} onChange={(event) => setAutoSend(event.target.checked)}>Send for me with the ApplyDock extension</CheckLine> : null}
             {autoSend ? <Note tone="warn">At each time the extension opens WhatsApp Web, attaches the resume with the message and presses Send for you, paced at least 90 seconds apart and at most 25 a day. Chrome must be open with WhatsApp Web logged in. Automated sending breaks WhatsApp's terms and can get your number restricted, so keep batches small. Leave this off to press Send yourself.</Note> : null}
           </FieldGrid>
           <div className="mt-3">

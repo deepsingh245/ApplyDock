@@ -3,6 +3,7 @@ import { createBrowserRouter, Navigate, useLocation } from "react-router";
 import { BackButton, EmptyState, Page } from "@/components/ui/misc";
 import { AppShell } from "./AppShell";
 
+const HomePage = lazy(() => import("@/features/home/HomePage"));
 const ApplicationsPage = lazy(() => import("@/features/applications/ApplicationsPage"));
 const CreateApplicationPage = lazy(() => import("@/features/applications/CreateApplicationPage"));
 const AnalysisPage = lazy(() => import("@/features/analysis/AnalysisPage"));
@@ -32,7 +33,8 @@ export const router = createBrowserRouter(
     {
       element: <AppShell />,
       children: [
-        { index: true, element: <ApplicationsPage />, handle: { title: "Applications" } },
+        { index: true, element: <HomePage />, handle: { title: "Home" } },
+        { path: "applications", element: <ApplicationsPage />, handle: { title: "Applications" } },
         { path: "applications/new", element: <CreateApplicationPage />, handle: { title: "Add a job" } },
         { path: "applications/:entryId", element: <ApplicationsPage />, handle: { title: "Applications" } },
         { path: "outreach", element: <OutreachPage />, handle: { title: "Outreach" } },

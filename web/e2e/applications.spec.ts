@@ -56,7 +56,7 @@ test("leaving with unsaved edits asks first", async ({ app }) => {
   await app.locator("#settings-button").click();
   await expect(app.getByTestId("confirm-dialog")).toContainText("Discard unsaved changes");
   await app.getByRole("button", { name: "Cancel" }).click();
-  await expect(app).toHaveURL(/:\d+\/$/);
+  await expect(app).toHaveURL(/:\d+\/applications$/);
   await expect(app.getByLabel("Company")).toHaveValue("Unsaved Co");
   await app.locator("#settings-button").click();
   await app.getByRole("button", { name: "Discard" }).click();

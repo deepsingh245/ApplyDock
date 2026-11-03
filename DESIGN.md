@@ -68,12 +68,14 @@ Colors are declared with `@theme inline`, so every utility resolves through the 
 ## Layout and breakpoints
 
 There is no sidebar. The top bar holds:
-- the brand, which returns to Applications;
+- the brand, which returns to Home;
+- the **Applications** and **Outreach** links;
 - the current view name and the connection state;
 - refresh and theme;
 - last, the **Settings gear**.
 
-Applications is the home screen, a full-width three-pane workspace. Every screen has a URL, so reload and back work:
+Home (`/`) is a Features hub: one card per feature (Applications and resume parsing, WhatsApp outreach, Profile and settings), each card a link with quick links below. Applications (`/applications`) is a full-width three-pane workspace. Every screen has a URL, so reload and back work:
+- `/applications`
 - `/applications/:id`
 - `/analysis/:id`
 - `/resumes/:id`
@@ -86,7 +88,7 @@ On load, Applications opens the first application that still needs action (not a
 |---|---|
 | ≥ 1281px (`xl`) | Three panes: list (`--list-w`), editor, inspector (`--context-w`), each scrolling on its own |
 | 761–1280px | List + editor; the inspector moves under the editor |
-| ≤ 760px | Phone layout. The list and one application are separate screens (`/` and `/applications/:id`, with a back button). One-column forms |
+| ≤ 760px | Phone layout. The list and one application are separate screens (`/applications` and `/applications/:id`, with a back button). One-column forms |
 
 ## Accessibility
 

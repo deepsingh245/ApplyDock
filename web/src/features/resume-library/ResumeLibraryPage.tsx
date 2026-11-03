@@ -291,7 +291,7 @@ export default function ResumeLibraryPage() {
 
   return (
     <Page>
-      <BackButton onClick={() => navigate("/")}>Applications</BackButton>
+      <BackButton onClick={() => navigate("/applications")}>Applications</BackButton>
       <PageHeading
         className="mt-2"
         title="Resumes"

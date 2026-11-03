@@ -10,7 +10,7 @@ export default function AnalysisPage() {
   const { data } = useAnalysis(analysisId);
   return (
     <Page className="analysis-page">
-      <BackButton onClick={() => navigate(data?.entry_id ? `/applications/${data.entry_id}` : "/")}>Applications</BackButton>
+      <BackButton onClick={() => navigate(data?.entry_id ? `/applications/${data.entry_id}` : "/applications")}>Applications</BackButton>
       <div className="mt-2">
         <AnalysisView analysisId={analysisId} />
       </div>

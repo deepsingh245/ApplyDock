@@ -29,9 +29,16 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 const HELPER = "http://127.0.0.1:8765";
 const WHATSAPP = "https://web.whatsapp.com/";
 const BUSY_MS = 3 * 60 * 1000;
+// Parked for later (see docs/whatsapp-outreach/NEXT_STEPS.md): the sender is built but untested against a live
+// WhatsApp Web session, so it stays off until this is switched on deliberately.
+const OUTREACH_SENDER_ENABLED = false;
 
-chrome.alarms.create("outreach-poll", {periodInMinutes: 1});
-chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "outreach-poll") pollOutreach().catch(() => {}); });
+if (OUTREACH_SENDER_ENABLED) {
+  chrome.alarms.create("outreach-poll", {periodInMinutes: 1});
+  chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "outreach-poll") pollOutreach().catch(() => {}); });
+} else {
+  chrome.alarms.clear("outreach-poll");
+}
 
 async function helperPost(path, body) {
   const {pairingKey} = await chrome.storage.local.get("pairingKey");
