@@ -25,7 +25,7 @@ export function renderTemplate(body: string, contact?: MessageContact): { text: 
 }
 
 /** A WhatsApp click-to-chat link. It only prefills the text; the user still attaches the resume and presses Send. */
-export function whatsappLink(phone: string, message: string): string {
-  const digits = phone.replace(/\D/g, "");
+export function whatsappLink(phone: string | undefined, message: string): string {
+  const digits = (phone ?? "").replace(/\D/g, "");
   return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
 }

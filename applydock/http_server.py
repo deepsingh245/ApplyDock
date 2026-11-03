@@ -481,8 +481,60 @@ def schedule_outreach(request, match, data):
 
 @route("PATCH", r"/api/outreach/schedules/([a-f0-9-]+)")
 def finish_outreach(request, match, data):
-    result = str((data or {}).get("result") or "sent").strip().lower()
-    return {"schedule": outreach.mark_schedule_result(match.group(1), result, (data or {}).get("notes", ""), (data or {}).get("status"))}
+    data = data or {}
+    action = str(data.get("action") or "").strip().lower()
+    if action == "reschedule":
+        return {"schedule": outreach.reschedule(match.group(1), data.get("send_at"))}
+    if action == "cancel":
+        return {"schedule": outreach.cancel_schedule(match.group(1))}
+    if action == "opened":
+        return {"schedule": outreach.mark_opened(match.group(1))}
+    result = str(data.get("result") or "sent").strip().lower()
+    return {"schedule": outreach.mark_schedule_result(match.group(1), result, data.get("notes", ""), data.get("status"), data.get("followup_days"))}
+
+
+@route("GET", r"/api/outreach/followups")
+def list_outreach_followups(request, match, data):
+    return {"followups": outreach.list_followups()}
+
+
+@route("PATCH", r"/api/outreach/followups/([a-f0-9-]+)")
+def finish_outreach_followup(request, match, data):
+    return {"followup": outreach.finish_followup(match.group(1), str((data or {}).get("action") or "").strip().lower())}
+
+
+@route("POST", r"/api/outreach/extension/claim")
+def claim_outreach_for_extension(request, match, data):
+    return outreach.extension_claim()
+
+
+@route("POST", r"/api/outreach/extension/report")
+def report_outreach_from_extension(request, match, data):
+    data = data or {}
+    return {"schedule": outreach.extension_report(str(data.get("id") or ""), str(data.get("outcome") or ""), data.get("detail", ""))}
+
+
+@route("GET", r"/api/outreach/batches")
+def list_outreach_batches(request, match, data):
+    return {"batches": outreach.list_batches()}
+
+
+@route("POST", r"/api/outreach/batches/preview")
+def preview_outreach_batch(request, match, data):
+    return outreach.preview_batch(data)
+
+
+@route("POST", r"/api/outreach/batches")
+def create_outreach_batch(request, match, data):
+    return {"batch": outreach.commit_batch(data)}
+
+
+@route("POST", r"/api/outreach/batches/([a-f0-9-]+)/(pause|resume|cancel)")
+def control_outreach_batch(request, match, data):
+    batch_id, action = match.group(1), match.group(2)
+    if action == "cancel":
+        return {"batch": outreach.cancel_batch(batch_id)}
+    return {"batch": outreach.set_batch_paused(batch_id, action == "pause")}
 
 
 # ---------------------------------------------------------------- applications

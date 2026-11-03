@@ -42,3 +42,19 @@ Import diagnostics are printed in the ApplyDock helper's console with the `[Appl
 - Contacts marked `Do not contact` are rejected by the scheduler.
 - The app never claims a WhatsApp message was sent merely because the conversation was opened.
 - A resume is optional in the domain model but should be selected and validated before the schedule is considered ready.
+
+## Batch scheduling
+
+The Schedule tab selects several contacts, a template, a resume and a window (date, from, to, even or fixed spacing, optional cap, working days only; India time). **Preview schedule** calls `POST /api/outreach/batches/preview` (writes nothing) and returns each contact's slot, rendered message and problems. Times and messages are editable and rows removable; duplicates need an explicit tick. **Confirm** calls `POST /api/outreach/batches`, which re-validates and pins the resume's current version. Contacts that do not fit are reported as overflow.
+
+Queue actions use `PATCH /api/outreach/schedules/<id>` with `action` = `reschedule`, `cancel` or `opened`, or `result` = `sent`, `skipped`, `failed`. Batch controls: `POST /api/outreach/batches/<id>/pause|resume|cancel`. Status flow: scheduled → awaiting_confirmation (opened) → sent/skipped/failed; sent and cancelled are final. Developer handoff: `docs/whatsapp-outreach/CONTEXT.md`.
+
+## Reminders, follow-ups and history
+
+Reminders are shown as notices (and system notifications if allowed) while ApplyDock is open: 5 minutes before, when due, and when missed (30 minutes late). A closed browser cannot be woken. Marking a message sent records the contact's history and creates follow-up reminders (default 3 and 7 working days; editable in the Queue tab). Follow-ups are never sent automatically. The History tab lists every attempt with filters for text, status, resume and date. Deleting a contact deletes its outreach history.
+
+## Extension sending
+
+The Schedule wizard has **Send for me with the ApplyDock extension** (off by default). Every minute the extension asks the helper for a due message (`POST /api/outreach/extension/claim`), opens `web.whatsapp.com/send?phone=...` in your own logged-in session, attaches the pinned resume with the message as its caption, and, only for opted-in messages, presses Send and waits for WhatsApp's delivery tick before reporting `sent` (`POST /api/outreach/extension/report`). Without the opt-in it stops after attaching and you press Send. If anything fails the queue shows the reason and the text is left in the composer.
+
+Limits: Chrome open, extension installed and paired, WhatsApp Web logged in. The helper enforces 90 seconds between messages, 25 extension sends per day, and never hands out messages more than 30 minutes late. Automated sending is against WhatsApp's terms and can get a number restricted; keep batches small. The extension selectors were written without a live WhatsApp Web session and need a first supervised run.

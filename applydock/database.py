@@ -127,6 +127,18 @@ def init_db():
             outreach = importlib.import_module("applydock.outreach")
             outreach.init_schema(db)
             db.execute("PRAGMA user_version=7")
+        if version < 8:
+            # v8: outreach batches, pinned resume versions and timezone on schedules (additive columns + one table).
+            importlib.import_module("applydock.outreach").migrate_v8(db)
+            db.execute("PRAGMA user_version=8")
+        if version < 9:
+            # v9: template category/default and follow-up tasks (additive).
+            importlib.import_module("applydock.outreach").migrate_v9(db)
+            db.execute("PRAGMA user_version=9")
+        if version < 10:
+            # v10: per-message auto_send opt-in and who sent it (extension or the user), for the extension sender.
+            importlib.import_module("applydock.outreach").migrate_v10(db)
+            db.execute("PRAGMA user_version=10")
         ats.refresh_failed_extractions(db, config.DATA)
         if not db.execute("SELECT 1 FROM resumes WHERE deleted_at='' AND is_default=1 LIMIT 1").fetchone():
             first_resume = db.execute("SELECT id FROM resumes WHERE deleted_at='' AND kind='master' ORDER BY created_at LIMIT 1").fetchone()

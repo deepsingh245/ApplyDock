@@ -7,6 +7,7 @@ import { Spinner } from "@/components/ui/misc";
 import { notify } from "@/components/ui/toaster";
 import type { AppState } from "@/api/types";
 import { api, ApiError, forgetSessionKey, OFFLINE_MESSAGE, pairingKey, promoteSessionKey, setSessionKey } from "@/lib/api";
+import { OutreachReminders } from "@/features/outreach/OutreachReminders";
 import { ExtensionOpenHandler } from "./ExtensionOpenHandler";
 import { PairingScreen } from "./PairingScreen";
 import { TopBar } from "./TopBar";
@@ -66,6 +67,7 @@ export function AppShell() {
     body = (
       <Suspense fallback={<Loading />}>
         <ExtensionOpenHandler />
+        <OutreachReminders />
         <Outlet />
       </Suspense>
     );

@@ -45,7 +45,7 @@ def main():
     results.append(step("python tests", [sys.executable, "-m", "unittest", "discover", "-s", "tests"]))
     node = shutil.which("node")
     if node:
-        scripts = [ROOT / "extension" / "sidepanel.js", ROOT / "extension" / "background.js"]
+        scripts = [ROOT / "extension" / "sidepanel.js", ROOT / "extension" / "background.js", ROOT / "extension" / "whatsapp.js"]
         results.append(all(step(f"node --check {path.relative_to(ROOT)}", [node, "--check", str(path)]) for path in scripts))
         results.append(step("extension extraction test", [node, "tests/test_post_extraction.js"]))
         results.extend(web_checks())

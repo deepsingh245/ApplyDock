@@ -38,7 +38,7 @@ class OutreachTests(unittest.TestCase):
             "message": "Hi Ada, I am interested in the role at Example Labs.",
         })
         self.assertEqual(schedule["contact"]["id"], contact["id"])
-        self.assertEqual(schedule["status"], "pending")
+        self.assertEqual(schedule["status"], "scheduled")
         self.assertEqual(outreach.mark_schedule_result(schedule["id"], "sent")["result"], "sent")
 
     def test_csv_import_and_export(self):

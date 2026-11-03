@@ -25,7 +25,8 @@ applydock/                Python helper (package)
   database.py             SQLite connection, schema, versioned migrations + backup
   events.py               "application changed" notifications (Notion sync listens)
   applications.py         captured jobs/posts ("entries"): capture, URLs, editing, approval, stages
-  outreach.py             HR contacts, message templates, and assisted WhatsApp scheduling
+  outreach.py             HR contacts, templates, batches, follow-ups, assisted WhatsApp scheduling
+  outreach_schedule.py    pure scheduling rules: time slots, timezone, status machine
   resumes.py              resume library, versions, pinned/current file selection, access links
   resume_workflows.py     resume editor orchestration: editor state, import, tailor, suggestions, save version
   profile.py              Master Profile entries, import from resume, evidence blocks for analysis/suggestions (DB layer)
