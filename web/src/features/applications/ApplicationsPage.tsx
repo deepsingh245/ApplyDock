@@ -10,10 +10,10 @@ import { EmptyState } from "@/components/ui/misc";
 import { notify } from "@/components/ui/toaster";
 import { errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { activeEntries, isRejected, needsAction } from "@/lib/domain";
+import { activeEntries, needsAction } from "@/lib/domain";
 import { useOpenResumeEditor } from "./actions";
 import { EntryEditor, MobileBack, type EditorTab } from "./EntryEditor";
-import { DEFAULT_FILTER, DEFAULT_LIST, type ListOptions } from "./filtering";
+import { DEFAULT_FILTER, DEFAULT_LIST, isApplied, parseFilter, type ListOptions } from "./filtering";
 import { FIELD_TAB, toForm, type EntryForm } from "./form";
 import { Inspector } from "./Inspector";
 import { QueueList } from "./QueueList";
@@ -27,7 +27,7 @@ function EmptyEditor({ onShowApplied }: { onShowApplied: () => void }) {
   const state = useLoadedState();
   const navigate = useNavigate();
   const waiting = state.entries.filter(needsAction).length;
-  const done = state.entries.filter((entry) => !needsAction(entry) && !isRejected(entry)).length;
+  const done = state.entries.filter(isApplied).length;
   return (
     <EmptyState
       icon={<InboxIcon aria-hidden />}
@@ -190,7 +190,7 @@ function InspectorPane({ children }: { children: ReactNode }) {
 
 function readOptions(params: URLSearchParams): Omit<ListOptions, "query"> {
   return {
-    filter: (params.get("filter") as ListOptions["filter"]) || DEFAULT_FILTER,
+    filter: parseFilter(params.get("filter")),
     analysis: (params.get("analysis") as ListOptions["analysis"]) || DEFAULT_LIST.analysis,
     score: (params.get("score") as ListOptions["score"]) || DEFAULT_LIST.score,
     sort: (params.get("sort") as ListOptions["sort"]) || DEFAULT_LIST.sort,

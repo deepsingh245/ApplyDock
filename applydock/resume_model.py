@@ -215,8 +215,11 @@ ACCENTS = ("#111111", "#1f4e79", "#2675a7", "#0f766e", "#2f6b3a", "#7a1f2b", "#5
 
 
 # What a resume looks like, as opposed to what it says. Saved resumes keep their own design; new ones start
-# from the last design the user edited (resume_workflows.last_design).
+# from the design for new resumes (resume_workflows.new_resume_design).
 DESIGN_KEYS = ("template", "paper", "page_limit", "layout", "section_order", "section_titles")
+# The look alone. Section order and section titles are decisions about a resume's structure: a tailored copy keeps
+# its master's, and only takes the look from the design for new resumes.
+LOOK_KEYS = ("template", "paper", "page_limit", "layout")
 
 
 def design_of(content: dict) -> dict:
@@ -224,13 +227,13 @@ def design_of(content: dict) -> dict:
     return {key: meta.get(key) for key in DESIGN_KEYS}
 
 
-def with_design(content: dict, design) -> dict:
-    """content with another resume's design applied; the text is untouched. Invalid design values fall back to defaults."""
+def with_design(content: dict, design, keys=DESIGN_KEYS) -> dict:
+    """content with another resume's design (or just `keys` of it) applied; the text is untouched. Invalid values fall back to defaults."""
     # Not strict: applying a design must never fail because of the content (e.g. an imported link the user still has to fix).
     if not isinstance(design, dict):
         return normalize(content, strict=False)
     meta = dict((content or {}).get("meta") or {})
-    meta.update({key: design[key] for key in DESIGN_KEYS if design.get(key) is not None})
+    meta.update({key: design[key] for key in keys if design.get(key) is not None})
     return normalize({**(content or {}), "meta": meta}, strict=False)
 
 

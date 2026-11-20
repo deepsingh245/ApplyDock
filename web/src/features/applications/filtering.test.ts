@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Entry } from "@/api/types";
 import { needsAction } from "@/lib/domain";
-import { DEFAULT_LIST, listCounts, visibleEntries } from "./filtering";
+import { DEFAULT_LIST, listCounts, parseFilter, visibleEntries } from "./filtering";
 import { progressSteps } from "./progress";
 
 const entry = (overrides: Partial<Entry>): Entry =>
@@ -30,19 +30,22 @@ describe("application list filters", () => {
   const review = entry({ title: "Review", needs_review: 1 });
   const all = [draft, rejected, sent, review];
 
-  it("hides rejected applications from every view except Rejected", () => {
-    for (const filter of ["all", "to_apply", "review", "applied", "scheduled"] as const)
-      expect(visibleEntries(all, { ...DEFAULT_LIST, filter }).map((item) => item.title)).not.toContain("Rejected one");
-    expect(visibleEntries(all, { ...DEFAULT_LIST, filter: "rejected" }).map((item) => item.title)).toEqual(["Rejected one"]);
-  });
-
-  it("keeps sent applications out of All but in Applied", () => {
+  it("Review (the default) lists everything not applied yet, whether or not it is flagged for review", () => {
+    expect(DEFAULT_LIST.filter).toBe("review");
     expect(visibleEntries(all, DEFAULT_LIST).map((item) => item.title)).toEqual(["Draft", "Review"]);
-    expect(visibleEntries(all, { ...DEFAULT_LIST, filter: "applied" }).map((item) => item.title)).toEqual(["Sent one"]);
   });
 
-  it("counts active (not rejected, not sent) and rejected separately", () => {
-    expect(listCounts(all)).toEqual({ active: 2, rejected: 1 });
+  it("Applied lists applied, sent and rejected applications", () => {
+    expect(visibleEntries(all, { ...DEFAULT_LIST, filter: "applied" }).map((item) => item.title)).toEqual(["Rejected one", "Sent one"]);
+  });
+
+  it("the two tabs cover every application exactly once", () => {
+    expect(listCounts(all)).toEqual({ review: 2, applied: 2 });
+  });
+
+  it("old filter links fall back to Review", () => {
+    for (const old of ["all", "rejected", "to_apply", "scheduled", null]) expect(parseFilter(old)).toBe("review");
+    expect(parseFilter("applied")).toBe("applied");
   });
 
   it("searches title, company and contact emails", () => {

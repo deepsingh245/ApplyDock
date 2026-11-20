@@ -61,3 +61,11 @@ export function designOf(meta: Record<string, unknown>): ResumeDesign {
 export function sameDesign(a: ResumeDesign | null | undefined, b: ResumeDesign | null | undefined) {
   return Boolean(a && b) && JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 }
+
+/** The look alone (resume_model.LOOK_KEYS): what a new tailored copy takes from the design for new resumes. */
+export const LOOK_KEYS = ["template", "paper", "page_limit", "layout"] as const;
+
+export function sameLook(a: ResumeDesign | null | undefined, b: ResumeDesign | null | undefined) {
+  const look = (design: ResumeDesign) => Object.fromEntries(LOOK_KEYS.map((key) => [key, design[key]]));
+  return Boolean(a && b) && JSON.stringify(canonical(look(a!))) === JSON.stringify(canonical(look(b!)));
+}

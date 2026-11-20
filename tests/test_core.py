@@ -10,7 +10,7 @@ import urllib.parse
 from unittest.mock import patch
 
 from support import isolate_app
-from applydock import ai_draft, applications, config, database, delivery, gmail, http_server, notion
+from applydock import ai_draft, applications, ats, config, database, delivery, gmail, http_server, notion
 
 
 class CoreTests(unittest.TestCase):
@@ -171,13 +171,27 @@ class CoreTests(unittest.TestCase):
     def test_ai_draft_is_explicit_and_returns_unapproved_suggestion(self):
         entry, _ = applications.capture({"url": "https://www.linkedin.com/jobs/view/321/", "title": "Engineer", "excerpt": "Python role"})
         config.SETTINGS["candidate_profile"] = "I use Python professionally."
-        output = '{"subject":"Engineer application","body":"Hello hiring team","notes":"Confirm recipient"}'
-        with patch.object(ai_draft.shutil, "which", return_value="codex"), patch.object(ai_draft.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout=output)) as run:
+        output = {"subject": "Engineer application — Initech", "body": "Hello hiring team", "notes": "Confirm recipient"}
+        # The draft goes through the same Codex runner as the analysis (read-only sandbox, UTF-8, final-message file).
+        with patch.object(ats, "_run_codex", return_value=output) as run:
             draft = ai_draft.generate_ai_draft(entry)
-        self.assertEqual(draft["subject"], "Engineer application")
-        self.assertIn("--sandbox", run.call_args.args[0])
-        self.assertIn("read-only", run.call_args.args[0])
+        self.assertEqual(draft["subject"], "Engineer application — Initech")
+        self.assertEqual(run.call_args.args[2:4], ("ai-schema.json", "email_draft"))
+        self.assertIn("Python role", run.call_args.args[1])
         self.assertEqual(applications.get_entry(entry["id"])["status"], "draft")
+        with patch.object(ats, "_run_codex", side_effect=RuntimeError("auth|Codex is not signed in. Sign in with your ChatGPT Plus account.")):
+            with self.assertRaisesRegex(RuntimeError, r"^Codex is not signed in\. .*Copy prompt"):
+                ai_draft.generate_ai_draft(entry)
+
+    def test_codex_runner_reads_the_final_message_file_as_utf8(self):
+        # Codex prints progress to stdout; the reply is the --output-last-message file, which may hold non-ASCII text.
+        def fake_run(command, **kwargs):
+            self.assertEqual(kwargs.get("encoding"), "utf-8")
+            Path(command[command.index("--output-last-message") + 1]).write_text('{"subject":"Café role — ₹","body":"b","notes":""}', encoding="utf-8")
+            return SimpleNamespace(returncode=0, stdout="progress… not json", stderr="")
+        with patch.object(ats.shutil, "which", return_value="codex"), patch.object(ats.subprocess, "run", side_effect=fake_run):
+            result = ats._run_codex(config.SCHEMA_DIR, "prompt", "ai-schema.json", "email_draft", "", config.DB)
+        self.assertEqual(result["subject"], "Café role — ₹")
 
     def test_send_requires_complete_explicit_approval_and_runs_once(self):
         entry, _ = applications.capture({"url": "https://www.linkedin.com/posts/person_activity-123/"})

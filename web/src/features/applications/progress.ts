@@ -29,7 +29,7 @@ export function progressSteps(entry: Entry): ProgressStep[] {
     { label: "Resume", detail: version ? `v${version.version_number}${version.pinned ? " · pinned" : ""}` : "Missing", done: Boolean(version), warn: !version },
     {
       label: "Email",
-      detail: entry.apply_method === "email" ? deliveryLabel(entry) : entry.apply_method === "external_form" ? "External form" : "Route not set",
+      detail: entry.apply_method === "email" ? deliveryLabel(entry) || "Not prepared" : entry.apply_method === "external_form" ? "External form" : "Route not set",
       done: emailDone || entry.apply_method === "external_form",
       warn: false,
     },

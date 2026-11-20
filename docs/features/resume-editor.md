@@ -160,8 +160,8 @@ A resume's *design* is its `meta` without the text: template, paper, page limit,
 Saving a default design switches the mode to "default". The mode and the default are stored as `resume_design_preference` in `data/config.json` (no schema change).
 
 **Where it applies:**
-- a new tailored copy is the master's text in that design (`tailor_resume`);
-- a newly uploaded resume, opened for the first time, is its imported text in that design (`open_draft(..., design=)`).
+- **A new tailored copy is an exact copy of its master as it is now**: content, section order and section headings, taken from the master's reviewed working draft, including edits not yet saved as a version (`resume_store.base_content`). Only the **look** comes from the design for new resumes: template, paper, page limit and layout (`resume_model.LOOK_KEYS`, `tailor_resume`). It is never re-parsed from the uploaded file.
+- **A newly uploaded resume**, opened for the first time, is its imported (parsed) text in the full design, section order included (`open_draft(..., design=)`).
 
 **API:**
 - `GET /api/resume-design` returns the mode, the default, the last design, the effective design, the factory design and the option lists.

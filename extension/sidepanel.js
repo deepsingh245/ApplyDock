@@ -13,7 +13,7 @@ let pendingCapture = null;
 let unsavedForm = false;
 const emailOpenIds = new Set();
 let previewEmailOpen = false;
-let filter = "all";
+let filter = "review";
 const FALLBACK_APPLICATION_STAGES = ["Initiated", "To apply", "No Answer", "Applied", "Offer", "Rejected"];
 const STAGES_AFTER_APPLY = new Set(["applied", "no answer", "offer", "rejected"]);
 
@@ -21,10 +21,14 @@ function stageIsAfterApply(value) {
   return STAGES_AFTER_APPLY.has(String(value || "").trim().toLowerCase());
 }
 
-// Same rules as the dashboard: rejected applications only appear under the Rejected filter, and
-// "needs action" means not sent, not submitted, not past Applied, and not rejected.
+// Same rules as the web app: "needs action" means not sent, not submitted, not past Applied, and not rejected;
+// "applied" (the Applied tab) means sent, submitted or past Applied, which includes rejected.
 function isRejected(entry) {
   return String(entry?.application_stage || "").trim().toLowerCase() === "rejected";
+}
+
+function isApplied(entry) {
+  return entry.status === "sent" || Boolean(entry.submission) || stageIsAfterApply(entry.application_stage);
 }
 
 function needsAction(entry) {
@@ -164,8 +168,9 @@ async function filePayload(file) {
   return {filename: file.name, content: btoa(binary)};
 }
 
+// Every application starts as a local "draft", so that state gets no chip; only real delivery states are labelled.
 function statusLabel(status) {
-  return ({draft: "Draft", approved: "Approved", sending: "Sending", sent: "Sent", failed: "Needs review"})[status] || status;
+  return ({draft: "", approved: "Approved", sending: "Sending", sent: "Sent", failed: "Needs review"})[status] ?? status;
 }
 
 function deliveryLabel(entry) {
@@ -216,7 +221,7 @@ function entryHtml(entry) {
     <button class="entry-toggle" type="button" data-id="${id}" aria-expanded="${expanded}" aria-controls="details-${id}">
       <span class="entry-top"><span class="entry-title">${escapeHtml(entry.title)}</span><span class="entry-score${analysis.stale ? " stale" : ""}" title="${escapeHtml(analysis.label || "Not analyzed")}">${escapeHtml(score)}</span></span>
       <span class="entry-company">${escapeHtml(entry.company || (entry.kind === "job" ? "Company not set" : "Hiring post"))} · ${escapeHtml(platformLabel(entry.url))}</span>
-      <span class="entry-chips"><span class="badge ${escapeHtml(entry.delivery_mode === "local" ? entry.status : entry.delivery_mode)}">${escapeHtml(deliveryLabel(entry))}</span>${entry.application_stage ? `<span class="badge stage">${escapeHtml(entry.application_stage)}</span>` : ""}${review ? '<span class="badge review">Needs review</span>' : ""}${entry.submission ? '<span class="badge approved">Submitted</span>' : ""}</span>
+      <span class="entry-chips">${deliveryLabel(entry) ? `<span class="badge ${escapeHtml(entry.delivery_mode === "local" ? entry.status : entry.delivery_mode)}">${escapeHtml(deliveryLabel(entry))}</span>` : ""}${entry.application_stage ? `<span class="badge stage">${escapeHtml(entry.application_stage)}</span>` : ""}${review ? '<span class="badge review">Needs review</span>' : ""}${entry.submission ? '<span class="badge approved">Submitted</span>' : ""}</span>
     </button>
     <div class="entry-details" id="details-${id}" ${expanded ? "" : "hidden"}>
       ${summaryHtml(entry)}
@@ -277,21 +282,20 @@ function entryHtml(entry) {
 function renderEntries() {
   const list = $("list");
   const all = state?.entries || [];
-  const active = all.filter(entry => entry.status !== "sent" && !isRejected(entry));
-  const rejected = all.filter(isRejected);
-  // "Applied" is the history view: it also lists sent applications, which otherwise leave the list.
-  const entries = filter === "rejected" ? rejected
-    : filter === "applied" ? all.filter(entry => !isRejected(entry) && (stageIsAfterApply(entry.application_stage) || entry.status === "sent" || entry.submission))
-    : active;
-  $("count").textContent = active.length;
-  $("rejected-count").textContent = rejected.length || "";
+  // Two tabs, same as the web app: Review is everything not applied yet; Applied is applied, sent or submitted,
+  // including rejected ones (they keep their Rejected stage chip).
+  const applied = all.filter(isApplied);
+  const review = all.filter(entry => !isApplied(entry));
+  const entries = filter === "applied" ? applied : review;
+  $("count").textContent = review.length;
+  $("review-count").textContent = review.length || "";
+  $("applied-count").textContent = applied.length || "";
   for (const button of $("filters").querySelectorAll("[data-filter]")) {
     button.classList.toggle("active", button.dataset.filter === filter);
     button.setAttribute("aria-pressed", String(button.dataset.filter === filter));
   }
   if (openId && !entries.some(entry => entry.id === openId)) openId = "";
-  const empty = filter === "rejected" ? "No rejected applications."
-    : filter === "applied" ? "Nothing applied yet."
+  const empty = filter === "applied" ? "Nothing applied yet."
     : all.some(needsAction) ? "Nothing matches this view." : "<strong>No active applications.</strong> Capture the next job or hiring post when you find it.";
   list.innerHTML = entries.length ? entries.map(entryHtml).join("") : `<div class="empty">${empty}</div>`;
   list.querySelectorAll(".entry-toggle").forEach(button => button.addEventListener("click", () => {

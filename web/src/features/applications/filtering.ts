@@ -1,7 +1,12 @@
 import type { Entry } from "@/api/types";
-import { activeEntries, isRejected, stageIsAfterApply } from "@/lib/domain";
+import { stageIsAfterApply } from "@/lib/domain";
 
-export type ListFilter = "all" | "to_apply" | "review" | "applied" | "scheduled" | "rejected";
+/**
+ * Two tabs that split every application: Review (not applied yet: everything still in progress) and Applied (applied,
+ * sent or submitted, including those later rejected, which keep their Rejected stage tag).
+ */
+export type ListFilter = "review" | "applied";
+export const LIST_FILTERS: ListFilter[] = ["review", "applied"];
 export type AnalysisFilter = "all" | "complete" | "stale" | "failed" | "not_analyzed";
 export type ScoreFilter = "all" | "high" | "medium" | "low";
 export type SortOrder = "newest" | "score_desc" | "score_asc" | "analyzed";
@@ -14,35 +19,33 @@ export interface ListOptions {
   query: string;
 }
 
-export const DEFAULT_LIST: ListOptions = { filter: "all", analysis: "all", score: "all", sort: "newest", query: "" };
+export const DEFAULT_LIST: ListOptions = { filter: "review", analysis: "all", score: "all", sort: "newest", query: "" };
 
-/** The filter the Applications screen opens with: what still needs checking comes first. */
+/** The filter the Applications screen opens with. */
 export const DEFAULT_FILTER: ListFilter = "review";
+
+/** A filter from the URL; old links (?filter=all, rejected, …) fall back to Review. */
+export const parseFilter = (value: string | null): ListFilter => (LIST_FILTERS.includes(value as ListFilter) ? (value as ListFilter) : DEFAULT_FILTER);
 
 const FAILED = new Set(["failed", "plan_limit", "insufficient_jd", "extraction_limited"]);
 const lower = (value: unknown) => String(value ?? "").trim().toLowerCase();
 
-/** The entries a filter starts from. "Applied" and "Rejected" are history views that also include sent items. */
+/** Applied: sent, a submission recorded, or a stage past applying (Applied, No Answer, Offer, Rejected). */
+export const isApplied = (entry: Entry) => entry.status === "sent" || Boolean(entry.submission) || stageIsAfterApply(entry.application_stage);
+
 export function filterSource(entries: Entry[], filter: ListFilter): Entry[] {
-  if (filter === "rejected") return entries.filter(isRejected);
-  return (filter === "applied" ? entries : activeEntries(entries)).filter((entry) => !isRejected(entry));
+  return entries.filter((entry) => (filter === "applied") === isApplied(entry));
 }
 
 export function listCounts(entries: Entry[]) {
-  return {
-    active: activeEntries(entries).filter((entry) => !isRejected(entry)).length,
-    rejected: entries.filter(isRejected).length,
-  };
+  const applied = entries.filter(isApplied).length;
+  return { review: entries.length - applied, applied };
 }
 
 export function visibleEntries(entries: Entry[], options: ListOptions): Entry[] {
   const { filter, analysis: analysisFilter, score: scoreFilter, sort } = options;
   const query = options.query.trim().toLowerCase();
   const shown = filterSource(entries, filter).filter((entry) => {
-    if (filter === "to_apply" && !["initiated", "to apply"].includes(lower(entry.application_stage))) return false;
-    if (filter === "review" && (!entry.needs_review || stageIsAfterApply(entry.application_stage)) && entry.status !== "failed") return false;
-    if (filter === "applied" && !stageIsAfterApply(entry.application_stage) && entry.status !== "sent" && !entry.submission) return false;
-    if (filter === "scheduled" && (entry.apply_method !== "email" || !["gmail_schedule_pending", "gmail_scheduled"].includes(entry.delivery_mode))) return false;
     const analysis = entry.analysis ?? { status: "not_analyzed", stale: false };
     const score = analysis.overall_score;
     if (analysisFilter === "complete" && analysis.status !== "complete") return false;

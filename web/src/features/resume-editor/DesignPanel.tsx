@@ -4,7 +4,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { GripVerticalIcon } from "lucide-react";
 import { useEffect, useRef, type KeyboardEvent } from "react";
 import { Link } from "react-router";
-import { designOf, sameDesign, useDesignSettings, useUpdateDesignSettings } from "@/api/design";
+import { designOf, sameLook, useDesignSettings, useUpdateDesignSettings } from "@/api/design";
 import { Button } from "@/components/ui/button";
 import { Note } from "@/components/ui/note";
 import { Pill } from "@/components/ui/pill";
@@ -111,7 +111,7 @@ function DefaultDesignNote() {
   const settings = useDesignSettings();
   const update = useUpdateDesignSettings();
   const meta = useEditor((state) => state.content!.meta);
-  const isDefault = settings.data?.mode === "default" && sameDesign(designOf(meta), settings.data.default);
+  const isDefault = settings.data?.mode === "default" && sameLook(designOf(meta), settings.data.default);
   const makeDefault = async () => {
     try {
       await ctl.flush();
@@ -125,7 +125,9 @@ function DefaultDesignNote() {
     <Note tone="neutral" className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 lg:col-span-2" data-testid="design-carry-over">
       <span>
         This resume keeps its own design.{" "}
-        {settings.data?.mode === "default" ? "New tailored resumes start from your default design." : "New tailored resumes start from the last design you edited."}{" "}
+        {settings.data?.mode === "default"
+          ? "New tailored resumes copy their master and take the look of your default design."
+          : "New tailored resumes copy their master and take the look of the last design you edited."}{" "}
         <Link to="/settings/design">Resume design settings</Link>
       </span>
       {isDefault ? (

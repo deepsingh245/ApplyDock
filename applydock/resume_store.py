@@ -252,7 +252,15 @@ def tailored_for(db, entry_id: str, base_resume_id: str):
 
 
 def base_content(db, resume_id: str):
-    """Reviewed structured content of a master: its newest editor version, else its working draft."""
+    """A master's structured content exactly as the user last left it: its reviewed working draft (what the editor
+    shows, including edits not yet saved as a version), else its current or newest editor version.
+
+    Tailored copies start from this, so they must not fall back to an older saved version or to a fresh parse of the
+    uploaded file, which would undo how the user arranged the master.
+    """
+    draft = get_draft(db, resume_id)
+    if draft and not draft["needs_review"]:
+        return resume_model.normalize(draft["content"], strict=False), draft["base_version_id"]
     row = db.execute("""SELECT rv.id,rv.content_json FROM resume_versions rv WHERE rv.resume_id=? AND rv.content_json<>''
                         ORDER BY rv.version_number DESC LIMIT 1""", (resume_id,)).fetchone()
     current = db.execute("SELECT current_version_id FROM resumes WHERE id=?", (resume_id,)).fetchone()
@@ -262,9 +270,6 @@ def base_content(db, resume_id: str):
             row = current_row
     if row:
         return resume_model.normalize(json.loads(row["content_json"])), row["id"]
-    draft = get_draft(db, resume_id)
-    if draft and not draft["needs_review"]:
-        return resume_model.normalize(draft["content"]), draft["base_version_id"]
     raise ValueError("Open this resume in the editor and review the imported content before tailoring it.")
 
 

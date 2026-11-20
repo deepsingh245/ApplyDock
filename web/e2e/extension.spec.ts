@@ -73,6 +73,10 @@ test("side panel matches the web app, follows its rules, captures, and opens the
   await expect(page.locator(".entry-head .entry-delete")).toHaveCount(0);
   await expect(page.locator(".entry.open")).toHaveCount(1);
   await expect(page.locator(".entry-summary .score-figure strong")).toHaveText("64.5");
+  // Two tabs like the web app (Review is the default), and no "Draft" chip on unsent applications.
+  await expect(page.locator("#filters [data-filter]")).toHaveCount(2);
+  await expect(page.locator('[data-filter="review"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".entry-chips")).not.toContainText("Draft");
 
   // Open the web app on this application's analysis
   const entryId = await page.locator(".entry-toggle").first().getAttribute("data-id");
@@ -85,7 +89,7 @@ test("side panel matches the web app, follows its rules, captures, and opens the
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(page.locator("#theme-button")).toHaveAttribute("aria-label", "Switch to light mode");
 
-  // Rejected applications leave the list unless the Rejected filter is selected
+  // A rejected application leaves Review and is listed under Applied
   await page.evaluate(
     async ({ id, key }) => {
       await fetch(`http://127.0.0.1:8765/api/entries/${id}`, {
@@ -98,9 +102,10 @@ test("side panel matches the web app, follows its rules, captures, and opens the
     { id: entryId!, key: SANDBOX_KEY },
   );
   await expect(page.locator("#list .entry")).toHaveCount(0);
-  await page.locator('[data-filter="rejected"]').click();
+  await page.locator('[data-filter="applied"]').click();
   await expect(page.locator("#list .entry")).toHaveCount(1);
-  await page.locator('[data-filter="all"]').click();
+  await expect(page.locator("#list .entry")).toContainText("Rejected");
+  await page.locator('[data-filter="review"]').click();
 
   // Settings: the gear stays, cards collapse behind Configure, the Master Profile opens in the web app
   await page.locator("#settings-open").click();

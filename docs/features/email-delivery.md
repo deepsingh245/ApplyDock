@@ -6,7 +6,7 @@
 
 | File | Role |
 |---|---|
-| `applydock/ai_draft.py` | `generate_ai_draft`: Codex writes subject, body and notes from the job, your profile and (when given) the tailored resume's headline and skills |
+| `applydock/ai_draft.py` | `generate_ai_draft`: Codex writes subject, body and notes from the job, your profile and (when given) the tailored resume's headline and skills. It runs through the same Codex runner as the analysis (`ats._run_codex`: read-only sandbox, UTF-8, reply read from the `--output-last-message` file). Its old private command broke on non-ASCII replies on Windows and on newer Codex console output |
 | `applydock/auto_email.py` | Signature, and the automatic draft for hiring posts that can only be answered by email |
 | `applydock/gmail.py` | OAuth (PKCE, `gmail.compose` scope, loopback redirect), `gmail_message` (MIME with the pinned resume), `save_gmail_draft`, `mark_gmail_scheduled` |
 | `applydock/delivery.py` | SMTP settings check (`test_smtp_login`), `send_mail`, `process_due` (the 9 AM sender), `scheduler` |

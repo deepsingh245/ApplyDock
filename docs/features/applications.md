@@ -2,7 +2,13 @@
 
 **What it does:** the main dashboard view. It has a filterable queue of captured applications, an editor split into tabs (Overview, Job details, Resume, Email, ATS Analysis), and an inspector with delivery and AI actions.
 
-**List filters:** the list opens on **Review**: applications that still need checking, or that failed to send (`DEFAULT_FILTER` in `filtering.ts`). Another filter is kept in the URL (`?filter=all`) until you go back to Applications from the brand. Rejected applications appear only under **Rejected**.
+**List filters:** two tabs, the same in the web app and the extension, that together list every application once (`filtering.ts`):
+- **Review**, the default: everything not applied yet.
+- **Applied**: anything sent, with a submission recorded, or at a stage past applying (Applied, No Answer, Offer, Rejected). Rejected applications appear here with their **Rejected** stage tag.
+
+The choice is kept in the URL (`?filter=applied`); old links to removed tabs fall back to Review.
+
+**Delivery tags:** unsent applications have no tag. The old "Draft" tag was on every row. Tags appear only for real delivery states: Gmail draft, Schedule in Gmail, Scheduled in Gmail, Approved for 9 AM, Sending, Needs attention.
 
 ## Files
 

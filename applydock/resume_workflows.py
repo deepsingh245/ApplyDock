@@ -250,8 +250,9 @@ def tailor_resume(entry_id, base_resume_id):
         # Tailoring for this job means this job uses the tailored copy, also for copies made before that rule.
         follow_tailored(entry_id, existing["id"])
         return resumes.get_resume(existing["id"]), False
-    # The master's text in the design new resumes start with (the default design, or the last one edited).
-    content = resume_model.with_design(content, new_resume_design())
+    # An exact copy of the master as it is now (content, section order, section titles); only the look (template, paper,
+    # page limit, fonts, spacing, colors) comes from the design for new resumes.
+    content = resume_model.with_design(content, new_resume_design(), keys=resume_model.LOOK_KEYS)
     pdf, report = resume_store.render_content(content)
     with database.LOCK, database.connect() as db:
         resume_id, created = resume_store.create_tailored(db, config.DATA, entry, base, pdf, report, content, base_version_id)

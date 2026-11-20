@@ -204,7 +204,7 @@ export function ResumeDesignSettings() {
       <Card>
         <CardHeader
           title="Design for new resumes"
-          description="Saved resumes always keep their own design. This decides how a new tailored resume (or a newly uploaded one) looks when it is created."
+          description="Saved resumes always keep their own design. A new tailored resume is an exact copy of its master (content, section order and headings) and takes only its look from here: template, paper, page limit, fonts, spacing and colors."
         />
         <ModeChoice settings={settings} busy={update.isPending} onChange={(mode) => void run({ mode }, mode === "default" ? "New resumes now use your default design." : "New resumes now follow the last design you edited.")} />
       </Card>
@@ -243,7 +243,7 @@ export function ResumeDesignSettings() {
               idPrefix="default-design"
               orderCard={
                 <DesignCard title="Section order" className="lg:col-span-2">
-                  <p className="m-0 text-xs text-ink-3">Sections a resume doesn't have are skipped when it is printed.</p>
+                  <p className="m-0 text-xs text-ink-3">Used for newly uploaded resumes. Tailored copies keep their master's order. Sections a resume doesn't have are skipped when it is printed.</p>
                   <OrderList design={draft} titles={settings.options.section_titles} onChange={(section_order) => setDraft({ ...draft, section_order })} />
                 </DesignCard>
               }

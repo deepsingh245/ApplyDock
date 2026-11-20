@@ -7,7 +7,7 @@ const normalized = (value: unknown) => String(value ?? "").trim().toLowerCase();
 
 export const stageIsAfterApply = (value: unknown) => STAGES_AFTER_APPLY.has(normalized(value));
 
-/** Rejected applications stay out of every list except the Rejected filter. */
+/** A rejected application (its stage); listed under Applied with its Rejected stage tag. */
 export const isRejected = (entry?: Pick<Entry, "application_stage"> | null) => normalized(entry?.application_stage) === "rejected";
 
 /** Still needs work from you: not sent, not submitted, not past the Applied stage, not rejected. */
@@ -55,15 +55,18 @@ export function scoreTone(score?: number | null): ScoreTone {
   return score >= 75 ? "strong" : score >= 50 ? "medium" : "weak";
 }
 
-/** Sent applications leave the working list (they stay in Notion and in the Applied/Rejected history views). */
+/** Applications not yet sent (sent ones stay in Notion and under Applied). */
 export const activeEntries = (entries: Entry[]) => entries.filter((entry) => entry.status !== "sent");
 
-/** The application status shown on list rows and the editor badge. */
+/**
+ * The delivery status shown on list rows and the editor badge, or "" when there is nothing to say. Every application
+ * starts as a local "draft", so labelling that was noise on every row; only real delivery states get a tag.
+ */
 export function deliveryLabel(entry: Pick<Entry, "delivery_mode" | "status">): string {
   if (entry.delivery_mode === "gmail_scheduled") return "Scheduled in Gmail";
   if (entry.delivery_mode === "gmail_schedule_pending") return "Schedule in Gmail";
   if (entry.delivery_mode === "gmail_draft") return "Gmail draft";
-  return ({ approved: "Approved for 9 AM", sending: "Sending", failed: "Needs attention", draft: "Draft" } as Record<string, string>)[entry.status] ?? entry.status;
+  return ({ approved: "Approved for 9 AM", sending: "Sending", failed: "Needs attention", sent: "Sent", draft: "" } as Record<string, string>)[entry.status] ?? entry.status;
 }
 
 /** The tone key used to color a delivery badge (local deliveries use the status, Gmail ones the mode). */

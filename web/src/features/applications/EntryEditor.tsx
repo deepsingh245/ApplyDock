@@ -260,7 +260,7 @@ export function EntryEditor({
         </div>
         <div className="flex items-center gap-1.5">
           <Pill tone="outline">{entry.application_stage || "Stage not set"}</Pill>
-          <Pill tone={toneFor(deliveryCategory(entry))}>{deliveryLabel(entry)}</Pill>
+          {deliveryLabel(entry) ? <Pill tone={toneFor(deliveryCategory(entry))}>{deliveryLabel(entry)}</Pill> : null}
           {entry.status !== "sending" ? (
             <Menu>
               <MenuTrigger asChild>

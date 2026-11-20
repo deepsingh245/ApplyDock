@@ -144,7 +144,7 @@ export function Inspector({
         <Eyebrow>Status</Eyebrow>
         <KeyValue
           items={[
-            ["Delivery", <Pill key="d" tone={toneFor(deliveryCategory(entry))}>{deliveryLabel(entry)}</Pill>],
+            Boolean(deliveryLabel(entry)) && ["Delivery", <Pill key="d" tone={toneFor(deliveryCategory(entry))}>{deliveryLabel(entry)}</Pill>],
             ["Stage", entry.application_stage || "Not set"],
             entry.apply_method === "email" && [
               "Readiness",

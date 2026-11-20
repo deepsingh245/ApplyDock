@@ -48,10 +48,13 @@ test("a new tailored resume starts with the default design, and the application 
   const meta = (await api<DraftResponse>(`/api/resumes/${ids.tailoredId}/draft`)).draft.content.meta;
   expect(meta.template).toBe("compact");
   expect(meta.layout.accent).toBe("#7a1f2b");
+  // Only the look comes from the default design: the copy keeps its master's section order (the default moved Skills up).
   const settings = await api<{ default: Meta }>("/api/resume-design");
-  expect(meta.section_order).toEqual(settings.default.section_order);
+  const master = (await api<DraftResponse>(`/api/resumes/${ids.masterId}/draft`)).draft.content.meta;
+  expect(meta.section_order).toEqual(master.section_order);
+  expect(meta.section_order).not.toEqual(settings.default.section_order);
   // The master keeps its own design; the application now follows the tailored copy.
-  expect((await api<DraftResponse>(`/api/resumes/${ids.masterId}/draft`)).draft.content.meta.template).toBe("ats-classic");
+  expect(master.template).toBe("ats-classic");
   const state = await api<{ entries: { id: string; resume_id: string }[] }>("/api/state");
   expect(state.entries.find((entry) => entry.id === ids.entryId)!.resume_id).toBe(ids.tailoredId);
 });

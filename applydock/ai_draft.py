@@ -2,11 +2,8 @@
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
-import tempfile
 
-from . import config
+from . import ats, config
 
 
 def _highlights_text(highlights):
@@ -33,26 +30,21 @@ def ai_prompt(entry, profile, highlights=None):
 
 
 def generate_ai_draft(entry, highlights=None):
-    executable = shutil.which("codex")
-    if not executable:
-        raise RuntimeError("Codex CLI is not installed. Use Copy prompt for this chat instead.")
+    """Subject, body and notes from Codex, through the same runner as the analysis (ats._run_codex).
+
+    It used to build its own command: without UTF-8 decoding any non-ASCII reply failed on Windows, and it parsed the
+    console output instead of the final message file, which newer Codex versions surround with progress text.
+    """
     profile = config.SETTINGS.get("candidate_profile", "")
     if not profile.strip():
-        raise ValueError("Add your background in the AI profile section first.")
-    scratch = config.ROOT / ".tmp"
-    scratch.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="applydock-ai-", dir=scratch) as sandbox:
-        command = [executable, "exec", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check",
-                   "--ignore-user-config", "--ignore-rules", "-C", sandbox, "--output-schema",
-                   str(config.SCHEMA_DIR / "ai-schema.json"), "--color", "never", "-"]
-        try:
-            result = subprocess.run(command, input=ai_prompt(entry, profile, highlights), text=True, capture_output=True, timeout=150)
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("Codex draft timed out. Try again or copy the prompt to this chat.") from None
-    if result.returncode:
-        raise RuntimeError("Codex could not create a draft. Check Codex sign-in and connection, or copy the prompt to this chat.")
+        raise ValueError("Add your background in Settings → AI writing background first.")
     try:
-        draft = json.loads(result.stdout)
+        draft = ats._run_codex(config.SCHEMA_DIR, ai_prompt(entry, profile, highlights), "ai-schema.json", "email_draft", "", config.DB)
+    except RuntimeError as error:
+        # The runner's errors are "category|message"; the message is written for people.
+        message = str(error).split("|", 1)[-1]
+        raise RuntimeError(f"{message} You can also use Copy prompt and paste it into a chat.") from None
+    try:
         return {key: str(draft[key])[:5000] for key in ("subject", "body", "notes")}
-    except (ValueError, KeyError, TypeError):
+    except (KeyError, TypeError):
         raise RuntimeError("Codex returned an unreadable draft. Try again or copy the prompt to this chat.") from None

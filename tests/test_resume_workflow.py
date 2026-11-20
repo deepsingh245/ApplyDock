@@ -169,11 +169,16 @@ class ResumeWorkflowTests(unittest.TestCase):
         self.assertEqual(call("PATCH", f"/api/resumes/{self.master['id']}/draft", {"content": text_only, "expected_revision": master["revision"]})["code"], 200)
         self.assertEqual(resume_workflows.last_design(), edited)
 
-        # The next tailored copy: the master's text in the last design. Existing resumes keep their own design.
+        # The next tailored copy: an exact copy of the master as it is now (including the unsaved label edit, and the
+        # master's own section order and titles), with only the look taken from the last design.
         second, _ = resume_workflows.tailor_resume(self.entry("https://jobs.lever.co/example/frontend-2")["id"], self.master["id"])
         second_content = self.draft(second["id"])["content"]
-        self.assertEqual(resume_model.design_of(second_content), edited)
-        self.assertEqual(second_content["work"], self.draft(self.master["id"])["content"]["work"])
+        master_now = self.draft(self.master["id"])["content"]
+        self.assertEqual({key: second_content["meta"][key] for key in resume_model.LOOK_KEYS}, {key: edited[key] for key in resume_model.LOOK_KEYS})
+        self.assertEqual(second_content["meta"]["section_order"], master_now["meta"]["section_order"])
+        self.assertEqual(second_content["meta"]["section_titles"], master_now["meta"]["section_titles"])
+        self.assertEqual(second_content["basics"]["label"], "Staff Frontend Engineer")
+        self.assertEqual({key: value for key, value in second_content.items() if key != "meta"}, {key: value for key, value in master_now.items() if key != "meta"})
         self.assertEqual(resume_model.design_of(self.draft(self.master["id"])["content"]), master_design)
         with database.connect() as db:
             saved = json.loads(db.execute("SELECT content_json FROM resume_versions WHERE id=?", (second["current_version_id"],)).fetchone()["content_json"])

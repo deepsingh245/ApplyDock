@@ -13,12 +13,8 @@ import { scoreLabel } from "@/lib/format";
 import { filterSource, listCounts, visibleEntries, type ListFilter, type ListOptions } from "./filtering";
 
 const FILTERS: { value: ListFilter; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "to_apply", label: "To apply" },
   { value: "review", label: "Review" },
   { value: "applied", label: "Applied" },
-  { value: "scheduled", label: "Scheduled" },
-  { value: "rejected", label: "Rejected" },
 ];
 
 function QueueItem({ entry, selected, onSelect }: { entry: Entry; selected: boolean; onSelect: () => void }) {
@@ -45,7 +41,7 @@ function QueueItem({ entry, selected, onSelect }: { entry: Entry; selected: bool
         {entry.company || (entry.kind === "post" ? "Hiring post" : "Company not set")} · {entry.platform || "Other"}
       </span>
       <span className="flex flex-wrap gap-1">
-        <Pill tone={toneFor(deliveryCategory(entry))}>{deliveryLabel(entry)}</Pill>
+        {deliveryLabel(entry) ? <Pill tone={toneFor(deliveryCategory(entry))}>{deliveryLabel(entry)}</Pill> : null}
         {entry.application_stage ? <Pill tone="outline">{entry.application_stage}</Pill> : null}
         {review ? <Pill tone="warn">Needs review</Pill> : null}
       </span>
@@ -81,7 +77,7 @@ export function QueueList({
     <aside className="flex min-h-0 flex-1 flex-col border-line bg-surface md:border-r" aria-label="Application queue">
       <div className="flex items-center justify-between gap-2 px-4 pt-4 pb-2">
         <h1 className="m-0 flex items-baseline gap-2 text-lg font-semibold">
-          Applications <Count id="active-count">{counts.active}</Count>
+          Applications <Count id="active-count">{counts.review}</Count>
         </h1>
         <Button asChild variant="primary" size="sm">
           <Link to="/applications/new" aria-label="Add a job or post" title="Add a job or post">
@@ -114,9 +110,7 @@ export function QueueList({
         className="flex-wrap overflow-visible px-4 pb-2"
         value={options.filter}
         onChange={(filter) => onOptionsChange({ filter })}
-        options={FILTERS.map((item) =>
-          item.value === "rejected" && counts.rejected ? { ...item, suffix: <Count id="rejected-count">{counts.rejected}</Count> } : item,
-        )}
+        options={FILTERS.map((item) => ({ ...item, suffix: <Count id={`${item.value}-count`}>{counts[item.value]}</Count> }))}
       />
       <details ref={details} className="group mx-4 mb-2 rounded-sm border border-line">
         <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 text-xs font-medium text-ink-2 hover:text-ink">
@@ -160,21 +154,26 @@ export function QueueList({
           shown.map((entry) => <QueueItem key={entry.id} entry={entry} selected={entry.id === selectedId} onSelect={() => onSelect(entry)} />)
         ) : (
           <div className="queue-empty grid gap-1 px-4 py-8 text-center text-sm text-ink-2">
-            {options.filter === "rejected" && !source.length ? (
+            {source.length ? (
               <>
-                <strong className="text-ink">No rejected applications.</strong>
-                <p className="m-0">Applications whose stage is Rejected are kept here, out of your other lists.</p>
+                <strong className="text-ink">Nothing matches this view.</strong>
+                <p className="m-0">Try another search or analysis filter.</p>
+              </>
+            ) : options.filter === "applied" ? (
+              <>
+                <strong className="text-ink">Nothing applied yet.</strong>
+                <p className="m-0">Applications move here once you apply, record a submission, or set a stage like Applied or Rejected.</p>
               </>
             ) : (
               <>
-                <strong className="text-ink">{source.length ? "Nothing matches this view." : "Your queue is clear."}</strong>
-                <p className="m-0">{source.length ? "Try another filter or search." : "Add a selected job or hiring post. Sent emails stay in Notion."}</p>
+                <strong className="text-ink">Your queue is clear.</strong>
+                <p className="m-0">Add a selected job or hiring post. Applied ones are under Applied.</p>
               </>
             )}
           </div>
         )}
       </div>
-      <p className="m-0 border-t border-line px-4 py-2 text-xs text-ink-3">Sent applications leave this list and stay in Notion.</p>
+      <p className="m-0 border-t border-line px-4 py-2 text-xs text-ink-3">Applied, sent and rejected applications are under Applied.</p>
     </aside>
   );
 }

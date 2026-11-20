@@ -55,7 +55,7 @@ COVERAGE_LABELS = {
     "profile_only": "Relevant but missing", "unsupported": "Missing from both",
 }
 JOB_PURPOSES = {"resume_structure": ("resume import", 20, 85), "resume_suggestions": ("tailoring suggestions", 20, 85),
-                "score_check": ("score check", 30, 85)}
+                "score_check": ("score check", 30, 85), "email_draft": ("email draft", 20, 85)}
 STATUS_RANK = {"missing": 0, "uncertain": 0, "listed": 1, "partial": 2, "demonstrated": 3}
 WORKER_WAKE = threading.Event()
 WORKER_STOP = threading.Event()

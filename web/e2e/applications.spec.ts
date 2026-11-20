@@ -13,12 +13,17 @@ test("opens the first application that needs action in a full-width three-pane w
   await expect(app.locator("#editor-progress .step")).toHaveCount(5);
   await expect(app.locator("#active-count")).toHaveText("1");
   await expect(app.getByTestId("email-preview")).toContainText("Application: Senior Frontend Engineer");
-  // The list opens on Review (new captures need review), not All.
-  await expect(app.getByTestId("filters").locator('[data-value="review"]')).toHaveAttribute("data-state", "on");
+  // Only two tabs, Review (the default) and Applied; no "All". Unsent applications carry no "Draft" tag.
+  const filters = app.getByTestId("filters");
+  await expect(filters.locator("[data-value]")).toHaveCount(2);
+  await expect(filters.locator('[data-value="review"]')).toHaveAttribute("data-state", "on");
+  await expect(filters.locator('[data-value="applied"]')).toBeVisible();
   await expect(app).not.toHaveURL(/filter=/);
   await expect(app.locator("#entry-list .queue-item")).toHaveCount(1);
-  await app.getByTestId("filters").locator('[data-value="all"]').click();
-  await expect(app).toHaveURL(/filter=all/);
+  await expect(app.locator("#entry-list .queue-item")).not.toContainText("Draft");
+  await filters.locator('[data-value="applied"]').click();
+  await expect(app).toHaveURL(/filter=applied/);
+  await expect(app.locator("#entry-list .queue-item")).toHaveCount(0);
 });
 
 test("the email preview follows the form, and edits save", async ({ app }) => {
@@ -63,7 +68,7 @@ test("leaving with unsaved edits asks first", async ({ app }) => {
   await expect(app).toHaveURL(/settings/);
 });
 
-test("rejected applications are hidden unless the Rejected filter is chosen", async ({ app }) => {
+test("rejected applications leave Review and are listed under Applied with their stage", async ({ app }) => {
   await app.getByLabel("Application stage").selectOption("Rejected");
   await app.locator("#save-button").click();
   await expect(app.getByText("Changes saved.")).toBeVisible();
@@ -71,14 +76,15 @@ test("rejected applications are hidden unless the Rejected filter is chosen", as
   await app.locator("#applications-button").click();
   await expect(app.locator("#entry-list .queue-item")).toHaveCount(0);
   await expect(app.locator("#empty-editor")).toHaveText("No active applications");
-  await expect(app.locator("#rejected-count")).toHaveText("1");
-  await app.getByTestId("filters").locator('[data-value="rejected"]').click();
+  await expect(app.locator("#applied-count")).toHaveText("1");
+  await app.getByTestId("filters").locator('[data-value="applied"]').click();
   await expect(app.locator("#entry-list .queue-item")).toHaveCount(1);
+  await expect(app.locator("#entry-list .queue-item")).toContainText("Rejected");
   await app.locator("#entry-list .queue-item").click();
   await app.getByLabel("Application stage").selectOption("To apply");
   await app.locator("#save-button").click();
   await expect(app.getByText("Changes saved.")).toBeVisible();
-  await app.getByTestId("filters").locator('[data-value="all"]').click();
+  await app.getByTestId("filters").locator('[data-value="review"]').click();
   await expect(app.locator("#entry-list .queue-item")).toHaveCount(1);
 });
 
@@ -106,14 +112,16 @@ test("adds a job and opens it", async ({ app }) => {
   await app.getByRole("button", { name: "Save" }).click();
   await expect(app.locator("#editor-title")).toHaveText("Platform Engineer");
   await expect(app).toHaveURL(/\/applications\/[a-f0-9-]+$/);
-  await app.getByTestId("filters").locator('[data-value="all"]').click();
-  await expect(app.locator("#entry-list .queue-item")).toHaveCount(2);
+  // The new job is under Review; the Initech one was submitted earlier, so it is under Applied.
+  await expect(app.locator("#entry-list .queue-item")).toHaveCount(1);
+  await expect(app.locator("#review-count")).toHaveText("1");
+  await expect(app.locator("#applied-count")).toHaveText("1");
 });
 
 test("search with the / shortcut and filter by score", async ({ app }) => {
   // The shortcut belongs to the (lazily loaded) Applications screen; wait for it before typing.
   await expect(app.locator("#entry-list")).toBeVisible();
-  await app.getByTestId("filters").locator('[data-value="all"]').click();
+  await app.getByTestId("filters").locator('[data-value="applied"]').click();
   await app.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await app.keyboard.press("/");
   await expect(app.locator("#search-input")).toBeFocused();
