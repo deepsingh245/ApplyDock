@@ -156,6 +156,8 @@ export interface AppState {
   gmail_connected: boolean;
   gmail_address: string;
   candidate_profile: string;
+  email_signature: string;
+  email_signature_default: string;
   profile_saved: boolean;
   codex: CodexStatus;
   ats_usage: { calls?: number; cached?: number; [key: string]: unknown };

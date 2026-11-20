@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from . import applications, ats, config, database, events, profile, resume_import, resume_model, resume_render, resume_store, resumes
+from . import applications, ats, auto_email, config, database, events, profile, resume_import, resume_model, resume_render, resume_store, resumes
 
 
 # ---------------------------------------------------------------- design carry-over
@@ -136,9 +136,10 @@ def save_editor_version(resume_id, expected_revision, label=""):
         db.execute("UPDATE resume_drafts SET base_version_id=? WHERE resume_id=?", (version["id"], resume_id))
     resumes.after_current_changed(resume_id, changed)
     followed = follow_tailored(resume["entry_id"], resume_id)
+    email_draft = auto_email.start(resume["entry_id"]) if resume["kind"] == "tailored" else "skipped"
     return {"resume": resumes.get_resume(resume_id), "version_id": version["id"], "version_number": version["version_number"],
             "created": created, "unchanged": not created and not changed, "validation": report,
-            "sha256": document["sha256"], "application_follows": followed}
+            "sha256": document["sha256"], "application_follows": followed, "email_draft": email_draft}
 
 
 def editor_state(resume_id):

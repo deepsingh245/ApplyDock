@@ -172,7 +172,7 @@ export function useEditorController({ resumeId, entryId, entry, data, saver }: {
 
     const saveVersion = async (analyze = false) => {
       await flush();
-      const result = await api<{ version_id: string; version_number: number; unchanged: boolean; validation: Validation; application_follows?: boolean }>(
+      const result = await api<{ version_id: string; version_number: number; unchanged: boolean; validation: Validation; application_follows?: boolean; email_draft?: string }>(
         `/api/resumes/${resumeId}/versions/from-draft`,
         "POST",
         { expected_revision: editor().revision },
@@ -185,9 +185,12 @@ export function useEditorController({ resumeId, entryId, entry, data, saver }: {
         (result.unchanged
           ? `No changes since version ${result.version_number}.`
           : `Saved version ${result.version_number}.${warnings ? ` ${warnings} PDF check warning(s) — see Preview.` : " PDF checks passed."}`) +
-          (result.application_follows ? " The application now uses this tailored resume." : ""),
+          (result.application_follows ? " The application now uses this tailored resume." : "") +
+          (result.email_draft === "started" ? " Drafting the email in the background; it will appear in the Email tab with this resume attached." : ""),
         warnings > 0,
       );
+      // The draft is written by Codex in the background; pick it up when it lands.
+      if (result.email_draft === "started") for (const delay of [30_000, 90_000, 180_000]) window.setTimeout(() => void reloadState(), delay);
       if (analyze && entry) {
         const analysis = await api<{ analysis: Analysis; cached: boolean }>(`/api/entries/${entry.id}/analyses`, "POST", { resume_version_id: result.version_id });
         client.setQueryData(keys.analysis(analysis.analysis.id), analysis.analysis);

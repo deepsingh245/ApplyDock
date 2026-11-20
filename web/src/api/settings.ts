@@ -10,6 +10,7 @@ export const settingsApi = {
   saveNotion: (body: { data_source_id: string; token: string }) => api("/api/settings/notion", "POST", body),
   saveSmtp: (body: { host: string; port: string; username: string; from: string; password: string }) => api("/api/settings/smtp", "POST", body),
   saveProfileText: (body: { profile: string }) => api("/api/settings/profile", "POST", body),
+  saveSignature: (body: { signature: string }) => api("/api/settings/signature", "POST", body),
   saveGmailClient: (client: unknown) => api("/api/settings/gmail/client", "POST", client),
   connectGmail: () => api<{ authorization_url: string }>("/api/settings/gmail/connect", "POST"),
   checkCodex: () => api<CodexCheck>("/api/settings/codex/check", "POST"),

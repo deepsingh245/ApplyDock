@@ -284,6 +284,38 @@ function BackgroundCard({ state }: { state: AppState }) {
   );
 }
 
+function SignatureCard({ state }: { state: AppState }) {
+  const reload = useReloadState();
+  const { register, handleSubmit, formState } = useForm({ values: { signature: state.email_signature || "" } });
+  const submit = handleSubmit(async (values) => {
+    try {
+      await settingsApi.saveSignature(values);
+      await reload();
+      notify(values.signature.trim() ? "Your email signature was saved." : "Signature reset to your Master Profile details.");
+    } catch (error) {
+      notify(errorMessage(error), true);
+    }
+  });
+  return (
+    <ConfigCard title="Email signature" status={state.email_signature ? "Custom" : "From Master Profile"} tone={state.email_signature ? "success" : "neutral"}>
+      <form className="grid gap-3" onSubmit={submit} aria-label="Email signature">
+        <p className="m-0">Added to the end of every AI email draft, including the ones built automatically when you save a tailored resume for a hiring post. Leave it empty to build it from your Master Profile.</p>
+        {state.email_signature ? null : (
+          <pre className="m-0 rounded-sm border border-line bg-canvas p-3 text-sm whitespace-pre-wrap text-ink-2" aria-label="Current signature">{state.email_signature_default || "Add your name and contact details to the Master Profile, or write a signature here."}</pre>
+        )}
+        <Field label="Custom signature">
+          <Textarea rows={7} placeholder={"Warm regards,\nYour name\n- you@example.com"} {...register("signature")} />
+        </Field>
+        <div>
+          <Button type="submit" disabled={formState.isSubmitting}>
+            Save signature
+          </Button>
+        </div>
+      </form>
+    </ConfigCard>
+  );
+}
+
 function readNotifications() {
   try {
     return localStorage.getItem("applydock-notifications") !== "off";
@@ -413,6 +445,7 @@ export function Connections() {
         <SmtpCard state={state} />
         <GmailCard state={state} />
         <BackgroundCard state={state} />
+        <SignatureCard state={state} />
       </div>
       <SideColumn state={state} />
     </div>

@@ -20,7 +20,7 @@ import re
 import traceback
 import urllib.parse
 
-from . import (ai_draft, applications, ats, career, config, database, delivery, events, gmail, notion, outreach,
+from . import (applications, ats, auto_email, career, config, database, delivery, events, gmail, notion, outreach,
                resume_model, resume_render, resume_store, resume_workflows, resumes, submissions)
 from .resume_store import ConflictError
 
@@ -327,6 +327,8 @@ def get_state(request, match, data):
         "gmail_connected": bool(settings.get("gmail_refresh_token")),
         "gmail_address": settings.get("gmail_address", ""),
         "candidate_profile": settings.get("candidate_profile", ""),
+        "email_signature": settings.get("email_signature", ""),
+        "email_signature_default": "" if settings.get("email_signature") else auto_email.signature(),
         "profile_saved": bool(settings.get("candidate_profile_saved", settings.get("candidate_profile"))),
         "codex": ats.codex_status(),
         "ats_usage": ats.usage_summary(config.DB),
@@ -398,6 +400,13 @@ def save_profile(request, match, data):
     config.SETTINGS["candidate_profile_saved"] = True
     config.save_config(config.SETTINGS)
     return {"ok": True}
+
+
+@route("POST", r"/api/settings/signature")
+def save_signature(request, match, data):
+    config.SETTINGS["email_signature"] = str((data or {}).get("signature", "")).strip()[:1500]
+    config.save_config(config.SETTINGS)
+    return {"ok": True, "effective": auto_email.signature()}
 
 
 @route("POST", r"/api/sync")
@@ -568,7 +577,7 @@ def write_ai_draft(request, match, data):
         raise ValueError("Entry not found.")
     if entry["status"] in ("sending", "sent"):
         raise ValueError("This application has already been sent or is sending.")
-    return {"draft": ai_draft.generate_ai_draft(entry)}
+    return {"draft": auto_email.build_draft(entry)}
 
 
 @route("POST", r"/api/entries/([a-f0-9-]+)/(gmail-draft|gmail-prepare|gmail-scheduled)")

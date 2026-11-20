@@ -18,6 +18,7 @@ Status: **Done** = implemented and covered by tests · **Partial** = works with 
 | Submission history | Immutable record of the exact file sent per application; audit trail; usage in the library; Applied filter shows sent history | Done | [master-profile](features/master-profile.md#data-model-and-relationships) | `submissions.py` |
 | Recurring link monitoring, verified Gmail sends | Background link checks; read sent Gmail to confirm sends | Deferred | [master-profile](features/master-profile.md#not-done-yet) | — |
 | AI email draft | Codex writes subject/body from the job + your profile | Done | [email-delivery](features/email-delivery.md) | `ai_draft.py` |
+| Automatic email for hiring posts | Save the tailored resume for an email-only hiring post: AI drafts the email, adds your signature, resume attached, nothing sent | Done | [email-delivery](features/email-delivery.md) | `auto_email.py` |
 | Gmail drafts | OAuth, draft create/update with exact resume, "prepare schedule" | Done | [email-delivery](features/email-delivery.md) | `gmail.py` |
 | Local 9 AM sender | Approve → SMTP send at 9:00 local time | Done (needs PC on) | [email-delivery](features/email-delivery.md) | `delivery.py` |
 | Home (features hub) | `/` lists the features as cards with quick links; Applications moved to `/applications` | Done | [DESIGN](../DESIGN.md) | `web/src/features/home/` |
