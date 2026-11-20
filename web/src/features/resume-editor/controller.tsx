@@ -14,7 +14,7 @@ import { api, ApiError, errorMessage } from "@/lib/api";
 import { plural } from "@/lib/format";
 import type { DraftSaver } from "./saver";
 import { editor } from "./store";
-import type { Change, Draft, EditorJob, EditorState, EditorVersion, ProfileEntry, Suggestion, Validation } from "./types";
+import type { Change, Draft, EditorJob, EditorState, EditorVersion, GapAnswer, ProfileEntry, Suggestion, Validation } from "./types";
 
 export interface EditorController {
   resumeId: string;
@@ -30,6 +30,8 @@ export interface EditorController {
   requestSuggestions: () => Promise<void>;
   recommendFromProfile: () => Promise<void>;
   suggestionAction: (action: "accept" | "edit" | "revert" | "reject", item: Suggestion) => Promise<void>;
+  /** Answer a "missing" question; resolves to the new suggestion (or null when it failed and was reported). */
+  answerGap: (item: Suggestion, answer: GapAnswer) => Promise<Suggestion | null>;
   addFromProfile: (entry: ProfileEntry) => Promise<void>;
   openProfileItem: (itemId: string) => Promise<void>;
   validate: () => Promise<void>;
@@ -261,6 +263,20 @@ export function useEditorController({ resumeId, entryId, entry, data, saver }: {
           editor().set({ recommending: "" });
         }
       }),
+      answerGap: async (item, answer) => {
+        try {
+          // The line is written against the saved draft, so pending edits go first.
+          await flush();
+          const result = await api<{ suggestion: Suggestion }>(`/api/resume-suggestions/${item.id}/answer`, "POST", answer);
+          await invalidateSuggestions();
+          const where = result.suggestion.target_label || (answer.kind === "summary" ? "Summary" : "the chosen entry");
+          notify(`Suggestion ready under ${where}. Review it there and accept it if it reads right.`);
+          return result.suggestion;
+        } catch (error) {
+          fail(error);
+          return null;
+        }
+      },
       suggestionAction: guarded(async (action, item) => {
         if (action === "reject") {
           await api(`/api/resume-suggestions/${item.id}`, "PATCH", { status: "rejected" });
@@ -339,18 +355,25 @@ export function useEditorController({ resumeId, entryId, entry, data, saver }: {
         const result = await api<{ validation: Validation }>(`/api/resumes/${resumeId}/draft/validate`, "POST", { content: editor().content });
         editor().set({ validation: result.validation });
       }),
+      // Download what the preview shows. Edits not yet in a saved version are saved first (after asking), so the file
+      // you get is always a real version that applications and analyses can refer to. Older versions download from
+      // the Versions list.
       download: guarded(async () => {
-        const version = current();
-        if (!version) return notify("No saved version yet.", true);
-        if (
-          hasUnsavedVersionChanges() &&
-          !(await confirm({
-            message: `Download the last saved version (v${version.version_number})? Your newer edits are not in it — use Save version first to include them.`,
-            confirmLabel: "Download",
-          }))
-        )
-          return;
-        await downloadVersion(version);
+        await flush();
+        let version = current();
+        if (!version || hasUnsavedVersionChanges()) {
+          const ok = await confirm({
+            title: "Save your edits as a version?",
+            message: version
+              ? `Your latest edits are not in a saved version yet (the last one is v${version.version_number}). Save them as a new version and download it? Older versions stay in the Versions list.`
+              : "This resume has no saved version yet. Save the current draft as a version and download it?",
+            confirmLabel: "Save version & download",
+          });
+          if (!ok) return;
+          await saveVersion();
+          version = current();
+        }
+        if (version) await downloadVersion(version);
       }),
       downloadVersion,
       compareWith,
@@ -466,7 +489,7 @@ export function useEditorController({ resumeId, entryId, entry, data, saver }: {
       },
       removeItemConfirmed: (message) => confirm({ message, confirmLabel: "Remove", danger: true }),
     };
-  }, [resumeId, entryId, entry, data, saver, client, navigate, reloadState, confirm, prompt, guarded]);
+  }, [resumeId, entryId, entry, data, saver, client, navigate, reloadState, confirm, prompt, guarded, fail]);
 }
 
 export const suggestionCountLabel = (count: number) => `${count} ${plural(count, "suggestion")}`;

@@ -27,10 +27,12 @@ from . import resume_render
 
 # v2: suggestions can draw on Master Profile evidence (source_profile_id) and add a whole profile project.
 SCORE_CHECK_VERSION = "check-v1"
-SUGGESTION_VERSION = "suggest-v3"  # v3: may propose a summary when the resume has none
+SUGGESTION_VERSION = "suggest-v4"  # v4: adds "ask" cards for requirements missing from both the resume and the profile
 JOB_WAKE = threading.Event()
 JOB_STOP = threading.Event()
 MAX_SUGGESTIONS = 15
+MAX_GAP_QUESTIONS = 8
+ASK_REASON = "Not in your resume or Master Profile. If you have done this, say where it belongs and what you did, and a line is written from your own words."
 
 
 class ConflictError(ValueError):
@@ -557,6 +559,24 @@ def validated_suggestions(raw, content: dict, requirements: list, corpus: str, p
     return result
 
 
+def gap_questions(requirements: list, covered_ids=()) -> list:
+    """"ask" cards for requirements that nothing supports: missing from the resume and from the Master Profile.
+
+    The model must never write content for these (nothing to ground it in), yet the candidate may simply not have
+    written it down. So instead of a suggestion, each becomes a question: where did you do this, and what did you do?
+    Mandatory and high-priority requirements come first.
+    """
+    rank = {"high": 0, "medium": 1, "low": 2}
+    gaps = [item for item in requirements
+            if item.get("status") in ("missing", "uncertain") and item.get("coverage", "unsupported") == "unsupported"
+            and item.get("id") not in set(covered_ids)]
+    gaps.sort(key=lambda item: (not item.get("mandatory"), rank.get(item.get("priority"), 1)))
+    return [{"requirement_id": item["id"], "requirement": str(item.get("requirement", ""))[:500], "target_id": "", "field": "",
+             "operation": "ask", "target_label": "", "original_text": "", "proposed_text": "", "reason": ASK_REASON,
+             "claim_type": "user_stated", "guard_flags": [], "needs_verification": False, "source_item_id": "", "payload": {}}
+            for item in gaps[:MAX_GAP_QUESTIONS]]
+
+
 def _run_suggestions(db_path, root, job, payload):
     content = resume_model.normalize(payload["content"])
     requirements = payload.get("requirements", [])
@@ -566,6 +586,7 @@ def _run_suggestions(db_path, root, job, payload):
     with ats._connect(db_path) as db:
         corpus = corpus_for(db, job["resume_id"], payload.get("profile", ""))
     suggestions = validated_suggestions(raw, content, requirements, corpus, profile_blocks)
+    suggestions += gap_questions(requirements, {item["requirement_id"] for item in suggestions})
     stamp = now_iso()
     with ats._connect(db_path) as db:
         db.execute("DELETE FROM resume_suggestions WHERE job_id=? AND status='pending'", (job["id"],))
@@ -619,7 +640,8 @@ def public_suggestion(row, content=None) -> dict:
     item["source"] = payload.get("source")
     item["project"] = payload.get("project")
     item["stale"] = False
-    if content is not None and row["status"] == "pending":
+    item["answer"] = payload.get("answer")
+    if content is not None and row["status"] == "pending" and row["operation"] != "ask":
         if row["operation"] == "add_project":
             item["stale"] = _fold(payload.get("project", {}).get("name")) in {_fold(project.get("name")) for project in content.get("projects", [])}
         elif row["operation"] == "replace":
@@ -647,6 +669,8 @@ def _suggestion(db, suggestion_id: str):
 def accept_suggestion(db, suggestion_id: str, expected_revision, text=None, confirm_verified=False):
     """Apply one suggestion to the draft atomically. Returns (draft, suggestion)."""
     row = _suggestion(db, suggestion_id)
+    if row["operation"] == "ask":
+        raise ValueError("Say where you did this and what you did first; a line is then written for you to review.")
     if row["status"] in ("accepted", "edited"):
         raise ValueError("This suggestion is already applied. Revert it first to apply it again.")
     if row["needs_verification"] and not confirm_verified:

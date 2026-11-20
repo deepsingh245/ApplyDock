@@ -799,6 +799,13 @@ def list_suggestions(request, match, data):
         return {"suggestions": resume_store.list_suggestions(db, match.group(1), query_value(request.path, "analysis_id"))}
 
 
+@route("POST", r"/api/resume-suggestions/([a-f0-9-]+)/answer")
+def answer_gap_question(request, match, data):
+    """Answer a "missing" question: {kind: skill|bullet|summary, target_id, details, skill} → a suggestion to review."""
+    return {"suggestion": resume_workflows.answer_gap(match.group(1), str(data.get("kind", "")), str(data.get("target_id", "")),
+                                                      str(data.get("details", "")), str(data.get("skill", "")))}
+
+
 @route("POST", r"/api/resume-suggestions/([a-f0-9-]+)/accept")
 def accept_suggestion(request, match, data):
     with database.LOCK, database.connect() as db:

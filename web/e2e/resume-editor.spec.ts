@@ -231,6 +231,57 @@ test("From profile: add and undo, Add a section, recommend from profile, indepen
   expect(scroll.page).toBe(0);
 });
 
+test("Download PDF gives the edited resume: unsaved edits are saved as a new version first", async ({ app, api, open }) => {
+  await open(`/resumes/${ids.tailoredId}/edit?entry=${ids.entryId}`);
+  const label = app.locator('[data-target="basics"][data-field="label"]');
+  await label.fill("Frontend Engineer, Design Systems");
+  await expect(saveStatus(app)).toHaveText("All changes saved");
+  type Versions = { versions: { id: string; version_number: number; is_current: boolean }[] };
+  const before = (await api<Versions>(`/api/resumes/${ids.tailoredId}/versions`)).versions;
+  const downloadStarted = app.waitForEvent("download");
+  await app.getByRole("button", { name: "Download PDF" }).click();
+  await expect(confirmDialog(app)).toContainText("not in a saved version yet");
+  await confirmDialog(app).getByRole("button", { name: "Save version & download" }).click();
+  const download = await downloadStarted;
+  const after = (await api<Versions>(`/api/resumes/${ids.tailoredId}/versions`)).versions;
+  const current = after.find((version) => version.is_current)!;
+  expect(after.length).toBe(before.length + 1);
+  expect(current.version_number).toBe(Math.max(...before.map((version) => version.version_number)) + 1);
+  expect(download.suggestedFilename()).toMatch(/ - Initech\.pdf$/);
+  // With nothing unsaved, Download is immediate and gives that same current version.
+  const again = app.waitForEvent("download");
+  await app.getByRole("button", { name: "Download PDF" }).click();
+  expect((await again).suggestedFilename()).toBe(download.suggestedFilename());
+  await expect(confirmDialog(app)).toHaveCount(0);
+});
+
+test("a requirement missing from resume and profile asks where you did it, then becomes a line from your words", async ({ app, open }) => {
+  // Analyze this draft (the sandbox job has "Kubernetes operations", with no evidence anywhere), then ask for suggestions.
+  await open(`/resumes/${ids.tailoredId}/edit?entry=${ids.entryId}`);
+  await sideTab(app, "Job match").click();
+  await app.getByRole("button", { name: "New analysis", exact: true }).click();
+  await expect(app.getByTestId("analysis-label")).toContainText("Draft check", { timeout: 30_000 });
+  await expect(app.getByTestId("analyzing")).toHaveCount(0, { timeout: 30_000 });
+  await app.getByRole("button", { name: /^(Suggest improvements|Refresh suggestions)$/ }).click();
+  const question = app.getByTestId("gap-question").filter({ hasText: "Kubernetes operations" });
+  await expect(question).toBeVisible({ timeout: 60_000 });
+  const write = question.getByRole("button", { name: "Write it for me" });
+  await expect(write).toBeDisabled();
+  const firstJob = await question.locator('[data-testid="gap-target"] optgroup').first().locator("option").first().getAttribute("value");
+  await question.getByTestId("gap-target").selectOption(firstJob!);
+  await question.getByTestId("gap-details").fill("operated our staging services on a Kubernetes cluster");
+  await write.click();
+  await expect(app.getByText(/Suggestion ready under/)).toBeVisible();
+  await expect(app.getByTestId("gap-question").filter({ hasText: "Kubernetes operations" })).toHaveCount(0);
+  // It is now an ordinary suggestion next to that job, built from (and showing) your own words.
+  const card = app.getByTestId("suggestion").filter({ has: app.getByTestId("suggestion-answer") });
+  await expect(card).toContainText("From what you told us");
+  await expect(card).toContainText("Ran operated our staging services on a Kubernetes cluster.");
+  await card.getByRole("button", { name: "Accept" }).click();
+  await expect(card).toHaveAttribute("data-applied", "true");
+  await expect.poll(() => app.locator('[data-target][data-field="text"]').evaluateAll((inputs) => (inputs as HTMLTextAreaElement[]).some((input) => input.value.includes("Kubernetes cluster")))).toBe(true);
+});
+
 test("a design change carries over to the next tailored resume, while saved resumes keep their own", async ({ app, api, open }) => {
   type Draft = { draft: { content: { meta: { template: string; layout: Record<string, unknown> } } } };
   const masterTemplate = (await api<Draft>(`/api/resumes/${ids.masterId}/draft`)).draft.content.meta.template;

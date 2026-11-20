@@ -69,7 +69,7 @@ export function EditorToolbar() {
         Reset unsaved edits
       </Button>
       <span className="flex-1" />
-      <Button variant="quiet" onClick={() => void ctl.download()}>
+      <Button variant="quiet" title="Download the resume as the preview shows it (unsaved edits are saved as a new version first)" onClick={() => void ctl.download()}>
         Download PDF
       </Button>
       {ctl.entry ? (

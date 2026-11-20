@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+import uuid
 from unittest.mock import patch
 
 from support import isolate_app
@@ -355,7 +356,10 @@ class ResumeWorkflowTests(unittest.TestCase):
         with database.connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM analysis_events WHERE analysis_id=?", (queued["job"]["id"],)).fetchone()[0], 0)
             suggestions = resume_store.list_suggestions(db, tailored["id"], run["id"])
-        self.assertEqual(len(suggestions), 2)  # invalid target, mismatched original, and an already-listed skill are dropped
+        # Invalid target, mismatched original, and an already-listed skill are dropped; q2 is then supported by nothing,
+        # so it becomes a question for the candidate instead of a suggestion.
+        self.assertEqual(sorted(s["operation"] for s in suggestions), ["add_keyword", "ask", "replace"])
+        self.assertEqual([s["requirement_id"] for s in suggestions if s["operation"] == "ask"], ["q2"])
         rewrite = [s for s in suggestions if s["operation"] == "replace"][0]
         skill = [s for s in suggestions if s["operation"] == "add_keyword"][0]
         self.assertTrue(rewrite["needs_verification"])  # "performance" is a new claim even though the model called it a rephrase
@@ -382,6 +386,108 @@ class ResumeWorkflowTests(unittest.TestCase):
             again = resume_workflows.queue_suggestions(run["id"], tailored["id"])
         self.assertTrue(again["reused"])
         checked.assert_not_called()
+
+    def test_saving_a_tailored_version_makes_it_the_current_file_that_downloads(self):
+        self.reviewed_master_version()
+        tailored, _ = resume_workflows.tailor_resume(self.entry()["id"], self.master["id"])
+        draft = self.draft(tailored["id"])
+        changed = json.loads(json.dumps(draft["content"]))
+        changed["basics"]["label"] = "Senior Frontend Engineer (Design Systems)"
+        saved_draft = call("PATCH", f"/api/resumes/{tailored['id']}/draft", {"content": changed, "expected_revision": draft["revision"]})["payload"]["draft"]
+        saved = resume_workflows.save_editor_version(tailored["id"], saved_draft["revision"])
+        self.assertTrue(saved["created"])
+        versions = ats.list_versions(config.DB, config.DATA, tailored["id"])
+        current = [version for version in versions if version["is_current"]]
+        self.assertEqual([version["version_number"] for version in current], [saved["version_number"]])
+        self.assertEqual(versions[0]["id"], saved["version_id"])  # newest first in the editor's list
+        with database.connect() as db:
+            stored = (config.DATA / ats.version_by_id(db, saved["version_id"])["stored_path"]).read_bytes()
+        self.assertEqual(stored, resume_render.render(resume_model.normalize(saved_draft["content"])))
+        self.assertEqual(resume_workflows.editor_state(tailored["id"])["base_content_hash"], saved_draft["content_hash"])
+
+    def test_gap_questions_cover_only_requirements_nothing_supports(self):
+        requirements = [
+            {"id": "a", "requirement": "React", "status": "demonstrated", "coverage": "represented"},
+            {"id": "b", "requirement": "OAuth", "status": "missing", "coverage": "profile_only"},
+            {"id": "c", "requirement": "Kubernetes", "status": "missing", "coverage": "unsupported", "mandatory": False, "priority": "low"},
+            {"id": "d", "requirement": "Accessibility", "status": "uncertain", "coverage": "unsupported", "mandatory": True, "priority": "high"},
+            {"id": "e", "requirement": "GraphQL", "status": "missing", "coverage": "unsupported"},
+        ]
+        questions = resume_store.gap_questions(requirements, covered_ids={"e"})
+        self.assertEqual([item["requirement_id"] for item in questions], ["d", "c"])  # mandatory first; covered "e" skipped
+        self.assertTrue(all(item["operation"] == "ask" and not item["proposed_text"] for item in questions))
+
+    def _ask(self, resume_id, analysis_id, requirement="Kubernetes operations"):
+        """Insert an open "missing" question the way the suggestions job does."""
+        item = resume_store.gap_questions([{"id": "q9", "requirement": requirement, "status": "missing", "coverage": "unsupported"}])[0]
+        suggestion_id = str(uuid.uuid4())
+        with database.connect() as db:
+            db.execute("""INSERT INTO resume_suggestions(id,job_id,analysis_id,resume_id,content_hash,requirement_id,requirement,target_id,field,
+                          operation,target_label,original_text,proposed_text,reason,claim_type,guard_flags_json,needs_verification,status,
+                          position,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',0,?,?)""",
+                       (suggestion_id, "job", analysis_id, resume_id, "", item["requirement_id"], item["requirement"], "", "", "ask", "", "", "",
+                        item["reason"], item["claim_type"], "[]", 0, ats.now_iso(), ats.now_iso()))
+        return suggestion_id
+
+    def test_a_missing_requirement_becomes_a_line_written_from_your_answer(self):
+        self.reviewed_master_version()
+        entry = self.entry()
+        tailored, _ = resume_workflows.tailor_resume(entry["id"], self.master["id"])
+        run, _ = ats.queue_analysis(config.DB, entry)
+        content = self.draft(tailored["id"])["content"]
+        job = content["work"][0]
+        question = self._ask(tailored["id"], run["id"])
+        # A question cannot be applied as is.
+        revision = self.draft(tailored["id"])["revision"]
+        refused = call("POST", f"/api/resume-suggestions/{question}/accept", {"expected_revision": revision})
+        self.assertEqual(refused["code"], 400)
+        self.assertIn("where you did this", refused["payload"]["error"])
+        # Answer: it happened at the first job. Codex writes only from the statement; the prompt carries it and the job.
+        statement = "Deployed our React apps on a Kubernetes cluster and wrote the Helm charts for staging."
+        prompts = []
+        def fake_codex(root, prompt, schema, purpose, job_id, db_path):
+            prompts.append((prompt, schema, purpose))
+            return {"text": "Deployed React applications on Kubernetes and authored Helm charts for staging", "notes": ""}
+        with patch.object(ats, "_run_codex", side_effect=fake_codex):
+            answered = call("POST", f"/api/resume-suggestions/{question}/answer", {"kind": "bullet", "target_id": job["id"], "details": statement})
+        self.assertEqual(answered["code"], 200, answered)
+        suggestion = answered["payload"]["suggestion"]
+        self.assertEqual((suggestion["operation"], suggestion["target_id"], suggestion["claim_type"]), ("insert_after", job["id"], "user_stated"))
+        self.assertFalse(suggestion["needs_verification"])  # every specific term comes from the statement
+        self.assertEqual(suggestion["answer"]["details"], statement)
+        self.assertEqual(prompts[0][1:], ("resume-gap-schema.json", "gap_fill"))
+        self.assertIn(statement, prompts[0][0])
+        self.assertIn(job["position"], prompts[0][0])
+        # It is an ordinary suggestion now: accepting adds the line under that job, and it can be reverted.
+        accepted = call("POST", f"/api/resume-suggestions/{question}/accept", {"expected_revision": revision})
+        self.assertEqual(accepted["code"], 200, accepted)
+        lines = [line["text"] for line in accepted["payload"]["draft"]["content"]["work"][0]["highlights"]]
+        self.assertIn("Deployed React applications on Kubernetes and authored Helm charts for staging", lines)
+        self.assertEqual(call("POST", f"/api/resume-suggestions/{question}/answer", {"kind": "bullet", "target_id": job["id"], "details": statement})["code"], 400)
+
+    def test_an_answer_that_adds_facts_beyond_your_words_is_flagged_and_skills_need_no_ai(self):
+        self.reviewed_master_version()
+        entry = self.entry()
+        tailored, _ = resume_workflows.tailor_resume(entry["id"], self.master["id"])
+        run, _ = ats.queue_analysis(config.DB, entry)
+        content = self.draft(tailored["id"])["content"]
+        question = self._ask(tailored["id"], run["id"])
+        with patch.object(ats, "_run_codex", return_value={"text": "Cut deploy time by 40% running Kubernetes for 12 services", "notes": ""}):
+            embellished = resume_workflows.answer_gap(question, "bullet", content["work"][0]["id"], "I ran our services on Kubernetes.")
+        self.assertTrue(embellished["needs_verification"])
+        self.assertIn("40%", [flag["value"] for flag in embellished["guard_flags"]])
+        # A skill goes straight into a suggestion for that group, without Codex.
+        skill_question = self._ask(tailored["id"], run["id"], "Helm")
+        with patch.object(ats, "_run_codex", side_effect=AssertionError("no AI for a skill")):
+            skill = resume_workflows.answer_gap(skill_question, "skill", content["skills"][0]["id"], skill="Helm")
+        self.assertEqual((skill["operation"], skill["field"], skill["proposed_text"]), ("add_keyword", "keywords", "Helm"))
+        # Too little to go on, or the wrong kind of place, is refused before any AI call.
+        vague = self._ask(tailored["id"], run["id"], "Terraform")
+        with patch.object(ats, "_run_codex", side_effect=AssertionError("not called")):
+            with self.assertRaisesRegex(ValueError, "Describe what you did"):
+                resume_workflows.answer_gap(vague, "bullet", content["work"][0]["id"], "short")
+            with self.assertRaisesRegex(ValueError, "skill group or project"):
+                resume_workflows.answer_gap(vague, "skill", content["work"][0]["id"], skill="Terraform")
 
     def test_codex_import_runs_once_per_file_and_is_grounded(self):
         draft = resume_workflows.editor_state(self.master["id"])["draft"]

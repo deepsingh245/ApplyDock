@@ -139,6 +139,15 @@ export interface GuardFlag {
   value: string;
 }
 
+export type GapKind = "bullet" | "skill" | "summary";
+
+export interface GapAnswer {
+  kind: GapKind;
+  target_id: string;
+  details: string;
+  skill: string;
+}
+
 export interface Suggestion {
   id: string;
   analysis_id: string;
@@ -146,7 +155,11 @@ export interface Suggestion {
   requirement?: string;
   target_id: string;
   field: string;
-  operation: "replace" | "insert_after" | "add_keyword" | "add_project";
+  /** "ask": a requirement missing from both the resume and the profile; the candidate says where and what they did. */
+  operation: "replace" | "insert_after" | "add_keyword" | "add_project" | "ask";
+  target_label?: string;
+  claim_type?: string;
+  answer?: { kind: GapKind; details: string; skill: string } | null;
   original_text: string;
   proposed_text: string;
   applied_text?: string;

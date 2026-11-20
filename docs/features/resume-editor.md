@@ -117,6 +117,33 @@ The migration to `PRAGMA user_version=4` is additive. `backup_before_migration()
 - **Add a section:** empty sections are listed as chips under Personal information instead of sitting empty in the form; a chip
   opens that section. A section with a pending suggestion (an AI summary, an added project) is always shown.
 
+## Missing requirements: ask, then write from your answer
+
+The AI never writes content for a requirement that nothing supports (coverage `unsupported`: missing from the resume and the Master Profile). Often, though, the experience is real and simply not written down. So the suggestions job adds an **"ask" card** for each such requirement (`resume_store.gap_questions`): up to 8, mandatory and high-priority first, skipping any requirement that already has a suggestion. The cards appear at the top of the Content tab.
+
+On a card you choose **where it belongs**:
+
+| Choice | What happens |
+|---|---|
+| A job or project | You describe **what you did, in your own words**. Codex writes one bullet only from that statement (`resume_workflows.answer_gap`, `gap_prompt`, schema `resume-gap-schema.json`). |
+| A skill group or project | You name the **skill**. It goes straight into a suggestion, with no AI. |
+| The summary | Codex revises the summary to include it, again only from your statement. |
+
+The card then turns into an **ordinary suggestion** (`claim_type: "user_stated"`, marked "From what you told us", showing "You said: …") next to that entry:
+- you accept, edit, revert or dismiss it like any other;
+- nothing is applied without your click.
+
+**Fact checks:**
+- The fact guard checks the written line against your resume, your profile and your statement. Anything the line adds beyond them, such as numbers, tools or results, marks it **Needs your verification**.
+- "I haven't done this" dismisses the card.
+- A question can't be accepted until it's answered.
+
+**API:** `POST /api/resume-suggestions/{id}/answer` with `{kind: bullet | skill | summary, target_id, details, skill}` returns the suggestion.
+
+**Tests:**
+- `test_resume_workflow.py`: `test_gap_questions…`, `test_a_missing_requirement_becomes_a_line…` and `test_an_answer_that_adds_facts…`.
+- `web/e2e/resume-editor.spec.ts`.
+
 ## Job match buttons
 
 **Check score** (score the unsaved draft, accepted suggestions included, against this analysis; no version and no history entry;
@@ -125,6 +152,16 @@ requirements**) · **Suggest improvements / Refresh suggestions** ·
 **New analysis** (analyze the unsaved draft; added to history) · **Save version & new analysis**. **Open full analysis** shows the analysis page in a large dialog over the editor (`openAnalysisModal` moves `#analysis-view`
 into `#analysis-dialog`); ×, Esc, or a backdrop click returns to the editor. Opened from anywhere else it is a normal page. **Recommend from my profile**
 reuses the current analysis and only runs one when none exists. See [ats-analysis](ats-analysis.md#stable-verdicts-and-score-checks-2026-10-27).
+
+## Download PDF
+
+The toolbar's **Download PDF** gives you the resume as the preview shows it:
+- **No unsaved edits:** it downloads the current saved version straight away.
+- **Unsaved edits (or no saved version yet):** it asks to **Save version & download**, then downloads that new version.
+
+The downloaded file is always a real version, so applications, analyses and submissions can refer to it. Earlier versions download from the **Versions** list.
+
+Before 2026-11-21 it silently fell back to the last saved version, so recent edits were missing from the file.
 
 ## Saved file name
 

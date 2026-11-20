@@ -54,6 +54,10 @@ def fake_codex(root, prompt, schema, purpose, job_id, db_path):
         for item in suggestions:
             item.setdefault("source_profile_id", "")
         return {"suggestions": suggestions, "notes": "Sandbox suggestions."}
+    if purpose == "gap_fill":
+        # Echo the candidate's own statement as the line, the way a grounded rewrite should stay within it.
+        statement = prompt.split("CANDIDATE STATEMENT (what they actually did):\n", 1)[1].split("\n\nJOB DESCRIPTION", 1)[0]
+        return {"text": "Ran " + statement.strip().rstrip(".") + ".", "notes": ""}
     if purpose == "resume_parse":
         return {"summary": "Frontend engineer", "skills": [{"name": "React", "details": "React apps", "evidence_ids": ["R1"]}],
                 "experience": [], "projects": [], "education": [], "certifications": [], "keywords": ["React"]}

@@ -7,7 +7,7 @@ import { cn } from "@/lib/cn";
 import { useCtl } from "./controller";
 import { ADD_LABELS, findTarget, ITEM_FIELDS, itemFilled, itemTitle, moveInList, newId, newItem, SECTION_LABELS, sectionEmpty, sectionTitle, type FieldSpec } from "./model";
 import { editor, useEditor } from "./store";
-import { addProjectSuggestions, SuggestionCard, Suggestions, useSuggestionList } from "./SuggestionCard";
+import { addProjectSuggestions, gapQuestions, GapQuestions, SuggestionCard, Suggestions, useSuggestionList } from "./SuggestionCard";
 import type { Item, ListSection, ResumeContent, Section, Suggestion } from "./types";
 
 const readValue = (content: ResumeContent | null, target: string, field: string): unknown => (content ? findTarget(content, target)?.node[field] : undefined);
@@ -365,14 +365,18 @@ function SuggestionSummary() {
   const suggestions = useSuggestionList();
   const onlySuggested = useEditor((state) => state.onlySuggested);
   if (!suggestions.length) return null;
-  const pending = suggestions.filter((item) => item.status === "pending" && !item.stale);
+  const pending = suggestions.filter((item) => item.status === "pending" && !item.stale && item.operation !== "ask");
+  const questions = gapQuestions(suggestions).length;
   const verify = pending.filter((item) => item.needs_verification).length;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-accent bg-accent-soft px-3 py-2 text-sm" data-testid="suggestion-summary">
       <strong>
         {pending.length} {pending.length === 1 ? "suggestion" : "suggestions"} to review
       </strong>
-      <span className="text-ink-2">{verify} need your verification · shown next to the text they change</span>
+      <span className="text-ink-2">
+        {verify} need your verification · shown next to the text they change
+        {questions ? ` · ${questions} missing ${questions === 1 ? "requirement asks" : "requirements ask"} for your answer below` : ""}
+      </span>
       <CheckLine className="ml-auto" checked={onlySuggested} onChange={(event) => editor().set({ onlySuggested: event.target.checked })}>
         Show only items with suggestions
       </CheckLine>
@@ -404,6 +408,7 @@ export function ContentPanel() {
   return (
     <div className="grid gap-3">
       <SuggestionSummary />
+      <GapQuestions />
       <form className="grid gap-3" autoComplete="off" onSubmit={(event) => event.preventDefault()} data-testid="resume-form">
         <PersonalSection />
         {hidden.length ? (
