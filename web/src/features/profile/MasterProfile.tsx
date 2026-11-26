@@ -87,7 +87,7 @@ function ImportCard({ run }: { run: ReturnType<typeof useProfileActions> }) {
           </CheckLine>
           <Button
             data-profile-action="import"
-            disabled={busy}
+            loading={busy}
             onClick={async () => {
               setBusy(true);
               await run(

@@ -21,6 +21,7 @@ export default defineConfig({
         configure: (proxy) => proxy.on("proxyReq", (request) => request.removeHeader("origin")),
       },
     },
+    allowedHosts: ["c6e9-150-242-85-14.ngrok-free.app"]
   },
   build: { outDir: "dist", emptyOutDir: true, assetsInlineLimit: 0, chunkSizeWarningLimit: 1200 },
   test: {

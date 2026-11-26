@@ -170,7 +170,7 @@ export function ScheduleWizard({ contacts, templates, resumes, onDone }: {
             {autoSend ? <Note tone="warn">At each time the extension opens WhatsApp Web, attaches the resume with the message and presses Send for you, paced at least 90 seconds apart and at most 25 a day. Chrome must be open with WhatsApp Web logged in. Automated sending breaks WhatsApp's terms and can get your number restricted, so keep batches small. Leave this off to press Send yourself.</Note> : null}
           </FieldGrid>
           <div className="mt-3">
-            <Button variant="primary" onClick={() => preview.mutate()} disabled={!ready || preview.isPending}><CalendarClockIcon aria-hidden />Preview schedule</Button>
+            <Button variant="primary" onClick={() => preview.mutate()} loading={preview.isPending} disabled={!ready}><CalendarClockIcon aria-hidden />Preview schedule</Button>
           </div>
         </Card>
       </div>
@@ -206,7 +206,7 @@ export function ScheduleWizard({ contacts, templates, resumes, onDone }: {
               ))}
             </ul>
             <div className="mt-4 flex items-center gap-3">
-              <Button variant="primary" onClick={() => commit.mutate()} disabled={!kept.length || blocked || commit.isPending}>Confirm and queue {kept.length}</Button>
+              <Button variant="primary" onClick={() => commit.mutate()} loading={commit.isPending} disabled={!kept.length || blocked}>Confirm and queue {kept.length}</Button>
               {blocked ? <span className="text-xs text-ink-3">Fill every message, set every time and confirm duplicates to continue.</span> : null}
             </div>
           </>

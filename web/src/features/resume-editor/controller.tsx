@@ -1,7 +1,7 @@
 // The editing session's actions: everything that talks to the helper goes through here so it can flush the
 // autosave first and turn a 409 into the conflict banner.
 import { useQueryClient } from "@tanstack/react-query";
-import { createContext, use, useCallback, useMemo } from "react";
+import { createContext, use, useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { draftKeys, fetchEditorState, fetchFile } from "@/api/drafts";
 import { keys, useReloadState } from "@/api/state";
@@ -22,6 +22,8 @@ export interface EditorController {
   entry: Entry | null;
   data: EditorState;
   flush: () => Promise<void>;
+  /** Which toolbar action is running on the helper right now (drives the buttons' spinners). */
+  busy: string | null;
   back: () => Promise<void>;
   reset: () => Promise<void>;
   saveVersion: (analyze?: boolean) => Promise<void>;
@@ -78,13 +80,18 @@ export function useEditorController({ resumeId, entryId, entry, data, saver }: {
   }, []);
 
   /** Run a server action on saved content; any failure becomes a notice (and a conflict banner for 409s). */
+  const [busy, setBusy] = useState<string | null>(null);
   const guarded = useCallback(
-    <A extends unknown[]>(run: (...args: A) => Promise<unknown>) =>
+    <A extends unknown[]>(run: (...args: A) => Promise<unknown>, name?: string | ((...args: A) => string)) =>
       async (...args: A) => {
+        const label = typeof name === "function" ? name(...args) : name;
+        if (label) setBusy(label);
         try {
           await run(...args);
         } catch (error) {
           fail(error);
+        } finally {
+          if (label) setBusy(null);
         }
       },
     [fail],
@@ -210,6 +217,7 @@ export function useEditorController({ resumeId, entryId, entry, data, saver }: {
       entry,
       data,
       flush,
+      busy,
       hasUnsavedVersionChanges,
       showPanel: (panel) => {
         editor().set({ panel });
@@ -227,8 +235,8 @@ export function useEditorController({ resumeId, entryId, entry, data, saver }: {
         acceptDraft(result.draft);
         editor().clearHistory();
         notify("Reset to the last saved version.");
-      }),
-      saveVersion: guarded(saveVersion),
+      }, "reset"),
+      saveVersion: guarded(saveVersion, (analyze) => (analyze ? "save-analyze" : "save")),
       analyzeDraft: guarded(analyzeDraft),
       checkScore: guarded(async (full = false) => {
         const analysisId = editor().analysisId;
@@ -238,7 +246,7 @@ export function useEditorController({ resumeId, entryId, entry, data, saver }: {
         const result = await api<{ job: EditorJob }>(`/api/analyses/${analysisId}/score-check`, "POST", { resume_id: resumeId, expected_revision: editor().revision, full });
         client.setQueryData(keys.job(result.job.id), result.job);
         editor().set({ scoreCheck: { analysisId, jobId: result.job.id } });
-      }),
+      }, "score"),
       requestSuggestions: guarded(requestSuggestions),
       recommendFromProfile: guarded(async () => {
         try {
@@ -374,7 +382,7 @@ export function useEditorController({ resumeId, entryId, entry, data, saver }: {
           version = current();
         }
         if (version) await downloadVersion(version);
-      }),
+      }, "download"),
       downloadVersion,
       compareWith,
       compareOriginal: async () => {
@@ -489,7 +497,7 @@ export function useEditorController({ resumeId, entryId, entry, data, saver }: {
       },
       removeItemConfirmed: (message) => confirm({ message, confirmLabel: "Remove", danger: true }),
     };
-  }, [resumeId, entryId, entry, data, saver, client, navigate, reloadState, confirm, prompt, guarded, fail]);
+  }, [resumeId, entryId, entry, data, saver, client, navigate, reloadState, confirm, prompt, guarded, fail, busy]);
 }
 
 export const suggestionCountLabel = (count: number) => `${count} ${plural(count, "suggestion")}`;

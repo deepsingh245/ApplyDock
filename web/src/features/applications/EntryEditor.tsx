@@ -394,7 +394,7 @@ export function EntryEditor({
             <p className="m-0 text-xs text-ink-3">
               {editable ? "Changes to an approved item remove its approval; stage-only changes keep it approved." : "Email delivery is locked, but you can still update the application stage."}
             </p>
-            <Button id="save-button" type="submit" variant="primary" disabled={saving || (!editable && !canStage)}>
+            <Button id="save-button" type="submit" variant="primary" loading={saving} disabled={!editable && !canStage}>
               {editable ? "Save changes" : "Save stage"}
             </Button>
           </div>

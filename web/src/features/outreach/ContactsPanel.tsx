@@ -120,7 +120,7 @@ export function ContactsPanel({ contacts, refresh }: { contacts: OutreachContact
             <Field label="Notes" wide><Textarea value={form.notes} onChange={(event) => set({ notes: event.target.value })} /></Field>
           </FieldGrid>
           <div className="mt-3">
-            <Button variant="primary" onClick={() => save.mutate()} disabled={save.isPending}><PlusIcon aria-hidden />{editing ? "Save changes" : "Add contact"}</Button>
+            <Button variant="primary" onClick={() => save.mutate()} loading={save.isPending}><PlusIcon aria-hidden />{editing ? "Save changes" : "Add contact"}</Button>
           </div>
         </Card>
 
@@ -128,7 +128,7 @@ export function ContactsPanel({ contacts, refresh }: { contacts: OutreachContact
           <CardHeader title="Import from a sheet" description="Paste rows from Excel or Google Sheets, or load a CSV/TSV file. A header row is optional; without one the order is Company, Recruiter, Phone, Email, Status, Notes. Existing contacts are never overwritten; duplicates are skipped." />
           <Textarea value={csvText} onChange={(event) => setCsvText(event.target.value)} rows={5} placeholder={SAMPLE} aria-label="Contact rows" className="tabular text-xs" />
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button variant="primary" onClick={() => importRows.mutate()} disabled={importRows.isPending || !csvText.trim()}><UploadIcon aria-hidden />Import contacts</Button>
+            <Button variant="primary" onClick={() => importRows.mutate()} loading={importRows.isPending} disabled={!csvText.trim()}><UploadIcon aria-hidden />Import contacts</Button>
             <Button asChild variant="secondary">
               <label>
                 <PaperclipIcon aria-hidden />Choose file

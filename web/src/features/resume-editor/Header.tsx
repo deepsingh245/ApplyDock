@@ -65,24 +65,24 @@ export function EditorToolbar() {
       <Button variant="quiet" onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Y)">
         Redo
       </Button>
-      <Button variant="quiet" onClick={() => void ctl.reset()}>
+      <Button variant="quiet" loading={ctl.busy === "reset"} disabled={ctl.busy !== null} onClick={() => void ctl.reset()}>
         Reset unsaved edits
       </Button>
       <span className="flex-1" />
-      <Button variant="quiet" title="Download the resume as the preview shows it (unsaved edits are saved as a new version first)" onClick={() => void ctl.download()}>
+      <Button variant="quiet" loading={ctl.busy === "download"} disabled={ctl.busy !== null} title="Download the resume as the preview shows it (unsaved edits are saved as a new version first)" onClick={() => void ctl.download()}>
         Download PDF
       </Button>
       {ctl.entry ? (
         <>
-          <Button title="Score the current draft, including accepted suggestions, against this job — no version is saved" onClick={() => void ctl.checkScore(false)}>
+          <Button loading={ctl.busy === "score"} disabled={ctl.busy !== null} title="Score the current draft, including accepted suggestions, against this job — no version is saved" onClick={() => void ctl.checkScore(false)}>
             Check score
           </Button>
-          <Button variant="quiet" onClick={() => void ctl.saveVersion(true)}>
+          <Button variant="quiet" loading={ctl.busy === "save-analyze"} disabled={ctl.busy !== null} onClick={() => void ctl.saveVersion(true)}>
             Save &amp; new analysis
           </Button>
         </>
       ) : null}
-      <Button variant="primary" onClick={() => void ctl.saveVersion(false)}>
+      <Button variant="primary" loading={ctl.busy === "save"} disabled={ctl.busy !== null} onClick={() => void ctl.saveVersion(false)}>
         Save version
       </Button>
     </div>

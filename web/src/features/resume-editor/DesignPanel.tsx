@@ -135,7 +135,7 @@ function DefaultDesignNote() {
           Your default design
         </Pill>
       ) : (
-        <Button size="sm" onClick={() => void makeDefault()} disabled={update.isPending || !settings.data}>
+        <Button size="sm" onClick={() => void makeDefault()} loading={update.isPending} disabled={!settings.data}>
           Make this my default design
         </Button>
       )}

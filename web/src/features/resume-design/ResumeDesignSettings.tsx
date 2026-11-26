@@ -230,7 +230,7 @@ export function ResumeDesignSettings() {
                   Discard changes
                 </Button>
               ) : null}
-              <Button variant="primary" disabled={!unsaved || update.isPending} onClick={() => void run({ design: draft }, "Default design saved. New tailored resumes will start with it.")}>
+              <Button variant="primary" loading={update.isPending} disabled={!unsaved} onClick={() => void run({ design: draft }, "Default design saved. New tailored resumes will start with it.")}>
                 Save as default design
               </Button>
             </div>

@@ -1,7 +1,7 @@
 import { createContext, use, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea } from "@/components/ui/field";
-import { Eyebrow, Spinner } from "@/components/ui/misc";
+import { Eyebrow } from "@/components/ui/misc";
 import { Pill } from "@/components/ui/pill";
 import { cn } from "@/lib/cn";
 import { useCtl } from "./controller";
@@ -99,8 +99,7 @@ export function GapQuestionCard({ item }: { item: Suggestion }) {
         </label>
       ) : null}
       <div className="flex flex-wrap items-center gap-1.5">
-        <Button size="sm" variant="primary" disabled={!ready || busy} onClick={() => void submit()}>
-          {busy ? <Spinner className="text-accent-ink" label="Writing" /> : null}
+        <Button size="sm" variant="primary" loading={busy} disabled={!ready} onClick={() => void submit()}>
           {kind === "skill" ? "Suggest adding this skill" : busy ? "Writing…" : "Write it for me"}
         </Button>
         <Button size="sm" variant="quiet" disabled={busy} onClick={() => void ctl.suggestionAction("reject", item)}>

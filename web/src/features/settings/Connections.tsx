@@ -81,7 +81,7 @@ function CodexCard({ state }: { state: AppState }) {
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <Button
-          disabled={busy === "codex"}
+          loading={busy === "codex"}
           onClick={() =>
             run("codex", async () => {
               const result = await settingsApi.checkCodex();
@@ -133,7 +133,7 @@ function NotionCard({ state }: { state: AppState }) {
               : "Notion changes are checked while the local helper is open."}
         </p>
         <div>
-          <Button type="submit" disabled={formState.isSubmitting}>
+          <Button type="submit" loading={formState.isSubmitting}>
             Save Notion connection
           </Button>
         </div>
@@ -183,7 +183,7 @@ function SmtpCard({ state }: { state: AppState }) {
           <Input type="password" autoComplete="off" placeholder={state.smtp_connected ? "Saved securely · leave blank to keep" : "Enter app password"} {...register("password")} />
         </Field>
         <div>
-          <Button type="submit" disabled={formState.isSubmitting}>
+          <Button type="submit" loading={formState.isSubmitting}>
             Verify and save
           </Button>
         </div>
@@ -221,14 +221,15 @@ function GmailCard({ state }: { state: AppState }) {
           <Input key={fileKey} type="file" accept=".json,application/json" required className="py-1" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
         </Field>
         <div>
-          <Button type="submit" disabled={busy === "client"}>
+          <Button type="submit" loading={busy === "client"}>
             Save OAuth client
           </Button>
         </div>
       </form>
       <div className="flex flex-wrap gap-2">
         <Button
-          disabled={!state.gmail_client_ready || busy === "connect"}
+          loading={busy === "connect"}
+          disabled={!state.gmail_client_ready}
           onClick={() =>
             run("connect", async () => {
               const result = await settingsApi.connectGmail();
@@ -240,7 +241,7 @@ function GmailCard({ state }: { state: AppState }) {
         </Button>
         <Button
           variant="quiet"
-          disabled={busy === "refresh"}
+          loading={busy === "refresh"}
           onClick={() =>
             run("refresh", async () => {
               await reload();
@@ -275,7 +276,7 @@ function BackgroundCard({ state }: { state: AppState }) {
           <Textarea rows={8} placeholder="Your real experience, skills, and relevant work" {...register("profile")} />
         </Field>
         <div>
-          <Button type="submit" disabled={formState.isSubmitting}>
+          <Button type="submit" loading={formState.isSubmitting}>
             Save background
           </Button>
         </div>
@@ -307,7 +308,7 @@ function SignatureCard({ state }: { state: AppState }) {
           <Textarea rows={7} placeholder={"Warm regards,\nYour name\n- you@example.com"} {...register("signature")} />
         </Field>
         <div>
-          <Button type="submit" disabled={formState.isSubmitting}>
+          <Button type="submit" loading={formState.isSubmitting}>
             Save signature
           </Button>
         </div>
@@ -404,7 +405,7 @@ function SideColumn({ state }: { state: AppState }) {
         <p className="m-0 text-xs text-ink-2">Re-check every connection, or push all applications to Notion again.</p>
         <div className="flex flex-wrap gap-2">
           <Button
-            disabled={busy === "checks"}
+            loading={busy === "checks"}
             onClick={() =>
               run("checks", async () => {
                 await Promise.all([settingsApi.checkCodex(), settingsApi.sync()]);
@@ -417,7 +418,7 @@ function SideColumn({ state }: { state: AppState }) {
           </Button>
           <Button
             variant="quiet"
-            disabled={busy === "sync"}
+            loading={busy === "sync"}
             onClick={() =>
               run("sync", async () => {
                 const result = await settingsApi.sync();

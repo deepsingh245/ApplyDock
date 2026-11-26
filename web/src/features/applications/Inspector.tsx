@@ -122,6 +122,7 @@ export function Inspector({
               data-action={item.action}
               variant={index === primary ? "primary" : item.kind === "quiet" ? "quiet" : "secondary"}
               className="w-full justify-start"
+              loading={busy === item.action}
               disabled={busy !== null}
               onClick={() => onAction(item.action)}
             >

@@ -1,4 +1,5 @@
 import { cva, type VariantProps } from "class-variance-authority";
+import { LoaderCircleIcon } from "lucide-react";
 import { Slot } from "radix-ui";
 import type { ComponentProps } from "react";
 import { cn } from "@/lib/cn";
@@ -27,16 +28,18 @@ export const buttonVariants = cva(
 
 export interface ButtonProps extends ComponentProps<"button">, VariantProps<typeof buttonVariants> {
   asChild?: boolean;
+  /** A helper request started by this button is running: shows a spinner and blocks repeat clicks. */
+  loading?: boolean;
 }
 
-export function Button({ className, variant, size, asChild = false, type, ...props }: ButtonProps) {
-  const Component = asChild ? Slot.Root : "button";
+export function Button({ className, variant, size, asChild = false, type, loading = false, children, ...props }: ButtonProps) {
+  const classes = cn(buttonVariants({ variant, size }), className);
+  if (asChild) return <Slot.Root className={classes} {...props}>{children}</Slot.Root>;
   return (
-    <Component
-      className={cn(buttonVariants({ variant, size }), className)}
-      {...(asChild ? {} : { type: type ?? "button" })}
-      {...props}
-    />
+    <button className={classes} type={type ?? "button"} aria-busy={loading || undefined} {...props} disabled={props.disabled || loading}>
+      {loading ? <LoaderCircleIcon className="animate-spin" aria-hidden /> : null}
+      {children}
+    </button>
   );
 }
 

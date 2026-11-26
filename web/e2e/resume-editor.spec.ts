@@ -53,8 +53,17 @@ test("master: autosave, undo/redo, review, save a version", async ({ app, api, o
   await app.getByRole("button", { name: "I have reviewed the content" }).click();
   await expect(app.getByTestId("review-banner")).toHaveCount(0);
   await expect(saveStatus(app)).toHaveText("All changes saved");
-  await app.getByRole("button", { name: "Save version", exact: true }).click();
+  // The helper request is slowed so the busy state is observable: spinner, aria-busy, no double clicks.
+  await app.route("**/versions/from-draft", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await route.continue();
+  });
+  const saveButton = app.getByRole("button", { name: "Save version", exact: true });
+  await saveButton.click();
+  await expect(saveButton).toHaveAttribute("aria-busy", "true");
+  await expect(saveButton).toBeDisabled();
   await expect(toast(app, "Saved version")).toBeVisible();
+  await expect(saveButton).not.toHaveAttribute("aria-busy", "true");
   await sideTab(app, "Versions").click();
   await expect(app.getByTestId("version-title").first()).toBeVisible();
   await expect(app.getByTestId("versions")).toContainText("Current");

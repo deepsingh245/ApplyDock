@@ -91,7 +91,7 @@ export function TemplatesPanel({ templates, contacts, refresh }: { templates: Ou
             <span className="whitespace-pre-wrap">{preview.text}</span>
             {preview.missing.length ? <span className="mt-1 block text-xs">Not filled: {preview.missing.join(", ")}</span> : null}
           </Note>
-          <div><Button variant="primary" onClick={() => save.mutate()} disabled={save.isPending}>{editing ? "Save changes" : "Save template"}</Button></div>
+          <div><Button variant="primary" onClick={() => save.mutate()} loading={save.isPending}>{editing ? "Save changes" : "Save template"}</Button></div>
         </div>
       </Card>
     </div>

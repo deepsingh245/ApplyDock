@@ -56,7 +56,8 @@ e2e/                    Playwright specs; every spec calls setupSandbox() and us
 - **Accessibility:**
   - Every control has a label.
   - Icon-only buttons use `IconButton label=…`.
-  - Lists that update use `aria-live="polite"`.
+   - A button that starts a helper request takes `loading` (spinner, `aria-busy`, blocks repeat clicks) instead of a hand-made `disabled` flag.
+ - Lists that update use `aria-live="polite"`.
   - Respect keyboard order.
 - **Test hooks.** Prefer roles and labels in tests. Add `data-testid` only where no accessible name fits. Keep these ids, which the extension and docs rely on: `#applications-button`, `#settings-button` and `#theme-button`.
 - **Comments** explain *why*, not *what*.

@@ -31,6 +31,7 @@ export default function KitPage() {
             <Button variant="danger">Danger</Button>
             <Button variant="text">Text link</Button>
             <Button size="sm">Small</Button>
+            <Button variant="primary" loading>Saving</Button>
             <Button disabled>Disabled</Button>
             <IconButton label="Add">
               <PlusIcon aria-hidden />
