@@ -66,7 +66,7 @@ export function deliveryLabel(entry: Pick<Entry, "delivery_mode" | "status">): s
   if (entry.delivery_mode === "gmail_scheduled") return "Scheduled in Gmail";
   if (entry.delivery_mode === "gmail_schedule_pending") return "Schedule in Gmail";
   if (entry.delivery_mode === "gmail_draft") return "Gmail draft";
-  return ({ approved: "Approved for 9 AM", sending: "Sending", failed: "Needs attention", sent: "Sent", draft: "" } as Record<string, string>)[entry.status] ?? entry.status;
+  return ({ approved: "Approved to send", sending: "Sending", failed: "Needs attention", sent: "Sent", draft: "" } as Record<string, string>)[entry.status] ?? entry.status;
 }
 
 /** The tone key used to color a delivery badge (local deliveries use the status, Gmail ones the mode). */

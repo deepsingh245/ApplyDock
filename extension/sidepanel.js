@@ -94,9 +94,9 @@ function localInput(iso) {
 }
 
 function displayTime(iso) {
-  if (!iso) return "Choose a 9:00 AM date";
+  if (!iso) return "Choose a send date and time";
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? "Choose a 9:00 AM date" :
+  return Number.isNaN(date.getTime()) ? "Choose a send date and time" :
     date.toLocaleString(undefined, {dateStyle: "medium", timeStyle: "short"});
 }
 
@@ -264,9 +264,9 @@ function entryHtml(entry) {
             <label>Email body<textarea name="body" ${editable ? "" : "disabled"} placeholder="Write your application email here…">${escapeHtml(entry.body)}</textarea></label>
             <label>Resume<select name="resume_id" ${editable ? "" : "disabled"}>${resumeOptions(entry.resume_id, entry.resume)}</select></label>
             <span class="attached ${entry.resume_status === "Resume Selected" ? "resume-ok" : "resume-missing"}">${entry.resume_status === "Resume Selected" ? `Resume Selected · ${escapeHtml(entry.resume.name)} · ${escapeHtml(entry.resume.category)}` : "Resume Missing · choose one before sending"}</span>
-            <div class="delivery-group"><strong>Local 9 AM sender</strong><span class="hint">Set this date only for local SMTP. Leave it empty for Gmail drafts.</span><input name="send_at" type="datetime-local" step="60" value="${escapeHtml(localInput(entry.send_at))}" ${editable ? "" : "disabled"}></div>
+            <div class="delivery-group"><strong>Local scheduled sender</strong><span class="hint">Set this date only for local SMTP. Leave it empty for Gmail drafts.</span><input name="send_at" type="datetime-local" step="60" value="${escapeHtml(localInput(entry.send_at))}" ${editable ? "" : "disabled"}></div>
             ${editable && !entry.submission ? `<div class="form-actions email-actions">
-              ${entry.status === "approved" ? `<button class="primary-button unapprove" type="button" data-id="${id}">Remove approval</button>` : entry.delivery_mode === "local" ? `<button class="primary-button approve" type="button" data-id="${id}">Approve for local 9 AM</button>` : ""}
+              ${entry.status === "approved" ? `<button class="primary-button unapprove" type="button" data-id="${id}">Remove approval</button>` : entry.delivery_mode === "local" ? `<button class="primary-button approve" type="button" data-id="${id}">Approve for local send</button>` : ""}
               <button class="secondary-button gmail-draft" type="button" data-id="${id}">${entry.gmail_draft_id ? "Update Gmail draft" : "Save to Gmail Drafts"}</button><button class="secondary-button gmail-prepare" type="button" data-id="${id}">Prepare Gmail schedule</button>
               ${entry.delivery_mode === "gmail_schedule_pending" && !entry.gmail_dirty ? `<button class="text-button gmail-scheduled" type="button" data-id="${id}">I scheduled it in Gmail</button>` : ""}
               <button class="text-button ai-copy" type="button" data-id="${id}">Copy AI prompt for this chat</button>
@@ -696,13 +696,13 @@ async function approve(id, approved) {
   const button = document.querySelector(`.${approved ? "approve" : "unapprove"}[data-id="${id}"]`);
   const form = document.querySelector(`form[data-id="${id}"]`);
   if (approved && !form.elements.resume_id.value) { notice("Resume Missing. Choose a resume before approval."); return; }
-  if (approved && !window.confirm("Approve this application for the selected 9:00 AM send with the chosen resume attached?")) return;
+  if (approved && !window.confirm("Approve this application for the selected send time with the chosen resume attached?")) return;
   button.disabled = true;
   try {
     if (approved) await saveForm(form);
     await api(`/api/entries/${id}`, "PATCH", {approved});
     await load();
-    notice(approved ? "Approved for the selected 9:00 AM send." : "Approval removed.");
+    notice(approved ? "Approved for the selected send time." : "Approval removed.");
   } catch (error) { notice(error.message); }
   finally { button.disabled = false; }
 }
@@ -728,7 +728,7 @@ async function markGmailScheduled(id, button) {
   try {
     await api(`/api/entries/${id}/gmail-scheduled`, "POST", {});
     await load();
-    notice("Marked as scheduled in Gmail. The local 9 AM sender will skip this item.");
+    notice("Marked as scheduled in Gmail. The local scheduled sender will skip this item.");
   } catch (error) { notice(error.message); }
   finally { button.disabled = false; }
 }

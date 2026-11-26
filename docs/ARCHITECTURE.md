@@ -9,7 +9,7 @@ flowchart LR
   subgraph helper[Python helper - applydock/]
     api[http_server.py<br/>route table] --> domain[applications / resumes /<br/>resume_workflows]
     domain --> db[(SQLite + data/resumes)]
-    workers[background threads:<br/>9 AM sender + Notion check,<br/>ATS worker, resume AI jobs] --> db
+    workers[background threads:<br/>scheduled sender + Notion check,<br/>ATS worker, resume AI jobs] --> db
   end
   workers -- subprocess --> codex[Codex CLI]
   domain -- events --> notion[Notion API]
@@ -40,7 +40,7 @@ applydock/                Python helper (package)
   ats.py                  resume/job text extraction, Codex runner, ATS analysis queue + scoring
   notion.py               Notion schema mapping, push, inbound edits, trash reconciliation
   gmail.py                Gmail OAuth (PKCE) and draft creation
-  delivery.py             SMTP verification and the 9 AM sender/scheduler loop
+  delivery.py             SMTP verification and the scheduled sender/scheduler loop
   ai_draft.py             Codex-written email drafts
   http_server.py          request handler, auth, static files, @route table
   app.py                  startup: settings, migration, workers, server
@@ -116,7 +116,7 @@ Schema changes are additive and gated by `PRAGMA user_version` (currently 4). `d
 
 | Thread | What it does |
 |---|---|
-| `delivery.scheduler` | Every 10 seconds: the 9 AM SMTP sender, then a Notion change and trash check (throttled to about every 2 minutes) |
+| `delivery.scheduler` | Every 10 seconds: the scheduled SMTP sender, then a Notion change and trash check (throttled to about every 2 minutes) |
 | `ats.worker` | Processes queued analyses one at a time |
 | `resume_store.job_worker` | Codex resume imports and suggestions |
 

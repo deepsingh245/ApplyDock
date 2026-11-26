@@ -1,4 +1,4 @@
-"""Local SMTP delivery: credential checks and the 9 AM sender loop that sends approved applications."""
+"""Local SMTP delivery: credential checks and the scheduled sender loop that sends approved applications."""
 from __future__ import annotations
 
 import datetime as dt
@@ -16,7 +16,11 @@ def send_mail(entry):
     settings = config.SETTINGS.get("smtp", {})
     if not config.SETTINGS.get("smtp_verified"):
         raise RuntimeError("Email account has not been verified.")
-    password = config.unprotect(settings.get("password", ""))
+    try:
+        password = config.unprotect(settings.get("password", ""))
+    except Exception:
+        # A corrupt or foreign blob (another Windows account, a hand-edited config) would otherwise surface as a base64 error.
+        raise RuntimeError("The saved email password cannot be read. Re-enter it in Settings → Email and save.") from None
     if not password:
         raise RuntimeError("Email account is not connected.")
     _, resume, version = resumes.resume_file_for_entry(entry)
@@ -89,8 +93,8 @@ def prepare_smtp_settings(data):
 
 def process_due(current=None):
     current = current or dt.datetime.now().astimezone()
-    if (current.hour, current.minute) != (9, 0):
-        return 0
+    # Anything whose send_at has passed goes out on the next tick, so a PC that was asleep at the chosen time
+    # catches up when it wakes instead of waiting for the same minute tomorrow.
     current_utc = current.astimezone(dt.timezone.utc)
     due = [e for e in applications.entries() if e["status"] == "approved" and e["delivery_mode"] == "local" and dt.datetime.fromisoformat(e["send_at"]).astimezone(dt.timezone.utc) <= current_utc]
     attempted = 0

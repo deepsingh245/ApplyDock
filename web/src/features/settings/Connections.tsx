@@ -161,7 +161,7 @@ function SmtpCard({ state }: { state: AppState }) {
   return (
     <ConfigCard title="Local email" status={state.smtp_connected ? "Configured" : "Not configured"} tone={state.smtp_connected ? "success" : "neutral"}>
       <form className="grid gap-3" onSubmit={submit} aria-label="Local email">
-        <p className="m-0">Used only for applications you approve for the local 9 AM sender.</p>
+        <p className="m-0">Used only for applications you approve for the local scheduled sender.</p>
         <FieldGrid>
           <Field label="SMTP host">
             <Input placeholder="smtp.gmail.com" required {...register("host")} />
@@ -429,7 +429,7 @@ function SideColumn({ state }: { state: AppState }) {
             Retry Notion sync
           </Button>
         </div>
-        <p className="m-0 text-xs text-ink-3">Gmail sends scheduled messages even when this computer is off. The local 9 AM sender needs the helper running.</p>
+        <p className="m-0 text-xs text-ink-3">Gmail sends scheduled messages even when this computer is off. The local scheduled sender needs the helper running.</p>
       </section>
     </aside>
   );

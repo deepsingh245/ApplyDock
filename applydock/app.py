@@ -38,5 +38,5 @@ def main():
     start_workers()
     print(f"Local dashboard: http://{config.HOST}:{config.PORT}/", flush=True)
     print(f"Pairing key: {config.SETTINGS['pairing_key']}", flush=True)
-    print("Keep this window open for the 9 AM sender. The computer must be awake and connected.", flush=True)
+    print("Keep this window open for the scheduled sender. The computer must be awake and connected.", flush=True)
     server.serve_forever()

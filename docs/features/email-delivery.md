@@ -1,4 +1,4 @@
-# Email delivery (AI draft, Gmail drafts, local 9 AM sender)
+# Email delivery (AI draft, Gmail drafts, local scheduled sender)
 
 **What it does:** helps write the application email and delivers it with the exact resume file. It never sends without an explicit approval.
 
@@ -9,7 +9,7 @@
 | `applydock/ai_draft.py` | `generate_ai_draft`: Codex writes subject, body and notes from the job, your profile and (when given) the tailored resume's headline and skills. It runs through the same Codex runner as the analysis (`ats._run_codex`: read-only sandbox, UTF-8, reply read from the `--output-last-message` file). Its old private command broke on non-ASCII replies on Windows and on newer Codex console output |
 | `applydock/auto_email.py` | Signature, and the automatic draft for hiring posts that can only be answered by email |
 | `applydock/gmail.py` | OAuth (PKCE, `gmail.compose` scope, loopback redirect), `gmail_message` (MIME with the pinned resume), `save_gmail_draft`, `mark_gmail_scheduled` |
-| `applydock/delivery.py` | SMTP settings check (`test_smtp_login`), `send_mail`, `process_due` (the 9 AM sender), `scheduler` |
+| `applydock/delivery.py` | SMTP settings check (`test_smtp_login`), `send_mail`, `process_due` (the scheduled sender), `scheduler` |
 | `web/src/features/applications/` | Email tab (`EntryEditor`) and inspector actions (`useEntryActions`) |
 
 ## Automatic email for hiring posts
@@ -22,11 +22,11 @@ The signature comes from **Settings → Email signature**; when that is empty it
 
 - **Gmail drafts:** created or updated only by your click. Saving a draft pins the attached version and records `attachment_sha256`, filename and time. Local edits set `gmail_dirty` until the draft is updated.
 - **Gmail scheduling:** the API cannot schedule, so **Prepare Gmail schedule** opens Gmail and **I scheduled it in Gmail** records your confirmation.
-- **Local sender:** it sends only `approved` entries in `local` delivery mode, at exactly 9:00 local time, after re-checking Notion. An entry stuck in `sending` after a crash is never retried automatically, because it may already have been delivered.
+- **Local sender:** it sends only `approved` entries in `local` delivery mode, once the chosen send time has passed (any time, not just 9:00), after re-checking Notion. An entry stuck in `sending` after a crash is never retried automatically, because it may already have been delivered.
 - **Attachment integrity:** every attachment's bytes are re-hashed against the stored version before sending (`resumes.attachment_bytes`). Gmail drafts reject attachments above 18 MB.
 - **Secrets:** the SMTP password and Gmail tokens are DPAPI-encrypted and never returned to the browser.
 
 ## Limitations
 
-- The local sender needs the PC on and the helper running at 9:00.
+- The local sender needs the PC on and the helper running; if it was off at the chosen time, the email is sent as soon as the helper runs again.
 - An SMTP "sent" status means the provider accepted the message, not that it was delivered.

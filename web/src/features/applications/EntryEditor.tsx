@@ -187,9 +187,9 @@ function EmailTab({ entry, form, editable, open, onToggle }: { entry: Entry; for
         <div className="grid gap-3 rounded-md border border-line bg-surface-2 p-3 md:grid-cols-2">
           <div>
             <strong className="text-sm">Delivery timing</strong>
-            <p className="m-0 text-xs text-ink-2">Only for ApplyDock's local 9 AM sender. Gmail scheduling happens in Gmail.</p>
+            <p className="m-0 text-xs text-ink-2">Only for ApplyDock's local scheduled sender. Gmail scheduling happens in Gmail.</p>
           </div>
-          <Field label="Local 9 AM send date" help="Leave empty when using Gmail drafts">
+          <Field label="Local send date and time" help="Leave empty when using Gmail drafts">
             <Input type="datetime-local" step={60} disabled={!editable} {...form.register("send_at")} />
           </Field>
         </div>

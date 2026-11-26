@@ -24,7 +24,7 @@ export type EntryAction =
   | "local-delete";
 
 const DONE_MESSAGES: Partial<Record<EntryAction, string>> = {
-  approve: "Approved for the selected local 9 AM send.",
+  approve: "Approved for the selected local send time.",
   unapprove: "Local approval removed.",
   "gmail-draft": "Gmail draft saved with your resume attached.",
   "gmail-scheduled": "Marked as scheduled in Gmail.",
@@ -101,7 +101,7 @@ export function useEntryActions(entry: Entry | null, form: UseFormReturn<EntryFo
       }
       if (
         action === "approve" &&
-        !(await confirm({ message: "Approve this application for the selected 9:00 AM send with the chosen resume attached?", confirmLabel: "Approve" }))
+        !(await confirm({ message: "Approve this application for the selected send time with the chosen resume attached?", confirmLabel: "Approve" }))
       )
         return;
       // Opened synchronously from the click, before any await, so the browser does not block it as a popup.

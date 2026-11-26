@@ -1,4 +1,4 @@
-// Applications workspace: queue list, application editor tabs, inspector actions, email/Gmail/9 AM delivery actions,
+// Applications workspace: queue list, application editor tabs, inspector actions, email/Gmail/scheduled delivery actions,
 // and the entry points into the resume editor. Uses core.js.
 
 function setEditorTab(tab) {
@@ -18,7 +18,7 @@ function labelFor(entry) {
   if (entry.delivery_mode === "gmail_scheduled") return "Scheduled in Gmail";
   if (entry.delivery_mode === "gmail_schedule_pending") return "Schedule in Gmail";
   if (entry.delivery_mode === "gmail_draft") return "Gmail draft";
-  return ({approved: "Approved for 9 AM", sending: "Sending", failed: "Needs attention", draft: "Draft"})[entry.status] || entry.status;
+  return ({approved: "Approved to send", sending: "Sending", failed: "Needs attention", draft: "Draft"})[entry.status] || entry.status;
 }
 
 function updateApplyLinkButton() {
@@ -296,7 +296,7 @@ function renderInspector() {
     if (!entry.gmail_draft_id || entry.gmail_dirty) add("gmail-draft", entry.gmail_draft_id ? "Update Gmail draft" : "Save to Gmail Drafts");
     if (entry.delivery_mode === "gmail_schedule_pending" && !entry.gmail_dirty) add("gmail-scheduled", "I scheduled it in Gmail");
     add("gmail-prepare", "Prepare Gmail schedule");
-    if (entry.delivery_mode === "local") add(entry.status === "approved" ? "unapprove" : "approve", entry.status === "approved" ? "Remove local approval" : "Approve local 9 AM");
+    if (entry.delivery_mode === "local") add(entry.status === "approved" ? "unapprove" : "approve", entry.status === "approved" ? "Remove local approval" : "Approve local send");
   }
   if (analysis.id && !analysis.stale && !profileChanged) add("ats-run", "Run analysis again");
   if (email) { add("ai-draft", "Draft email with Codex", "quiet"); add("ai-copy", "Copy prompt", "quiet"); }
@@ -397,7 +397,7 @@ async function performAction(action, button) {
     notify("Resume Missing. Choose a resume from the library before continuing.", true);
     return;
   }
-  if (action === "approve" && !window.confirm("Approve this application for the selected 9:00 AM send with the chosen resume attached?")) return;
+  if (action === "approve" && !window.confirm("Approve this application for the selected send time with the chosen resume attached?")) return;
   const gmailTab = action === "gmail-prepare" ? window.open("about:blank", "_blank") : null;
   button.disabled = true;
   try {
@@ -426,7 +426,7 @@ async function performAction(action, button) {
       else window.location.assign("https://mail.google.com/mail/#drafts");
       notify("Choose Schedule send in Gmail, then confirm it here.");
     } else notify(({
-      approve: "Approved for the selected local 9 AM send.",
+      approve: "Approved for the selected local send time.",
       unapprove: "Local approval removed.",
       "gmail-draft": "Gmail draft saved with your resume attached.",
       "gmail-scheduled": "Marked as scheduled in Gmail."

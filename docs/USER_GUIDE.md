@@ -2,7 +2,7 @@
 
 How to set up and use ApplyDock day to day. For the project overview see the [README](../README.md); for how it is built see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-A local-first Chrome Manifest V3 sidebar with a Windows helper. You choose each job or hiring post to capture. The helper saves it in a local SQLite queue and syncs structured fields to your connected Notion database. For email applications, you can save a Gmail draft with a resume, prepare it for Gmail's own Schedule send, or approve local SMTP sending at 9:00 AM.
+A local-first Chrome Manifest V3 sidebar with a Windows helper. You choose each job or hiring post to capture. The helper saves it in a local SQLite queue and syncs structured fields to your connected Notion database. For email applications, you can save a Gmail draft with a resume, prepare it for Gmail's own Schedule send, or approve local SMTP sending at the chosen time.
 
 The extension recognizes LinkedIn, Indeed, Wellfound, Naukri, Greenhouse, Lever, Ashby, and Workday URLs. A manual review form also supports a specific job or hiring-post page on another public HTTPS site. Extraction is best effort; always check the preview. It does not submit external application forms or collect saved items automatically.
 
@@ -68,7 +68,7 @@ The **Design** tab beside **Content** works like a resume builder's customize pa
 
 From an application or its ATS analysis, choose **Optimize resume for this job**. ApplyDock creates a **tailored copy** linked to the master and to that application; the master resume never changes. In the editor's **Job match** panel, **Suggest improvements** asks Codex for edits tied to the analysis's unmet requirements. Each suggestion appears next to the text it would change, with **Accept**, **Edit, then accept**, **Reject** and, once applied, **Revert**. Nothing is applied automatically. Any suggestion that adds a number, technology, or job-requirement term that your resume, your saved background, or your own edits do not already contain is marked **Needs your verification** and requires explicit confirmation. **Save & re-analyze** saves a version and scores that exact file.
 
-**Use current version for this application** pins the application to one exact saved file. Approving for the 9 AM sender and saving a Gmail draft also pin the version they attach. Pinned applications keep their file when the resume later gets new versions, and the application shows which version, file name and SHA-256 were last attached. **Follow current version** removes the pin. Gmail drafts and SMTP messages re-check the file's hash before attaching it.
+**Use current version for this application** pins the application to one exact saved file. Approving for the scheduled sender and saving a Gmail draft also pin the version they attach. Pinned applications keep their file when the resume later gets new versions, and the application shows which version, file name and SHA-256 were last attached. **Follow current version** removes the pin. Gmail drafts and SMTP messages re-check the file's hash before attaching it.
 
 Requires the `typst` Python package (`py -3 -m pip install -r requirements.txt`). Design decisions and invariants are recorded in [features/resume-editor.md](features/resume-editor.md).
 
@@ -90,11 +90,11 @@ For a captured item, set **Application method → Email**, verify the recipient 
 | --- | --- |
 | **Save to Gmail Drafts** | Creates or updates an unsent draft with the resume in the connected Gmail account. |
 | **Prepare Gmail schedule** | Creates or updates that draft and opens Gmail Drafts. Open the draft in the **connected account**, choose **Schedule send**, and set 9:00 AM in Gmail. After Gmail shows it under Scheduled, return and choose **I scheduled it in Gmail** to record your confirmation locally. |
-| **Approve for local 9 AM** | Uses the existing local SMTP worker; the computer and helper must be running at send time. |
+| **Approve for local send** | Uses the existing local SMTP worker; the computer and helper must be running at send time. |
 
 Gmail's public API exposes draft creation and sending, but no native Schedule send operation. The app therefore cannot set Gmail's scheduled time itself or verify that you completed scheduling. The confirmation button records what you did in Gmail. Check the **Scheduled** folder before marking it. Gmail says scheduled messages may send a few minutes after the selected time and uses the timezone chosen when scheduling. [Gmail API methods](https://developers.google.com/workspace/gmail/api/reference/rest), [Gmail scheduling help](https://support.google.com/mail/answer/9214606)
 
-Creating or updating a Gmail draft clears any local SMTP approval for that item. Once it has a Gmail draft, the local 9 AM sender skips it, including if the computer is running. The helper needs to be running when you create or update the draft. After **you schedule it in Gmail**, Gmail handles delivery while the computer is off. If you edit the local message later, select **Update Gmail draft** before scheduling. If Gmail says the draft is missing, check **Scheduled** before taking further action; the app will not create a duplicate automatically.
+Creating or updating a Gmail draft clears any local SMTP approval for that item. Once it has a Gmail draft, the local scheduled sender skips it, including if the computer is running. The helper needs to be running when you create or update the draft. After **you schedule it in Gmail**, Gmail handles delivery while the computer is off. If you edit the local message later, select **Update Gmail draft** before scheduling. If Gmail says the draft is missing, check **Scheduled** before taking further action; the app will not create a duplicate automatically.
 
 ### Local SMTP
 
@@ -102,9 +102,9 @@ In sidebar **Settings → Email account**, enter your SMTP host, port **465** (T
 
 The Notion token and SMTP password are encrypted with Windows DPAPI for the current Windows account. They are not embedded in extension code. Resume files and email content are ordinary local files and records, not encrypted.
 
-For each captured item using local SMTP, confirm the application method is **Email**. Enter the recipient, subject, body, future **9:00 AM local** date, select a library resume, then click **Approve for local 9 AM** and confirm. Each item needs its own approval and can use a separate message and resume. Editing an approved item or replacing its resume removes approval until you review it again. A failed send must also be reviewed and reapproved. An item left as `sending` after a crash is never automatically retried, because it might already have been delivered.
+For each captured item using local SMTP, confirm the application method is **Email**. Enter the recipient, subject, body, future **local send date and time**, select a library resume, then click **Approve for local send** and confirm. Each item needs its own approval and can use a separate message and resume. Editing an approved item or replacing its resume removes approval until you review it again. A failed send must also be reviewed and reapproved. An item left as `sending` after a crash is never automatically retried, because it might already have been delivered.
 
-The local worker checks every ten seconds while the app runs. If the computer or process is off at 9:00 AM, an overdue locally approved item is attempted at the next 9:00 AM when it is running. **Reliable local SMTP delivery while the computer is off requires a cloud scheduler; Gmail's native Schedule send is the alternative above.** SMTP and Notion need internet access.
+The local worker checks every ten seconds while the app runs. If the computer or process is off at the chosen time, an overdue locally approved item is sent as soon as the app is running again. **Reliable local SMTP delivery while the computer is off requires a cloud scheduler; Gmail's native Schedule send is the alternative above.** SMTP and Notion need internet access.
 
 ## ATS analysis with ChatGPT Plus and Codex
 
@@ -136,4 +136,4 @@ For email writing, enter factual experience in sidebar **Settings → My backgro
 - A Notion integration can write to the database shared with it. An SMTP credential can send from the configured address.
 - SMTP acceptance does not guarantee receipt in the destination inbox; `sent` means the provider accepted the message.
 - Site markup can change. Preview text and application method before saving and approving. Email recipients and apply links should be verified on the original posting.
-- Local SQLite controls approval and email delivery state. The helper imports supported application fields from linked Notion pages, but the 9 AM worker never reads approval from Notion.
+- Local SQLite controls approval and email delivery state. The helper imports supported application fields from linked Notion pages, but the scheduled worker never reads approval from Notion.

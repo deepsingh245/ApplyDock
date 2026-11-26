@@ -16,7 +16,7 @@
 - **Inbound:** stage, position, company, captured text, notes, recipient, subject, body, method, apply link, contact emails, send date and Needs Review. Approval, delivery state, Gmail state and resume assignment are local-only.
 - **Approval reset:** a Notion content change to an approved application removes its local approval.
 - **Trash:** only an explicit `in_trash`/`archived` flag removes a local record. A 404, lost permission or network error keeps it and reports the error.
-- **Before sending:** the 9 AM sender re-checks the page and postpones the send if the check fails.
+- **Before sending:** the scheduled sender re-checks the page and postpones the send if the check fails.
 
 ## Setup
 

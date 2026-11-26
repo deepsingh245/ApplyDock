@@ -32,7 +32,7 @@ export function nextActions(entry: Entry, profileHash: string): ActionButton[] {
     if (!entry.gmail_draft_id || entry.gmail_dirty) add("gmail-draft", entry.gmail_draft_id ? "Update Gmail draft" : "Save to Gmail Drafts");
     if (entry.delivery_mode === "gmail_schedule_pending" && !entry.gmail_dirty) add("gmail-scheduled", "I scheduled it in Gmail");
     add("gmail-prepare", "Prepare Gmail schedule");
-    if (entry.delivery_mode === "local") add(entry.status === "approved" ? "unapprove" : "approve", entry.status === "approved" ? "Remove local approval" : "Approve local 9 AM");
+    if (entry.delivery_mode === "local") add(entry.status === "approved" ? "unapprove" : "approve", entry.status === "approved" ? "Remove local approval" : "Approve local send");
   }
   if (analysis.id && !analysis.stale && !profileChanged) add("ats-run", "Run analysis again");
   if (email) {

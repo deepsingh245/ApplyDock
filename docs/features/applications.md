@@ -8,7 +8,7 @@
 
 The choice is kept in the URL (`?filter=applied`); old links to removed tabs fall back to Review.
 
-**Delivery tags:** unsent applications have no tag. The old "Draft" tag was on every row. Tags appear only for real delivery states: Gmail draft, Schedule in Gmail, Scheduled in Gmail, Approved for 9 AM, Sending, Needs attention.
+**Delivery tags:** unsent applications have no tag. The old "Draft" tag was on every row. Tags appear only for real delivery states: Gmail draft, Schedule in Gmail, Scheduled in Gmail, Approved to send, Sending, Needs attention.
 
 ## Files
 
@@ -24,7 +24,7 @@ The choice is kept in the URL (`?filter=applied`); old links to removed tabs fal
 - **Locked states:** sending or sent entries can't be edited. Entries scheduled in Gmail allow only stage changes.
 - **Approval reset:** any approval-relevant change to an approved entry sets it back to `draft`.
 - **Stale Gmail drafts:** a change to recipient, subject, body, resume or route sets `gmail_dirty`, so the Gmail draft must be updated.
-- **Approval requirements:** the email route, recipient, subject, body, a future 9:00 local send time, an available resume and verified SMTP. Approving pins the exact resume version.
+- **Approval requirements:** the email route, recipient, subject, body, a future send time (any time of day), an available resume and verified SMTP. Approving pins the exact resume version.
 - **Resume changes:** changing `resume_id` clears the pinned version. Another application's tailored resume is rejected.
 - **Stages:** moving to Applied, No Answer, Offer or Rejected clears **Needs review**.
 - **Deleting:** removes only the local record. The Notion page and any Gmail draft are untouched.

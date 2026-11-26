@@ -20,7 +20,7 @@ Status: **Done** = implemented and covered by tests · **Partial** = works with 
 | AI email draft | Codex writes subject/body from the job + your profile | Done | [email-delivery](features/email-delivery.md) | `ai_draft.py` |
 | Automatic email for hiring posts | Save the tailored resume for an email-only hiring post: AI drafts the email, adds your signature, resume attached, nothing sent | Done | [email-delivery](features/email-delivery.md) | `auto_email.py` |
 | Gmail drafts | OAuth, draft create/update with exact resume, "prepare schedule" | Done | [email-delivery](features/email-delivery.md) | `gmail.py` |
-| Local 9 AM sender | Approve → SMTP send at 9:00 local time | Done (needs PC on) | [email-delivery](features/email-delivery.md) | `delivery.py` |
+| Local scheduled sender | Approve → SMTP send at the time you choose | Done (needs PC on) | [email-delivery](features/email-delivery.md) | `delivery.py` |
 | Home (features hub) | `/` lists the features as cards with quick links; Applications moved to `/applications` | Done | [DESIGN](../DESIGN.md) | `web/src/features/home/` |
 | WhatsApp outreach scheduler | HR/recruiter contacts, templates, and assisted scheduling with explicit user confirmation | Working | [whatsapp-outreach](features/whatsapp-outreach.md) | `outreach.py`, `applications.py` |
 | Notion sync | Two-way field sync, stage options, trash reconciliation | Done | [notion-sync](features/notion-sync.md) | `notion.py` |

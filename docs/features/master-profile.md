@@ -55,7 +55,7 @@ resume_suggestions.source_item_id / payload_json: profile entry a suggestion cam
 - **Submissions are immutable:**
   - Changing a submission adds a new row; the old row is kept with `replaced_by`.
   - Resume deletion keeps every document a submission references (`submissions.kept_document_ids`).
-  - Recording a submission cancels a pending local 9 AM send, so nothing is emailed twice.
+  - Recording a submission cancels a pending local scheduled send, so nothing is emailed twice.
   - Once submitted, the delivery actions are hidden.
 - **Schema v5 and v6 are additive.** v6 adds `analysis_runs.document_id` and `draft_resume_id` for draft checks. It adds new tables and columns only, and `database.backup_before_migration` copies the database first (`capture.pre-v5-*.sqlite3`).
 

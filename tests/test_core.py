@@ -217,6 +217,28 @@ class CoreTests(unittest.TestCase):
             sender.assert_called_once()
             self.assertEqual(applications.get_entry(entry["id"])["status"], "sent")
 
+    def test_local_send_accepts_any_time_and_catches_up(self):
+        entry, _ = applications.capture({"url": "https://www.linkedin.com/posts/person_activity-777/"})
+        resume = Path(self.tmp.name) / "resumes" / "any.pdf"
+        resume.parent.mkdir()
+        resume.write_bytes(b"%PDF-test")
+        target = dt.datetime.now().astimezone().replace(hour=14, minute=37, second=0, microsecond=0) + dt.timedelta(days=1)
+        applications.update_entry(entry["id"], {"apply_method": "email", "recipient": "hiring@example.com", "subject": "S", "body": "B",
+                                                "resume_path": "resumes/any.pdf", "send_at": target.astimezone(dt.timezone.utc).isoformat()})
+        applications.update_entry(entry["id"], {"approved": True})  # 14:37 is no longer rejected
+        with patch.object(delivery, "send_mail") as sender:
+            self.assertEqual(delivery.process_due(target - dt.timedelta(minutes=1)), 0)
+            # woke up hours after the chosen minute: still sent
+            self.assertEqual(delivery.process_due(target + dt.timedelta(hours=3, minutes=13)), 1)
+            sender.assert_called_once()
+        self.assertEqual(applications.get_entry(entry["id"])["status"], "sent")
+        other, _ = applications.capture({"url": "https://www.linkedin.com/posts/person_activity-778/"})
+        past = dt.datetime.now().astimezone() - dt.timedelta(minutes=5)
+        applications.update_entry(other["id"], {"apply_method": "email", "recipient": "hiring@example.com", "subject": "S", "body": "B",
+                                                "resume_path": "resumes/any.pdf", "send_at": past.isoformat()})
+        with self.assertRaisesRegex(ValueError, "future send time"):
+            applications.update_entry(other["id"], {"approved": True})
+
     def test_notion_receives_structured_columns(self):
         entry, _ = applications.capture({"url": "https://www.linkedin.com/jobs/view/456/", "title": "Designer", "company": "Example Co"})
         config.SETTINGS["notion_data_source_id"] = "source-id"

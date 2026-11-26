@@ -89,7 +89,7 @@ def record_submission(entry_id, data):
     """Record that this application was submitted with one exact resume version (by default the one it attaches).
 
     A Gmail draft or an approved-but-unsent email is not a submission; this is the user's confirmation.
-    A pending 9 AM local send is cancelled so the same application is not emailed again.
+    A pending local scheduled send is cancelled so the same application is not emailed again.
     """
     entry = applications.get_entry(entry_id)
     if not entry:

@@ -309,11 +309,8 @@ def update_entry(entry_id, data):
         send_time = dt.datetime.fromisoformat(merged["send_at"])
         if send_time.tzinfo is None:
             raise ValueError("Send time must include a timezone.")
-        local_send = send_time.astimezone()
-        if (local_send.hour, local_send.minute) != (9, 0):
-            raise ValueError("Choose 9:00 AM in this computer's local timezone.")
         if send_time <= dt.datetime.now(dt.timezone.utc):
-            raise ValueError("Choose a future 9:00 AM send time.")
+            raise ValueError("Choose a future send time.")
         fields["status"] = "approved"
         fields["send_error"] = ""
     elif data.get("approved") is False:
