@@ -3,6 +3,7 @@ import { useJob, useProfileEntries } from "@/api/drafts";
 import { useAppState } from "@/api/state";
 import type { Analysis, Requirement } from "@/api/types";
 import { Button } from "@/components/ui/button";
+import { agentIds } from "@/lib/agentIds";
 import { Select } from "@/components/ui/field";
 import { Eyebrow, Spinner } from "@/components/ui/misc";
 import { Note } from "@/components/ui/note";
@@ -362,7 +363,7 @@ function JobMatchPane({ analysis }: { analysis: Analysis | undefined }) {
           {resume.kind === "master" && entry.resume_id === resume.id ? (
             <Note tone="info" className="grid gap-2">
               <span>You are editing the master resume. To tailor it for {entry.company || "this job"} without changing the master, create a tailored copy.</span>
-              <Button className="justify-self-start" onClick={() => void ctl.tailor()}>
+              <Button className="justify-self-start" data-agent-id={agentIds.tailorResume} onClick={() => void ctl.tailor()}>
                 Create tailored copy
               </Button>
             </Note>

@@ -384,6 +384,7 @@ py -3 scripts/check.py --ui                    # plus Playwright browser flows (
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Setup and day-to-day use |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Modules, request flow, data flow, storage, security |
 | [docs/FEATURES.md](docs/FEATURES.md) | Feature index with status |
+| [docs/features/agent-access.md](docs/features/agent-access.md) | Pairing-key API, OpenAPI, MCP bridge, and human-only actions |
 | [docs/features/](docs/features/) | One document per feature (applications, resume editor, ATS analysis, master profile, email delivery, capture and extension, Notion sync, WhatsApp outreach, resume library) |
 | [DESIGN.md](DESIGN.md) | Design system: tokens, components, layout, accessibility |
 | [web/README.md](web/README.md) | Web app commands, layout and conventions |

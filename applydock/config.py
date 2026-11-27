@@ -26,6 +26,8 @@ DB = DATA / "capture.sqlite3"
 CONFIG = DATA / "config.json"
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("APPLYDOCK_PORT") or 8765)
+# Optional exact HTTPS origin for a user-operated reverse tunnel (for example, ngrok).
+PUBLIC_URL = os.environ.get("APPLYDOCK_PUBLIC_URL", "").strip().rstrip("/")
 
 MAX_REQUEST_BYTES = 12_000_000     # JSON bodies; uploads arrive base64-encoded inside them
 MAX_RESUME_BYTES = 8_000_000

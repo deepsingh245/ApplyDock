@@ -137,6 +137,6 @@ test("side panel matches the web app, follows its rules, captures, and opens the
     return state.entries.find((entry: { title: string }) => entry.title === "Backend Engineer").id as string;
   }, SANDBOX_KEY);
   await page.evaluate((id) => window.dispatchEvent(new CustomEvent("applydock-open", { detail: { entryId: id, action: "submission" } })), backend);
-  await expect(page.locator("#editor-title")).toHaveText("Backend Engineer");
+  await expect(page.locator("#editor-title")).toHaveText("Acme — Backend Engineer");
   await expect(page.getByTestId("submission-form")).toBeVisible();
 });

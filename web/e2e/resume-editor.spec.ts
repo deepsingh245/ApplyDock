@@ -36,6 +36,7 @@ test("master: autosave, undo/redo, review, save a version", async ({ app, api, o
   ids.entryId = state.entries[0]!.id;
   await open(`/resumes/${ids.masterId}/edit`);
   await expect(app.getByRole("heading", { level: 1 })).toContainText("Frontend master");
+  await expect(app.locator('[data-agent-id="resume.save-version"]')).toHaveCount(1);
   await expect(app.getByTestId("review-banner")).toContainText("Review the imported content");
   await expect(app.locator('[data-target="basics"][data-field="name"]')).not.toHaveValue("");
   await expect(app.locator('[data-testid="preview-frame"] iframe')).toBeVisible({ timeout: 30_000 });

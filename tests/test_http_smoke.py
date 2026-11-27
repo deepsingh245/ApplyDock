@@ -60,6 +60,16 @@ class HttpSmokeTests(unittest.TestCase):
         status, _, payload = self.request(path, method, data, **kwargs)
         return status, json.loads(payload or b"{}")
 
+    def test_agent_spec_is_authenticated_and_discovery_is_public(self):
+        status, _body = self.json("/api/openapi.json", key="")
+        self.assertEqual(status, 401)
+        status, _, payload = self.request("/llms.txt", key="")
+        self.assertEqual(status, 200)
+        self.assertIn(b"ApplyDock", payload)
+        status, body = self.json("/api/openapi.json")
+        self.assertEqual(status, 200)
+        self.assertIn("/api/agent/applications", body["paths"])
+
     def fake_web_build(self):
         # Tests must not depend on a real `npm run build`; a minimal dist/ with the same shape is enough.
         dist = Path(self.enterContext(tempfile.TemporaryDirectory())) / "dist"

@@ -5,7 +5,10 @@ setupSandbox();
 const TITLE = "Senior Frontend Engineer";
 
 test("opens the first application that needs action in a full-width three-pane workspace", async ({ app }) => {
-  await expect(app.locator("#editor-title")).toHaveText(TITLE);
+  await expect(app).toHaveTitle("Applications · ApplyDock");
+  await expect(app.locator('[data-agent-id="application.run-analysis"]')).toHaveCount(1);
+  await expect(app.locator('[data-agent-id="application.approve"]')).toHaveCount(1);
+  await expect(app.locator("#editor-title")).toHaveText("Initech — Senior Frontend Engineer");
   const workspace = await app.locator(".workspace").boundingBox();
   expect(workspace?.x).toBe(0);
   expect(workspace?.width).toBe(1440);
@@ -110,7 +113,7 @@ test("adds a job and opens it", async ({ app }) => {
   await app.getByLabel("Title").fill("Platform Engineer");
   await app.getByLabel("Company").fill("Globex");
   await app.getByRole("button", { name: "Save" }).click();
-  await expect(app.locator("#editor-title")).toHaveText("Platform Engineer");
+  await expect(app.locator("#editor-title")).toHaveText("Globex — Platform Engineer");
   await expect(app).toHaveURL(/\/applications\/[a-f0-9-]+$/);
   // The new job is under Review; the Initech one was submitted earlier, so it is under Applied.
   await expect(app.locator("#entry-list .queue-item")).toHaveCount(1);

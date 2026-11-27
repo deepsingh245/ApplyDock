@@ -2,6 +2,10 @@
 
 Known items, highest priority first. Remove an entry when it is done.
 
+## Agent access follow-ups
+
+- The pairing key is not scoped to agent-only permissions. GPT Actions should use `/api/agent/openapi.json`, which omits human-only routes; direct HTTP access with the key still retains full local API permissions.
+
 ## 1. ~~Content-Security-Policy for the dashboard~~: resolved 2026-10-28
 
 The React web app is served with a CSP (`http_server.web_csp`):

@@ -181,7 +181,7 @@ export function useEditorController({ resumeId, entryId, entry, data, saver }: {
 
     const saveVersion = async (analyze = false) => {
       await flush();
-      const result = await api<{ version_id: string; version_number: number; unchanged: boolean; validation: Validation; application_follows?: boolean; email_draft?: string }>(
+      const result = await api<{ version_id: string; version_number: number; unchanged: boolean; draft_in_sync?: boolean; attached_application?: { id: string; identity: { label: string } }; validation: Validation; application_follows?: boolean; email_draft?: string }>(
         `/api/resumes/${resumeId}/versions/from-draft`,
         "POST",
         { expected_revision: editor().revision },
@@ -192,8 +192,10 @@ export function useEditorController({ resumeId, entryId, entry, data, saver }: {
       const warnings = result.validation.warnings.length;
       notify(
         (result.unchanged
-          ? `No changes since version ${result.version_number}.`
+          ? `No changes since version ${result.version_number}${result.draft_in_sync === false ? "; the draft differs from that saved version." : "; draft matches saved version."}`
           : `Saved version ${result.version_number}.${warnings ? ` ${warnings} PDF check warning(s) — see Preview.` : " PDF checks passed."}`) +
+          (result.draft_in_sync === false && !result.unchanged ? " Warning: the draft does not match the saved version." : "") +
+          (result.attached_application && result.draft_in_sync ? ` Saved v${result.version_number} and attached to ${result.attached_application.identity.label}.` : "") +
           (result.application_follows ? " The application now uses this tailored resume." : "") +
           (result.email_draft === "started" ? " Drafting the email in the background; it will appear in the Email tab with this resume attached." : ""),
         warnings > 0,

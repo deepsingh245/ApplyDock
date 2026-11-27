@@ -137,9 +137,14 @@ def save_editor_version(resume_id, expected_revision, label=""):
     resumes.after_current_changed(resume_id, changed)
     followed = follow_tailored(resume["entry_id"], resume_id)
     email_draft = auto_email.start(resume["entry_id"]) if resume["kind"] == "tailored" else "skipped"
+    saved_content = json.loads(version.get("content_json") or "{}")
+    draft_in_sync = bool(saved_content) and resume_model.content_hash(resume_model.normalize(saved_content)) == draft["content_hash"]
+    attached_entry = applications.get_entry(resume["entry_id"]) if resume["entry_id"] else None
     return {"resume": resumes.get_resume(resume_id), "version_id": version["id"], "version_number": version["version_number"],
             "created": created, "unchanged": not created and not changed, "validation": report,
-            "sha256": document["sha256"], "application_follows": followed, "email_draft": email_draft}
+            "sha256": document["sha256"], "application_follows": followed, "email_draft": email_draft,
+            "draft_in_sync": draft_in_sync,
+            "attached_application": {"id": resume["entry_id"], "identity": applications.identity(attached_entry)} if attached_entry else None}
 
 
 def editor_state(resume_id):

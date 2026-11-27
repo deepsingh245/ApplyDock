@@ -367,10 +367,17 @@ def process_one_job(db_path: Path, data_dir: Path, root: Path) -> bool:
             result = _run_score_check(db_path, root, job, payload)
         else:
             raise RuntimeError("failed|Unknown job type.")
+        if ats.job_cancelled(db_path, job["id"], job["purpose"]):
+            return True
         with ats._connect(db_path) as db:
-            db.execute("UPDATE resume_ai_jobs SET status='complete',percent=100,message='Ready.',result_json=?,completed_at=? WHERE id=?",
+            db.execute("UPDATE resume_ai_jobs SET status='complete',percent=100,message='Ready.',result_json=?,completed_at=? WHERE id=? AND status='running'",
                        (json.dumps(result), now_iso(), job["id"]))
     except Exception as error:
+        if isinstance(error, ats.JobCancelled) or ats.job_cancelled(db_path, job["id"], job["purpose"]):
+            with ats._connect(db_path) as db:
+                db.execute("UPDATE resume_ai_jobs SET status='cancelled',error_code='cancelled',error_message='Cancelled by the user.',completed_at=? WHERE id=?",
+                           (now_iso(), job["id"]))
+            return True
         code, _, detail = str(error).partition("|")
         if not detail:
             code, detail = "failed", str(error)

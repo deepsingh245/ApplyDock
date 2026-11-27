@@ -20,11 +20,11 @@ import re
 import traceback
 import urllib.parse
 
-from . import (applications, ats, auto_email, career, config, database, delivery, events, gmail, notion, outreach,
+from . import (agent_commands, api_spec, applications, ats, auto_email, career, config, database, delivery, events, gmail, notion, outreach,
                resume_model, resume_render, resume_store, resume_workflows, resumes, submissions)
 from .resume_store import ConflictError
 
-ROUTES = []   # (method, compiled pattern, handler)
+ROUTES = []   # (method, compiled pattern, handler, summary, human_only)
 STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".woff2": "font/woff2",
                 ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon"}
 LEGACY_WEB_PREFIX = "/app"
@@ -40,15 +40,15 @@ class FileResponse:
         self.content_type, self.payload, self.headers = content_type, payload, headers or {}
 
 
-def route(method, pattern):
+def route(method, pattern, summary="", human_only=False):
     def register(handler):
-        ROUTES.append((method, re.compile(pattern), handler))
+        ROUTES.append((method, re.compile(pattern), handler, summary or handler.__name__.replace("_", " ").capitalize(), human_only))
         return handler
     return register
 
 
 def find_route(method, path):
-    for route_method, pattern, handler in ROUTES:
+    for route_method, pattern, handler, _summary, _human_only in ROUTES:
         if route_method == method:
             match = pattern.fullmatch(path)
             if match:
@@ -57,11 +57,37 @@ def find_route(method, path):
 
 
 def allowed_origins():
-    return (f"http://{config.HOST}:{config.PORT}", f"http://localhost:{config.PORT}")
+    public = _public_origin()
+    return (f"http://{config.HOST}:{config.PORT}", f"http://localhost:{config.PORT}") + ((public,) if public else ())
 
 
 def allowed_hosts():
-    return (f"{config.HOST}:{config.PORT}", f"localhost:{config.PORT}")
+    public = _public_origin()
+    return (f"{config.HOST}:{config.PORT}", f"localhost:{config.PORT}") + ((urllib.parse.urlsplit(public).netloc.lower(),) if public else ())
+
+
+def _public_origin():
+    """Return the configured exact HTTPS origin, rejecting paths, credentials, and non-HTTPS URLs."""
+    value = config.PUBLIC_URL
+    if not value:
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or
+                parsed.path not in ("", "/") or parsed.query or parsed.fragment):
+            return ""
+        port = parsed.port
+    except ValueError:
+        return ""
+    hostname = parsed.hostname.lower()
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+    authority = f"{hostname}:{port}" if port not in (None, 443) else hostname
+    return f"https://{authority}"
+
+
+def host_allowed(value):
+    return str(value or "").lower() in allowed_hosts()
 
 
 def query_value(path, name, default=""):
@@ -131,7 +157,7 @@ def dispatch_mutation(request, method):
 def serve_public_get(request, path):
     """OAuth callback, token-protected resume files, and dashboard files. Returns True when handled."""
     if path.path == "/oauth/google/callback":
-        if request.headers.get("Host") != f"{config.HOST}:{config.PORT}":
+        if not host_allowed(request.headers.get("Host")):
             request.respond_html(403, "Invalid callback host.")
             return True
         try:
@@ -140,6 +166,11 @@ def serve_public_get(request, path):
         except Exception as error:
             request.respond_html(400, str(error))
         return True
+    if path.path in ("/llms.txt", "/agents.md"):
+        target = config.ROOT / "web" / "public" / path.path.rsplit("/", 1)[-1]
+        if target.is_file():
+            request.respond_bytes(200, "text/plain; charset=utf-8", target.read_bytes(), {"Cache-Control": "no-store"})
+            return True
     file_match = re.fullmatch(r"/api/resumes/([a-f0-9-]+)/file", path.path)
     if file_match:
         serve_current_resume_file(request, file_match.group(1), urllib.parse.parse_qs(path.query))
@@ -224,7 +255,7 @@ def serve_web_app(request, url_path):
 
 
 def serve_current_resume_file(request, resume_id, query):
-    if request.headers.get("Host") not in allowed_hosts():
+    if not host_allowed(request.headers.get("Host")):
         request.respond(403, {"error": "Invalid host."})
         return
     resume = resumes.get_resume(resume_id, include_deleted=False, include_token=True)
@@ -263,7 +294,7 @@ def serve_current_resume_file(request, resume_id, query):
 
 def serve_version_file(request, resume_id, version_id, query):
     # One exact, immutable version. Its token never rotates; the resume's current-file token is not accepted here.
-    if request.headers.get("Host") not in allowed_hosts():
+    if not host_allowed(request.headers.get("Host")):
         request.respond(403, {"error": "Invalid host."})
         return
     with database.connect() as db:
@@ -289,7 +320,7 @@ def serve_version_file(request, resume_id, version_id, query):
 
 def serve_submission_file(request, submission_id, query):
     # The exact file recorded as submitted. It stays available after the resume itself is deleted or edited.
-    if request.headers.get("Host") not in allowed_hosts():
+    if not host_allowed(request.headers.get("Host")):
         request.respond(403, {"error": "Invalid host."})
         return
     with database.connect() as db:
@@ -342,12 +373,12 @@ def get_codex_settings(request, match, data):
     return {"codex": ats.codex_status(), "usage": ats.usage_summary(config.DB)}
 
 
-@route("POST", r"/api/settings/codex/check")
+@route("POST", r"/api/settings/codex/check", human_only=True)
 def check_codex(request, match, data):
     return {"codex": ats.codex_status(force=True), "usage": ats.usage_summary(config.DB)}
 
 
-@route("POST", r"/api/settings/notion")
+@route("POST", r"/api/settings/notion", human_only=True)
 def save_notion_settings(request, match, data):
     settings = config.SETTINGS
     source_id = re.sub(r"[^a-fA-F0-9-]", "", str(data.get("data_source_id", "")))
@@ -371,7 +402,7 @@ def save_notion_settings(request, match, data):
     return {"ok": True}
 
 
-@route("POST", r"/api/settings/smtp")
+@route("POST", r"/api/settings/smtp", human_only=True)
 def save_smtp_settings(request, match, data):
     new_settings, actual_password = delivery.prepare_smtp_settings(data)
     delivery.test_smtp_login(new_settings, actual_password)
@@ -383,18 +414,18 @@ def save_smtp_settings(request, match, data):
     return {"ok": True}
 
 
-@route("POST", r"/api/settings/gmail/client")
+@route("POST", r"/api/settings/gmail/client", human_only=True)
 def save_gmail_client(request, match, data):
     gmail.configure_gmail_client(data)
     return {"ok": True}
 
 
-@route("POST", r"/api/settings/gmail/connect")
+@route("POST", r"/api/settings/gmail/connect", human_only=True)
 def connect_gmail(request, match, data):
     return {"authorization_url": gmail.begin_gmail_oauth()}
 
 
-@route("POST", r"/api/settings/profile")
+@route("POST", r"/api/settings/profile", human_only=True)
 def save_profile(request, match, data):
     config.SETTINGS["candidate_profile"] = str(data.get("profile", "")).strip()[:4000]
     config.SETTINGS["candidate_profile_saved"] = True
@@ -402,14 +433,14 @@ def save_profile(request, match, data):
     return {"ok": True}
 
 
-@route("POST", r"/api/settings/signature")
+@route("POST", r"/api/settings/signature", human_only=True)
 def save_signature(request, match, data):
     config.SETTINGS["email_signature"] = str((data or {}).get("signature", "")).strip()[:1500]
     config.save_config(config.SETTINGS)
     return {"ok": True, "effective": auto_email.signature()}
 
 
-@route("POST", r"/api/sync")
+@route("POST", r"/api/sync", human_only=True)
 def sync_all(request, match, data):
     reconciliation = notion.reconcile_notion_deletions(force=True)
     for entry in applications.entries():
@@ -548,6 +579,77 @@ def control_outreach_batch(request, match, data):
 
 # ---------------------------------------------------------------- applications
 
+@route("GET", r"/api/openapi.json")
+def openapi_spec(request, match, data):
+    return api_spec.build()
+
+
+@route("GET", r"/api/agent/openapi.json")
+def agent_openapi_spec(request, match, data):
+    return api_spec.build_agent()
+
+
+@route("GET", r"/api/agent/applications")
+def agent_applications(request, match, data):
+    return {"applications": agent_commands.applications_list(query_value(request.path, "status"), query_value(request.path, "q"))}
+
+
+@route("GET", r"/api/agent/applications/([a-f0-9-]+)")
+def agent_application(request, match, data):
+    return agent_commands.application_get(match.group(1))
+
+
+@route("POST", r"/api/agent/applications/([a-f0-9-]+)/analysis")
+def agent_analysis(request, match, data):
+    return agent_commands.analysis_run(match.group(1))
+
+
+@route("GET", r"/api/agent/analyses/([a-f0-9-]+)")
+def agent_analysis_summary(request, match, data):
+    return agent_commands.analysis_summary(match.group(1))
+
+
+@route("POST", r"/api/agent/applications/([a-f0-9-]+)/tailor")
+def agent_tailor(request, match, data):
+    return agent_commands.resume_tailor(match.group(1), str(data.get("base_resume_id", "")))
+
+
+@route("PATCH", r"/api/agent/resumes/([a-f0-9-]+)/draft")
+def agent_edit(request, match, data):
+    return agent_commands.resume_edit(match.group(1), data.get("content"), data.get("expected_revision"))
+
+
+@route("POST", r"/api/agent/resumes/([a-f0-9-]+)/save")
+def agent_save_attach(request, match, data):
+    return agent_commands.resume_save_and_attach(match.group(1), str(data.get("application_id", "")), data.get("expected_revision"))
+
+
+@route("GET", r"/api/agent/applications/([a-f0-9-]+)/email-preview")
+def agent_email_preview(request, match, data):
+    return agent_commands.email_preview(match.group(1))
+
+
+@route("GET", r"/api/jobs/([a-f0-9-]+)")
+def agent_job_status(request, match, data):
+    return agent_commands.job_status(match.group(1))
+
+
+@route("GET", r"/api/jobs/([a-f0-9-]+)/logs")
+def agent_job_logs(request, match, data):
+    analysis = ats.get_analysis(config.DB, match.group(1))
+    if analysis:
+        return {"logs": analysis.get("events", [])}
+    with database.connect() as db:
+        job = resume_store.get_job(db, match.group(1))
+    if not job:
+        raise NotFound("Job not found.")
+    return {"logs": [{"stage": job["status"], "message": job["message"], "percent": job["percent"]}]}
+
+
+@route("POST", r"/api/jobs/([a-f0-9-]+)/cancel")
+def agent_job_cancel(request, match, data):
+    return agent_commands.job_cancel(match.group(1))
+
 @route("POST", r"/api/capture")
 def capture(request, match, data):
     entry, duplicate = applications.capture(data)
@@ -556,14 +658,14 @@ def capture(request, match, data):
     return {"entry": applications.get_entry(entry["id"]), "duplicate": duplicate}
 
 
-@route("PATCH", r"/api/entries/([a-f0-9-]+)")
+@route("PATCH", r"/api/entries/([a-f0-9-]+)", human_only=True)
 def update_entry(request, match, data):
     entry = applications.update_entry(match.group(1), data)
     events.application_changed(entry["id"])
     return {"entry": applications.get_entry(entry["id"])}
 
 
-@route("DELETE", r"/api/entries/([a-f0-9-]+)")
+@route("DELETE", r"/api/entries/([a-f0-9-]+)", human_only=True)
 def delete_entry(request, match, data):
     if not applications.delete_local_entry(match.group(1)):
         raise ValueError("Entry not found or currently sending. No Notion page was changed.")
@@ -580,7 +682,7 @@ def write_ai_draft(request, match, data):
     return {"draft": auto_email.build_draft(entry)}
 
 
-@route("POST", r"/api/entries/([a-f0-9-]+)/(gmail-draft|gmail-prepare|gmail-scheduled)")
+@route("POST", r"/api/entries/([a-f0-9-]+)/(gmail-draft|gmail-prepare|gmail-scheduled)", human_only=True)
 def gmail_action(request, match, data):
     entry_id, action = match.groups()
     if action == "gmail-scheduled":
@@ -678,7 +780,7 @@ def update_resume(request, match, data):
     return {"resume": resumes.update_resume(match.group(1), data)}
 
 
-@route("DELETE", r"/api/resumes/([a-f0-9-]+)")
+@route("DELETE", r"/api/resumes/([a-f0-9-]+)", human_only=True)
 def delete_resume(request, match, data):
     return {"ok": True, "applications_needing_resume": resumes.delete_resume(match.group(1))}
 
@@ -778,7 +880,7 @@ def get_resume_design(request, match, data):
     return resume_workflows.design_settings()
 
 
-@route("PATCH", r"/api/resume-design")
+@route("PATCH", r"/api/resume-design", human_only=True)
 def update_resume_design(request, match, data):
     return resume_workflows.update_design_settings(mode=data.get("mode"), design=data.get("design"),
                                                    from_resume_id=str(data.get("from_resume_id") or ""))
@@ -941,7 +1043,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def authorized(self):
-        if self.headers.get("Host") not in allowed_hosts():
+        if not host_allowed(self.headers.get("Host")):
             self.respond(403, {"error": "Invalid host."})
             return False
         origin = self.headers.get("Origin", "")

@@ -62,6 +62,38 @@ WORKER_WAKE = threading.Event()
 WORKER_STOP = threading.Event()
 PLAN_LIMIT_PAUSED = False
 CODEX_STATUS_CACHE = {"checked_at": 0.0, "value": None}
+JOB_STUCK_MINUTES = 10
+_JOB_PROGRESS_AT = {}
+_JOB_PROGRESS_LOCK = threading.Lock()
+
+
+class JobCancelled(Exception):
+    """Raised internally to stop a worker after a local cancel request."""
+
+
+def job_cancelled(db_path: Path, job_id: str, purpose: str = ""):
+    table = "analysis_runs" if purpose in ANALYSIS_PURPOSES else "resume_ai_jobs"
+    with _connect(db_path) as db:
+        row = db.execute(f"SELECT status FROM {table} WHERE id=?", (job_id,)).fetchone()
+    return not row or row["status"] == "cancelled"
+
+
+def cancel_job(db_path: Path, job_id: str):
+    with _connect(db_path) as db:
+        row = db.execute("SELECT status FROM analysis_runs WHERE id=?", (job_id,)).fetchone()
+        if row:
+            if row["status"] in ("pending", "analyzing"):
+                db.execute("UPDATE analysis_runs SET status='cancelled',error_code='cancelled',error_message='Cancelled by the user.',completed_at=? WHERE id=?",
+                           (now_iso(), job_id))
+                _event_db(db, job_id, 0, "cancelled", "Cancelled by the user.", "warning")
+            return {"id": job_id, "status": "cancelled" if row["status"] in ("pending", "analyzing") else row["status"]}
+        row = db.execute("SELECT status FROM resume_ai_jobs WHERE id=?", (job_id,)).fetchone()
+        if row:
+            if row["status"] in ("pending", "running"):
+                db.execute("UPDATE resume_ai_jobs SET status='cancelled',error_code='cancelled',error_message='Cancelled by the user.',completed_at=? WHERE id=?",
+                           (now_iso(), job_id))
+            return {"id": job_id, "status": "cancelled" if row["status"] in ("pending", "running") else row["status"]}
+    return None
 
 
 @contextmanager
@@ -89,14 +121,20 @@ def _event_db(db, analysis_id, percent, stage, message, level="info"):
 
 def record_event(db_path: Path, analysis_id: str, percent: int, stage: str, message: str, level="info"):
     with _connect(db_path) as db:
+        row = db.execute("SELECT status FROM analysis_runs WHERE id=?", (analysis_id,)).fetchone()
+        if row and row["status"] == "cancelled" and stage != "cancelled":
+            return
         _event_db(db, analysis_id, percent, stage, message, level)
 
 
 def record_job_progress(db_path: Path, job_id: str, percent: int, stage: str, message: str, level="info"):
     try:
         with _connect(db_path) as db:
-            db.execute("UPDATE resume_ai_jobs SET percent=?,message=? WHERE id=?",
-                       (max(0, min(100, int(percent))), str(message)[:300], job_id))
+            updated = db.execute("UPDATE resume_ai_jobs SET percent=?,message=? WHERE id=? AND status<>'cancelled'",
+                                 (max(0, min(100, int(percent))), str(message)[:300], job_id)).rowcount
+        if updated:
+            with _JOB_PROGRESS_LOCK:
+                _JOB_PROGRESS_AT[job_id] = now_iso()
     except sqlite3.OperationalError:
         pass
 
@@ -575,6 +613,8 @@ def _run_codex(root: Path, prompt: str, schema_name: str, purpose: str, analysis
     exit_status = -1; failure = ""
     label, start_percent, success_percent = ANALYSIS_PURPOSES.get(purpose) or JOB_PURPOSES.get(purpose) or (purpose, 20, 85)
     report = _progress_sink(purpose)
+    if job_cancelled(db_path, analysis_id, purpose):
+        raise JobCancelled()
     try:
         with tempfile.TemporaryDirectory(prefix="applydock-ats-") as sandbox, tempfile.TemporaryDirectory(prefix="applydock-schema-") as schema_dir:
             schema = Path(schema_dir) / "output-schema.json"
@@ -587,8 +627,25 @@ def _run_codex(root: Path, prompt: str, schema_name: str, purpose: str, analysis
             for attempt in range(2):
                 report(db_path, analysis_id, start_percent, purpose, f"Starting {label} with Codex" + (" (retry)." if attempt else "."))
                 try:
-                    result = subprocess.run(command, input=prompt, text=True, encoding="utf-8", errors="strict",
-                                            capture_output=True, timeout=180)
+                    process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                               text=True, encoding="utf-8", errors="strict")
+                    deadline = time.monotonic() + 180
+                    first = True
+                    while True:
+                        if job_cancelled(db_path, analysis_id, purpose):
+                            process.kill()
+                            process.communicate()
+                            raise JobCancelled()
+                        try:
+                            stdout, stderr = process.communicate(input=prompt if first else None, timeout=min(.25, max(.01, deadline-time.monotonic())))
+                            result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+                            break
+                        except subprocess.TimeoutExpired:
+                            first = False
+                            if time.monotonic() >= deadline:
+                                process.kill()
+                                process.communicate()
+                                raise subprocess.TimeoutExpired(command, 180) from None
                 except subprocess.TimeoutExpired:
                     if attempt == 0:
                         report(db_path, analysis_id, start_percent, purpose, f"The {label} timed out. Retrying once.", "warning")
@@ -1012,6 +1069,8 @@ def process_one(db_path: Path, data_dir: Path, root: Path, sync_callback=None):
     record_event(db_path, run["id"], 10, "preparing", "Worker started and loaded the saved resume and job description.")
     succeeded = False
     try:
+        if job_cancelled(db_path, run["id"], "jd_match"):
+            raise JobCancelled()
         profile = None
         if version["parse_status"] == "complete" and version["parser_version"] == RESUME_PARSER_VERSION and version["parsed_model"] == MODEL:
             profile = json.loads(version["parsed_json"])
@@ -1025,8 +1084,12 @@ def process_one(db_path: Path, data_dir: Path, root: Path, sync_callback=None):
             with _connect(db_path) as db:
                 db.execute("UPDATE resume_documents SET parsed_json=?,parse_status='complete',parse_error='',parser_version=?,parsed_model=?,updated_at=? WHERE id=?",
                            (json.dumps(profile), RESUME_PARSER_VERSION, MODEL, now_iso(), version["document_id"]))
+        if job_cancelled(db_path, run["id"], "jd_match"):
+            raise JobCancelled()
         blocks = json.loads(version["evidence_json"] or "[]")
         requirements = jd_requirements(db_path, root, jd, run["id"])
+        if job_cancelled(db_path, run["id"], "jd_match"):
+            raise JobCancelled()
         profile_blocks = json.loads(run["profile_json"] or "[]")
         record_event(db_path, run["id"], 52, "job_comparison", f"Comparing {len(requirements)} saved requirements with the resume"
                      + (" and your Master Profile." if profile_blocks else "."))
@@ -1035,6 +1098,8 @@ def process_one(db_path: Path, data_dir: Path, root: Path, sync_callback=None):
         output = _run_codex(root, _analysis_prompt(profile, blocks, jd["source_text"], requirements, prompt_profile,
                                                    previous["requirements"] if previous else ()),
                             "ats-analysis-schema.json", "jd_match", run["id"], db_path)
+        if job_cancelled(db_path, run["id"], "jd_match"):
+            raise JobCancelled()
         record_event(db_path, run["id"], 86, "evidence_validation", "Validating every claimed match against local resume evidence.")
         evidence_lookup = {block["id"]: block["text"] for block in blocks}
         matches = _validated_matches(output, requirements, evidence_lookup, {block["id"]: block for block in profile_blocks})
@@ -1076,6 +1141,11 @@ def process_one(db_path: Path, data_dir: Path, root: Path, sync_callback=None):
         succeeded = True
         record_event(db_path, run["id"], 97, "result_ready", "Validated results are ready locally.", "success")
     except Exception as error:
+        if isinstance(error, JobCancelled) or job_cancelled(db_path, run["id"], "jd_match"):
+            with _connect(db_path) as db:
+                db.execute("UPDATE analysis_runs SET status='cancelled',error_code='cancelled',error_message='Cancelled by the user.',completed_at=? WHERE id=?",
+                           (now_iso(), run["id"]))
+            return True
         message = str(error)
         code, _, detail = message.partition("|")
         if not detail:
@@ -1089,8 +1159,8 @@ def process_one(db_path: Path, data_dir: Path, root: Path, sync_callback=None):
         record_event(db_path, run["id"], last_progress(db_path, run["id"]), code, detail[:500], "error")
     if succeeded:
         with _connect(db_path) as db:
-            db.execute("UPDATE analysis_runs SET status='complete',completed_at=? WHERE id=?", (now_iso(), run["id"]))
-    if sync_callback:
+            db.execute("UPDATE analysis_runs SET status='complete',completed_at=? WHERE id=? AND status='analyzing'", (now_iso(), run["id"]))
+    if succeeded and sync_callback:
         try:
             if succeeded:
                 record_event(db_path, run["id"], 99, "notion_sync", "Updating the compact ATS summary in Notion.")

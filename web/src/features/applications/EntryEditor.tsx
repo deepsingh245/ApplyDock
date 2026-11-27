@@ -12,6 +12,7 @@ import { Pill, toneFor } from "@/components/ui/pill";
 import { AttentionDot, Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { notify } from "@/components/ui/toaster";
 import { api, errorMessage } from "@/lib/api";
+import { applicationIdentity } from "@/lib/agentIds";
 import { cn } from "@/lib/cn";
 import { deliveryCategory, deliveryLabel, resumeChoices, stageIsAfterApply, stageOptions } from "@/lib/domain";
 import { usableLink } from "@/lib/format";
@@ -252,7 +253,7 @@ export function EntryEditor({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 id="editor-title" className="m-0 text-xl font-semibold">
-            {entry.title || "Untitled opportunity"}
+            {applicationIdentity(entry)}
           </h2>
           <p className="m-0 mt-0.5 text-sm text-ink-2">
             {entry.company || "Company not set"} · {entry.platform || "Other"} <span className="text-ink-3">· {isPost ? "Hiring post" : "Job"}</span>

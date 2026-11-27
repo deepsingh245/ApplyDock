@@ -1,0 +1,28 @@
+# ApplyDock
+
+ApplyDock is a local-first job application tracker. Its Python helper serves the React app and a pairing-key protected HTTP API on `http://127.0.0.1:8765`.
+
+## Pairing
+
+Pair in the ApplyDock app, then send the pairing key in the `X-Local-Key` header. The key stays on this computer. The full route inventory is at `/api/openapi.json`; GPT Actions should use the preparation-only schema at `/api/agent/openapi.json`. Both require the key.
+
+## Agent commands
+
+- `applications_list`: list applications with stable company and role identity.
+- `application_get`: get compact application context.
+- `analysis_run` and `analysis_summary`: queue and inspect an analysis.
+- `resume_tailor`, `resume_edit`, `resume_save_and_attach`: prepare and save resume work.
+- `email_preview`: prepare an email preview without sending.
+- `job_status`, `job_logs`, and `job_cancel`: inspect and cancel background work.
+
+Agents may prepare drafts and resumes. A person must approve applications and handle Gmail drafts, scheduling, and sending. Never auto-send.
+
+## MCP
+
+Run `py -3 -m applydock.mcp_server` with `APPLYDOCK_URL` and `APPLYDOCK_KEY` set in the environment.
+
+## Screens
+
+Applications, ATS Analysis, Resume Library, Resume Editor, Outreach, and Settings. Primary controls may expose stable `data-agent-id` attributes.
+
+This API binds to the local helper. To use an HTTPS tunnel, start the helper with `APPLYDOCK_PUBLIC_URL` set to the exact tunnel origin. GPT Actions should store the pairing key as a custom `X-Local-Key` secret, never in chat instructions.

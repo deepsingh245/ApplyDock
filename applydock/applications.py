@@ -115,6 +115,35 @@ def entries():
         return [public_entry(r) for r in db.execute("SELECT * FROM entries ORDER BY created_at DESC")]
 
 
+def identity(entry):
+    """A compact, stable label for a captured post or job; computed without changing storage."""
+    if not entry:
+        return None
+    company = str(entry.get("company") or "").strip()
+    role = str(entry.get("title") or "").strip()
+    generic = {"hiring post", "job opportunity"}
+    if role.lower() in generic:
+        role = ""
+    if company and role:
+        label = f"{company} — {role}"
+    else:
+        fallback = str(entry.get("author") or "").strip()
+        if not fallback:
+            fallback = next((line.strip() for line in str(entry.get("excerpt") or "").splitlines() if len(line.strip()) > 2), "")
+        if not fallback:
+            match = re.search(r"(?:posts/[^/]*_activity-|activity-)(\d+)", str(entry.get("url") or ""))
+            fallback = f"LinkedIn activity {match.group(1)}" if match else ""
+        if not fallback:
+            fallback = (str(entry.get("recipient") or "").rsplit("@", 1)[-1] or "Application")
+        label = f"{company} — {role}" if company and role else fallback
+        role = role or (str(entry.get("title") or "").strip() if str(entry.get("title") or "").strip().lower() not in generic else fallback)
+    url = str(entry.get("url") or "")
+    activity = re.search(r"(?:_activity-|activity-)(\d+)", url)
+    source = f"{entry.get('platform') or 'web'}:{activity.group(1) if activity else url}"
+    return {"id": entry.get("id", ""), "label": label, "company": company, "role": role,
+            "source": source, "url": url, "recipient": entry.get("recipient", "")}
+
+
 DEFAULT_APPLICATION_STAGES = ["Initiated", "To apply", "No Answer", "Applied", "Offer", "Rejected"]
 
 

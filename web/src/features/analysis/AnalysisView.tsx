@@ -16,6 +16,7 @@ import { api, errorMessage } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { profileChangedSince } from "@/lib/domain";
 import { dateLabel } from "@/lib/format";
+import { agentIds } from "@/lib/agentIds";
 import { categoryRows, compareRuns, comparisonBaseline, isAddressed, matchCounts, previousRun, signed, stageLabel } from "./model";
 import { ActivityLog, QueueCard } from "./parts";
 import { PriorityImprovements, RequirementsExplorer } from "./Requirements";
@@ -34,7 +35,21 @@ export function analysisSubtitle(analysis: Analysis, entry: Entry | undefined) {
 }
 
 function Running({ analysis }: { analysis: Analysis }) {
+  const client = useQueryClient();
+  const [cancelling, setCancelling] = useState(false);
   const percent = Number(analysis.progress_percent ?? 0);
+  const cancel = async () => {
+    setCancelling(true);
+    try {
+      await api(`/api/jobs/${analysis.id}/cancel`, "POST", {});
+      await Promise.all([client.invalidateQueries({ queryKey: keys.analysis(analysis.id) }), client.invalidateQueries({ queryKey: keys.analysisQueue })]);
+      notify("Analysis cancelled.");
+    } catch (error) {
+      notify(errorMessage(error), true);
+    } finally {
+      setCancelling(false);
+    }
+  };
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
       <Card className="grid content-start gap-4" data-testid="analysis-running">
@@ -47,6 +62,9 @@ function Running({ analysis }: { analysis: Analysis }) {
           </div>
           <strong className="tabular text-2xl">{percent}%</strong>
         </div>
+        <Button variant="quiet" data-agent-id={agentIds.cancelJob} loading={cancelling} disabled={cancelling} onClick={() => void cancel()} className="justify-self-start">
+          Cancel analysis
+        </Button>
         <Meter value={percent} tone="neutral" label="Analysis progress" className="h-2" />
         <div className="grid gap-1 text-xs text-ink-3">
           <p className="m-0">ApplyDock processes one analysis at a time and saves every stage locally.</p>

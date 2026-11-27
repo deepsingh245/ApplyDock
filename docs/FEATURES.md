@@ -6,6 +6,7 @@ Status: **Done** = implemented and covered by tests · **Partial** = works with 
 |---|---|---|---|---|
 | Capture | Extension side panel extracts the current job/post; manual capture form in the dashboard | Done | [capture-and-extension](features/capture-and-extension.md) | `extension/`, `applications.capture` |
 | Applications workspace | Queue, filters, application editor tabs, stages, inspector | Done | [applications](features/applications.md) | `applications.py`, `web/src/features/applications/` |
+| Local agent access | Typed local commands, OpenAPI discovery, MCP stdio bridge, stable identities | Working | [agent-access](features/agent-access.md) | `agent_commands.py`, `api_spec.py`, `mcp_server.py` |
 | Resume library | Upload PDF/DOCX, versions, default, preview, delete | Done | [resume-library](features/resume-library.md) | `resumes.py`, `ats.install_document` |
 | Resume editor | Structured editing, live Typst PDF preview, design controls, versions, compare | Done | [resume-editor](features/resume-editor.md) | `resume_*.py`, `resume_workflows.py`, `web/src/features/resume-editor/`, `typst` |
 | Resume import | PDF/DOCX text → structured sections (local parser; optional Codex) | Done | [resume-editor](features/resume-editor.md#key-decisions) | `resume_import.py`, `pypdf` |

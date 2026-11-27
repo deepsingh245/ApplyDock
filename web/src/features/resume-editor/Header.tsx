@@ -4,6 +4,7 @@ import { BackButton, Eyebrow } from "@/components/ui/misc";
 import { Note } from "@/components/ui/note";
 import { Pill } from "@/components/ui/pill";
 import { cn } from "@/lib/cn";
+import { agentIds } from "@/lib/agentIds";
 import { useCtl } from "./controller";
 import { useEditor } from "./store";
 
@@ -82,7 +83,7 @@ export function EditorToolbar() {
           </Button>
         </>
       ) : null}
-      <Button variant="primary" loading={ctl.busy === "save"} disabled={ctl.busy !== null} onClick={() => void ctl.saveVersion(false)}>
+      <Button variant="primary" data-agent-id={agentIds.saveResumeVersion} loading={ctl.busy === "save"} disabled={ctl.busy !== null} onClick={() => void ctl.saveVersion(false)}>
         Save version
       </Button>
     </div>

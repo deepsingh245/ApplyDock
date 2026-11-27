@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Suspense, useEffect, useReducer } from "react";
-import { Outlet } from "react-router";
+import { Outlet, useMatches } from "react-router";
 import { keys, useAppState } from "@/api/state";
 import { usePairedSignal } from "@/bridge/extension";
 import { Spinner } from "@/components/ui/misc";
@@ -23,6 +23,7 @@ export function Loading({ label = "Loading…" }: { label?: string }) {
 
 /** The paired app: top bar + current screen. Shows the pairing screen until /api/state accepts the key. */
 export function AppShell() {
+  const matches = useMatches();
   const client = useQueryClient();
   // The key lives in storage; re-render after we change it ourselves, or when the extension signals it wrote one.
   const [, rerender] = useReducer((count: number) => count + 1, 0);
@@ -30,6 +31,11 @@ export function AppShell() {
   const hasKey = Boolean(pairingKey());
   const state = useAppState();
   const unauthorized = state.error instanceof ApiError && state.error.status === 401;
+
+  useEffect(() => {
+    const routeTitle = [...matches].reverse().find((match) => typeof match.handle === "object" && match.handle && "title" in match.handle)?.handle as { title?: string } | undefined;
+    document.title = `${routeTitle?.title || "ApplyDock"} · ApplyDock`;
+  }, [matches]);
 
   // reset (not invalidate): a key-less request still in flight would otherwise land after the key and show "not accepted".
   useEffect(() => {

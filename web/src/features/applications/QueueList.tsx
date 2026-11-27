@@ -10,6 +10,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { cn } from "@/lib/cn";
 import { deliveryCategory, deliveryLabel, stageIsAfterApply } from "@/lib/domain";
 import { scoreLabel } from "@/lib/format";
+import { applicationIdentity } from "@/lib/agentIds";
 import { filterSource, listCounts, visibleEntries, type ListFilter, type ListOptions } from "./filtering";
 
 const FILTERS: { value: ListFilter; label: string }[] = [
@@ -32,7 +33,7 @@ function QueueItem({ entry, selected, onSelect }: { entry: Entry; selected: bool
       )}
     >
       <span className="flex items-start justify-between gap-3">
-        <strong className="min-w-0 text-sm leading-snug font-semibold text-ink">{entry.title}</strong>
+        <strong className="min-w-0 text-sm leading-snug font-semibold text-ink">{applicationIdentity(entry)}</strong>
         <span className={cn("tabular shrink-0 text-xs", analysis.stale ? "text-warn" : "text-ink-2")} title={analysis.label || "Not analyzed"}>
           {scoreLabel(analysis.overall_score)}
         </span>

@@ -43,6 +43,9 @@ applydock/                Python helper (package)
   delivery.py             SMTP verification and the scheduled sender/scheduler loop
   ai_draft.py             Codex-written email drafts
   http_server.py          request handler, auth, static files, @route table
+  agent_commands.py       compact agent operations composed from existing domain workflows
+  api_spec.py             OpenAPI generated from the agent command registry
+  mcp_server.py            stdio MCP bridge to the authenticated local API
   app.py                  startup: settings, migration, workers, server
   schemas/                Codex structured-output JSON schemas
   resume_templates/       Typst templates + bundled Carlito fonts (OFL)
@@ -93,11 +96,15 @@ config, events, resume_model           (no ApplyDock imports)
 4. The route is looked up in `ROUTES`. Mutations read the JSON body (12 MB maximum) before routing, as before; DELETE routes take no body.
 5. The handler returns a dict (sent as 200 JSON) or a `FileResponse`. Exceptions become JSON errors: `NotFound` gives 404, `ConflictError` gives 409 (with the current draft), `ValueError`/`KeyError` give 400, and anything else gives 500.
 
+Agent routes and both OpenAPI endpoints use the same authorization checks. `/api/agent/openapi.json` is limited to typed preparation commands for GPT Actions. `agent_commands.py` composes existing domain workflows; `mcp_server.py` forwards those commands to the local helper. Public `/llms.txt` and `/agents.md` contain discovery guidance only. `APPLYDOCK_PUBLIC_URL` permits one exact HTTPS tunnel origin while the helper remains bound to loopback.
+
 ## Data flow (main workflow)
 
 `capture → entries row → choose resume (resumes.current_version_id or pinned entries.resume_version_id) → ats.queue_analysis → ATS worker (Codex parse + match, Python scoring) → analysis_runs → resume editor (draft → Typst PDF → validate → immutable resume_version) → pin version to entry → gmail.save_gmail_draft / delivery.send_mail attach that exact file (SHA-256 re-checked and recorded)`
 
 ## Storage
+
+For agents, `MCP client -> mcp_server.py -> authenticated loopback API -> agent_commands.py -> existing domain workflows` reuses the same analysis and resume lifecycle. Agent commands stop at preparation and preview; human actions handle approval and external delivery.
 
 | Store | Contents |
 |---|---|
