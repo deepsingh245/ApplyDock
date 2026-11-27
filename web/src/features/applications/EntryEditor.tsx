@@ -12,7 +12,7 @@ import { Pill, toneFor } from "@/components/ui/pill";
 import { AttentionDot, Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { notify } from "@/components/ui/toaster";
 import { api, errorMessage } from "@/lib/api";
-import { applicationIdentity } from "@/lib/agentIds";
+import { agentIds, applicationIdentity } from "@/lib/agentIds";
 import { cn } from "@/lib/cn";
 import { deliveryCategory, deliveryLabel, resumeChoices, stageIsAfterApply, stageOptions } from "@/lib/domain";
 import { usableLink } from "@/lib/format";
@@ -395,7 +395,7 @@ export function EntryEditor({
             <p className="m-0 text-xs text-ink-3">
               {editable ? "Changes to an approved item remove its approval; stage-only changes keep it approved." : "Email delivery is locked, but you can still update the application stage."}
             </p>
-            <Button id="save-button" type="submit" variant="primary" loading={saving} disabled={!editable && !canStage}>
+            <Button id="save-button" type="submit" variant="primary" data-agent-id={agentIds.saveApplication} loading={saving} disabled={!editable && !canStage}>
               {editable ? "Save changes" : "Save stage"}
             </Button>
           </div>

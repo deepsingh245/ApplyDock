@@ -1,6 +1,6 @@
 # Agent access
 
-ApplyDock exposes a local, pairing-key authenticated API and an MCP stdio bridge for agents that can reach the same computer. The agent API adds typed application, analysis, resume preparation, email preview, and job status commands. `/api/openapi.json` describes these operations; `/llms.txt` and `/agents.md` provide public, secret-free discovery notes.
+ApplyDock exposes a local, pairing-key authenticated API and an MCP stdio bridge for agents that can reach the same computer. The agent API adds typed application, analysis, resume preparation, email preview, and job status commands. `/api/agent/openapi.json` describes the preparation-only commands; `/api/openapi.json` describes the full API. `/llms.txt` and `/agents.md` provide public, secret-free discovery notes, including a map of stable browser selectors.
 
 The helper continues to bind to loopback and requires `X-Local-Key` for API access. Run the MCP bridge with `py -3 -m applydock.mcp_server`, setting `APPLYDOCK_URL` and `APPLYDOCK_KEY` in its environment. The bridge only exposes preparation commands. Approval, Gmail draft or schedule actions, sending, settings, and resume deletion remain human-only.
 

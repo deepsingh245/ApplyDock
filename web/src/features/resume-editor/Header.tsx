@@ -75,7 +75,7 @@ export function EditorToolbar() {
       </Button>
       {ctl.entry ? (
         <>
-          <Button loading={ctl.busy === "score"} disabled={ctl.busy !== null} title="Score the current draft, including accepted suggestions, against this job — no version is saved" onClick={() => void ctl.checkScore(false)}>
+          <Button data-agent-id={agentIds.checkResumeScore} loading={ctl.busy === "score"} disabled={ctl.busy !== null} title="Score the current draft, including accepted suggestions, against this job — no version is saved" onClick={() => void ctl.checkScore(false)}>
             Check score
           </Button>
           <Button variant="quiet" loading={ctl.busy === "save-analyze"} disabled={ctl.busy !== null} onClick={() => void ctl.saveVersion(true)}>

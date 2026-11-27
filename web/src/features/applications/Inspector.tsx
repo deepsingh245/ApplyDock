@@ -8,7 +8,7 @@ import { Pill, toneFor } from "@/components/ui/pill";
 import { cn } from "@/lib/cn";
 import { deliveryCategory, deliveryLabel, needsAction, profileChangedSince } from "@/lib/domain";
 import { dateLabel, plural } from "@/lib/format";
-import { agentIds } from "@/lib/agentIds";
+import { agentIds, entryActionAgentId } from "@/lib/agentIds";
 import { isEditable, type EntryForm } from "./form";
 import type { EntryAction } from "./useEntryActions";
 
@@ -109,7 +109,7 @@ export function Inspector({
           </Note>
         ) : null}
         {analysis.id ? (
-          <Button variant="text" className="justify-self-start" onClick={() => onAction("ats-view")} data-action="ats-view">
+          <Button variant="text" className="justify-self-start" onClick={() => onAction("ats-view")} data-action="ats-view" data-agent-id={agentIds.viewAnalysis}>
             View analysis
           </Button>
         ) : null}
@@ -121,7 +121,7 @@ export function Inspector({
             <Button
               key={item.action + index}
               data-action={item.action}
-              data-agent-id={item.action === "ats-run" ? agentIds.runAnalysis : item.action === "approve" ? agentIds.approveApplication : undefined}
+              data-agent-id={entryActionAgentId(item.action)}
               variant={index === primary ? "primary" : item.kind === "quiet" ? "quiet" : "secondary"}
               className="w-full justify-start"
               loading={busy === item.action}

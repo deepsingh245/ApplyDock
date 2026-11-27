@@ -374,7 +374,7 @@ function JobMatchPane({ analysis }: { analysis: Analysis | undefined }) {
                 <Button variant="primary" disabled={checking || needsReview} onClick={() => void ctl.checkScore(false)}>
                   Check score
                 </Button>
-                <Button disabled={running || needsReview} onClick={() => void ctl.requestSuggestions()}>
+                <Button data-agent-id={agentIds.requestResumeSuggestions} disabled={running || needsReview} onClick={() => void ctl.requestSuggestions()}>
                   {suggestionsCount ? "Refresh suggestions" : "Suggest improvements"}
                 </Button>
               </>

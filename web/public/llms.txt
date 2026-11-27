@@ -23,6 +23,6 @@ Run `py -3 -m applydock.mcp_server` with `APPLYDOCK_URL` and `APPLYDOCK_KEY` set
 
 ## Screens
 
-Applications, ATS Analysis, Resume Library, Resume Editor, Outreach, and Settings. Primary controls may expose stable `data-agent-id` attributes.
+Applications, ATS Analysis, Resume Library, Resume Editor, Outreach, and Settings. Browser agents should prefer accessible roles and names. `/agents.md` maps the stable `data-agent-id` selectors for key controls.
 
 This API binds to the local helper. To use an HTTPS tunnel, start the helper with `APPLYDOCK_PUBLIC_URL` set to the exact tunnel origin. GPT Actions should store the pairing key as a custom `X-Local-Key` secret, never in chat instructions.
